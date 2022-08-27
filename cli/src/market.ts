@@ -1,12 +1,10 @@
 import {
   AptosAccount,
-  AptosClient,
   TxnBuilderTypes,
   BCS,
 } from "aptos";
-import { TransactionPayloadEntryFunction } from "aptos/dist/transaction_builder/aptos_types";
 
-import { client } from './aptos-client'
+import { sendSignedTransactionWithPrivateKey } from  "./utils/transaction-utils"
 
 function coinTypeTags(instrumentCoin: string, quoteCoin: string) {
   const instrumentCoinTypeTag = new TxnBuilderTypes.TypeTagStruct(
@@ -21,35 +19,6 @@ function coinTypeTags(instrumentCoin: string, quoteCoin: string) {
 
 function toFixedPoint(n: number) {
   return Math.pow(10, 10) * n
-}
-
-async function sendSignedtransaction(
-  signerPrivateKey: string,
-  entryFunctionPayload: TransactionPayloadEntryFunction,
-) {
-  const signerPrivateKeyHex = Uint8Array.from(
-    Buffer.from(signerPrivateKey, "hex")
-  );
-  const signerAccount = new AptosAccount(signerPrivateKeyHex);
-  const [{ sequence_number: sequenceNumber }, chainId] = await Promise.all([
-    client.getAccount(signerAccount.address()),
-    client.getChainId(),
-  ]);
-
-  const rawTxn = new TxnBuilderTypes.RawTransaction(
-    TxnBuilderTypes.AccountAddress.fromHex(signerAccount.address()),
-    BigInt(sequenceNumber),
-    entryFunctionPayload,
-    1000n,
-    1n,
-    BigInt(Math.floor(Date.now() / 1000) + 10),
-    new TxnBuilderTypes.ChainId(chainId)
-  );
-
-  const bcsTxn = AptosClient.generateBCSTransaction(signerAccount, rawTxn);
-  const pendingTxn = await client.submitSignedBCSTransaction(bcsTxn);
-
-  return pendingTxn.hash;
 }
 
 export async function initializeFerum(
@@ -68,7 +37,7 @@ export async function initializeFerum(
         []
       )
     );
-  return await sendSignedtransaction(signerPrivateKey, entryFunctionPayload)
+  return await sendSignedTransactionWithPrivateKey(signerPrivateKey, entryFunctionPayload)
 }
 
 export async function initializeOrderbook(
@@ -89,7 +58,7 @@ export async function initializeOrderbook(
         []
       )
     );
-    return await sendSignedtransaction(signerPrivateKey, entryFunctionPayload)
+    return await sendSignedTransactionWithPrivateKey(signerPrivateKey, entryFunctionPayload)
 }
 
 export async function cancelOrder(
@@ -111,7 +80,7 @@ export async function cancelOrder(
         ]
       )
     );
-    return await sendSignedtransaction(signerPrivateKey, entryFunctionPayload)
+    return await sendSignedTransactionWithPrivateKey(signerPrivateKey, entryFunctionPayload)
 }
 
 export async function addLimitOrder(
@@ -139,7 +108,7 @@ export async function addLimitOrder(
         ]
       )
     );
-    return await sendSignedtransaction(signerPrivateKey, entryFunctionPayload)
+    return await sendSignedTransactionWithPrivateKey(signerPrivateKey, entryFunctionPayload)
 }
 
 export async function addMarketOrder(
@@ -167,5 +136,5 @@ export async function addMarketOrder(
         ]
       )
     );
-    return await sendSignedtransaction(signerPrivateKey, entryFunctionPayload)
+    return await sendSignedTransactionWithPrivateKey(signerPrivateKey, entryFunctionPayload)
 }

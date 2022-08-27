@@ -1,4 +1,4 @@
-import {addCoinAddressIfNecessary} from "../module-name-utils"
+import {addCoinAddressIfNecessary} from "../utils/module-name-utils"
 
 describe("testing coin address addition", () => {
   test('should add coin address', () => {

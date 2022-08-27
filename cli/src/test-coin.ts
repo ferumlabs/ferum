@@ -8,7 +8,8 @@ import {
   HexString,
 } from "aptos";
 import { client } from "./aptos-client";
-import { addCoinAddressIfNecessary } from "./module-name-utils";
+import { addCoinAddressIfNecessary } from "./utils/module-name-utils";
+import { sendSignedTransactionWithAccount } from "./utils/transaction-utils";
 
 /** Publish a new module to the blockchain within the specified account */
 export async function publishModule(
@@ -21,27 +22,12 @@ export async function publishModule(
         new TxnBuilderTypes.Module(new HexString(moduleHex).toUint8Array()),
       ])
     );
-
-  const [{ sequence_number: sequenceNumber }, chainId] = await Promise.all([
-    client.getAccount(accountFrom.address()),
-    client.getChainId(),
-  ]);
-
-  const rawTxn = new TxnBuilderTypes.RawTransaction(
-    TxnBuilderTypes.AccountAddress.fromHex(accountFrom.address()),
-    BigInt(sequenceNumber),
-    moduleBundlePayload,
-    1000n,
-    1n,
-    BigInt(Math.floor(Date.now() / 1000) + 10),
-    new TxnBuilderTypes.ChainId(chainId)
+  return await sendSignedTransactionWithAccount(
+    accountFrom,
+    moduleBundlePayload
   );
-
-  const bcsTxn = AptosClient.generateBCSTransaction(accountFrom, rawTxn);
-  const transactionRes = await client.submitSignedBCSTransaction(bcsTxn);
-
-  return transactionRes.hash;
 }
+
 /** Initializes the new coin */
 async function initializeCoin(
   accountFrom: AptosAccount,
@@ -71,26 +57,10 @@ async function initializeCoin(
         ]
       )
     );
-
-  const [{ sequence_number: sequenceNumber }, chainId] = await Promise.all([
-    client.getAccount(accountFrom.address()),
-    client.getChainId(),
-  ]);
-
-  const rawTxn = new TxnBuilderTypes.RawTransaction(
-    TxnBuilderTypes.AccountAddress.fromHex(accountFrom.address()),
-    BigInt(sequenceNumber),
-    entryFunctionPayload,
-    1000n,
-    1n,
-    BigInt(Math.floor(Date.now() / 1000) + 10),
-    new TxnBuilderTypes.ChainId(chainId)
+  return await sendSignedTransactionWithAccount(
+    accountFrom,
+    entryFunctionPayload
   );
-
-  const bcsTxn = AptosClient.generateBCSTransaction(accountFrom, rawTxn);
-  const pendingTxn = await client.submitSignedBCSTransaction(bcsTxn);
-
-  return pendingTxn.hash;
 }
 
 /** Receiver needs to register the coin before they can receive it */
@@ -115,25 +85,10 @@ async function registerCoin(
       )
     );
 
-  const [{ sequence_number: sequenceNumber }, chainId] = await Promise.all([
-    client.getAccount(coinReceiver.address()),
-    client.getChainId(),
-  ]);
-
-  const rawTxn = new TxnBuilderTypes.RawTransaction(
-    TxnBuilderTypes.AccountAddress.fromHex(coinReceiver.address()),
-    BigInt(sequenceNumber),
-    entryFunctionPayload,
-    1000n,
-    1n,
-    BigInt(Math.floor(Date.now() / 1000) + 10),
-    new TxnBuilderTypes.ChainId(chainId)
+  return await sendSignedTransactionWithAccount(
+    coinReceiver,
+    entryFunctionPayload
   );
-
-  const bcsTxn = AptosClient.generateBCSTransaction(coinReceiver, rawTxn);
-  const pendingTxn = await client.submitSignedBCSTransaction(bcsTxn);
-
-  return pendingTxn.hash;
 }
 
 /** Mints the newly created coin to a specified receiver address */
@@ -165,24 +120,10 @@ async function mintCoin(
       )
     );
 
-  const [{ sequence_number: sequenceNumber }, chainId] = await Promise.all([
-    client.getAccount(coinOwner.address()),
-    client.getChainId(),
-  ]);
-
-  const rawTxn = new TxnBuilderTypes.RawTransaction(
-    TxnBuilderTypes.AccountAddress.fromHex(coinOwner.address()),
-    BigInt(sequenceNumber),
-    entryFunctionPayload,
-    1000n,
-    1n,
-    BigInt(Math.floor(Date.now() / 1000) + 10),
-    new TxnBuilderTypes.ChainId(chainId)
-  );
-
-  const bcsTxn = AptosClient.generateBCSTransaction(coinOwner, rawTxn);
-  const pendingTxn = await client.submitSignedBCSTransaction(bcsTxn);
-  return pendingTxn.hash;
+    return await sendSignedTransactionWithAccount(
+      coinOwner,
+      entryFunctionPayload
+    );
 }
 
 async function getBalance(
@@ -221,7 +162,10 @@ export async function createTestCoin(
 ) {
   const privateKeyHex = Uint8Array.from(Buffer.from(privateKey, "hex"));
   const coinMasterAccount = new AptosAccount(privateKeyHex);
-  coinName = addCoinAddressIfNecessary(coinMasterAccount.address().toString(), coinName);
+  coinName = addCoinAddressIfNecessary(
+    coinMasterAccount.address().toString(),
+    coinName
+  );
   console.log("\n=== Name, Account, Coins ===");
   console.log(
     `Current Balance: ${coinMasterAccount.address()}: ${await getBalance(
