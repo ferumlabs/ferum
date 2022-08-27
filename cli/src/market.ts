@@ -1,4 +1,3 @@
-import fs from "fs";
 import {
   AptosAccount,
   AptosClient,
@@ -6,9 +5,7 @@ import {
   BCS,
 } from "aptos";
 
-export const NODE_URL = "https://fullnode.devnet.aptoslabs.com";
-
-const client = new AptosClient(NODE_URL);
+import { client } from './aptos-client'
 
 export async function initializeFerum(
   signerPrivateKey: string,

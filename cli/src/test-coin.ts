@@ -1,10 +1,7 @@
 
 import fs from "fs";
-import { AptosAccount, AptosClient, TxnBuilderTypes, BCS, MaybeHexString, HexString, FaucetClient } from "aptos";
-
-export const NODE_URL = "https://fullnode.devnet.aptoslabs.com";
-
-const client = new AptosClient(NODE_URL);
+import { AptosAccount, AptosClient, TxnBuilderTypes, BCS, MaybeHexString, HexString } from "aptos";
+import { client } from './aptos-client'
 
 /** Publish a new module to the blockchain within the specified account */
 export async function publishModule(accountFrom: AptosAccount, moduleHex: string): Promise<string> {
