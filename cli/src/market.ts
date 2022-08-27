@@ -7,6 +7,21 @@ import {
 
 import { client } from './aptos-client'
 
+function coinTypeTags(instrumentCoin: string, quoteCoin: string) {
+  const instrumentCoinTypeTag = new TxnBuilderTypes.TypeTagStruct(
+    TxnBuilderTypes.StructTag.fromString(instrumentCoin)
+  );
+
+  const quoteCoinTypeTag = new TxnBuilderTypes.TypeTagStruct(
+    TxnBuilderTypes.StructTag.fromString(quoteCoin)
+  );
+  return [instrumentCoinTypeTag, quoteCoinTypeTag]
+}
+
+function toFixedPoint(n: number) {
+  return Math.pow(10, 10) * n
+}
+
 export async function initializeFerum(
   signerPrivateKey: string,
 ) {
@@ -54,21 +69,12 @@ export async function initializeOrderbook(
     Buffer.from(signerPrivateKey, "hex")
   );
   const signerAccount = new AptosAccount(signerPrivateKeyHex);
-  const sellTokenTypeTag = new TxnBuilderTypes.TypeTagStruct(
-    TxnBuilderTypes.StructTag.fromString(instrumentCoin)
-  );
-  const buyTokenTypeTag = new TxnBuilderTypes.TypeTagStruct(
-    TxnBuilderTypes.StructTag.fromString(quoteCoin)
-  );
-  const serializer = new BCS.Serializer();
-  serializer.serializeBool(false);
-
   const entryFunctionPayload =
     new TxnBuilderTypes.TransactionPayloadEntryFunction(
       TxnBuilderTypes.EntryFunction.natural(
         `${signerAccount.address()}::market`,
         "init_book",
-        [sellTokenTypeTag, buyTokenTypeTag],
+        coinTypeTags(instrumentCoin, quoteCoin),
         []
       )
     );
@@ -94,10 +100,6 @@ export async function initializeOrderbook(
   return pendingTxn.hash;
 }
 
-function toFixedPoint(n: number) {
-  return Math.pow(10, 10) * n
-}
-
 export async function cancelOrder(
   signerPrivateKey: string,
   orderID: number,
@@ -106,9 +108,6 @@ export async function cancelOrder(
     Buffer.from(signerPrivateKey, "hex")
   );
   const signerAccount = new AptosAccount(signerPrivateKeyHex);
-
-  const serializer = new BCS.Serializer();
-  serializer.serializeBool(false);
   const entryFunctionPayload =
     new TxnBuilderTypes.TransactionPayloadEntryFunction(
       TxnBuilderTypes.EntryFunction.natural(
@@ -154,21 +153,12 @@ export async function addLimitOrder(
     Buffer.from(signerPrivateKey, "hex")
   );
   const signerAccount = new AptosAccount(signerPrivateKeyHex);
-  const sellTokenTypeTag = new TxnBuilderTypes.TypeTagStruct(
-    TxnBuilderTypes.StructTag.fromString(instrumentCoin)
-  );
-
-  const buyTokenTypeTag = new TxnBuilderTypes.TypeTagStruct(
-    TxnBuilderTypes.StructTag.fromString(quoteCoin)
-  );
-  const serializer = new BCS.Serializer();
-  serializer.serializeBool(false);
   const entryFunctionPayload =
     new TxnBuilderTypes.TransactionPayloadEntryFunction(
       TxnBuilderTypes.EntryFunction.natural(
         `${signerAccount.address()}::market`,
         "add_limit_order",
-        [sellTokenTypeTag, buyTokenTypeTag],
+        coinTypeTags(instrumentCoin, quoteCoin),
         [
           BCS.bcsSerializeU8(side === 'buy' ? 1 : 0),
           BCS.bcsSerializeUint64(toFixedPoint(price)),
@@ -210,21 +200,12 @@ export async function addMarketOrder(
     Buffer.from(signerPrivateKey, "hex")
   );
   const signerAccount = new AptosAccount(signerPrivateKeyHex);
-  const sellTokenTypeTag = new TxnBuilderTypes.TypeTagStruct(
-    TxnBuilderTypes.StructTag.fromString(instrumentCoin)
-  );
-
-  const buyTokenTypeTag = new TxnBuilderTypes.TypeTagStruct(
-    TxnBuilderTypes.StructTag.fromString(quoteCoin)
-  );
-  const serializer = new BCS.Serializer();
-  serializer.serializeBool(false);
   const entryFunctionPayload =
     new TxnBuilderTypes.TransactionPayloadEntryFunction(
       TxnBuilderTypes.EntryFunction.natural(
         `${signerAccount.address()}::market`,
         "add_market_order",
-        [sellTokenTypeTag, buyTokenTypeTag],
+        coinTypeTags(instrumentCoin, quoteCoin),
         [
           BCS.bcsSerializeU8(side === 'buy' ? 1 : 0),
           BCS.bcsSerializeUint64(toFixedPoint(quantity)),
