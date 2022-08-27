@@ -1,13 +1,26 @@
-
 import fs from "fs";
-import { AptosAccount, AptosClient, TxnBuilderTypes, BCS, MaybeHexString, HexString } from "aptos";
-import { client } from './aptos-client'
+import {
+  AptosAccount,
+  AptosClient,
+  TxnBuilderTypes,
+  BCS,
+  MaybeHexString,
+  HexString,
+} from "aptos";
+import { client } from "./aptos-client";
+import { addCoinAddressIfNecessary } from "./module-name-utils";
 
 /** Publish a new module to the blockchain within the specified account */
-export async function publishModule(accountFrom: AptosAccount, moduleHex: string): Promise<string> {
-  const moduleBundlePayload = new TxnBuilderTypes.TransactionPayloadModuleBundle(
-    new TxnBuilderTypes.ModuleBundle([new TxnBuilderTypes.Module(new HexString(moduleHex).toUint8Array())]),
-  );
+export async function publishModule(
+  accountFrom: AptosAccount,
+  moduleHex: string
+): Promise<string> {
+  const moduleBundlePayload =
+    new TxnBuilderTypes.TransactionPayloadModuleBundle(
+      new TxnBuilderTypes.ModuleBundle([
+        new TxnBuilderTypes.Module(new HexString(moduleHex).toUint8Array()),
+      ])
+    );
 
   const [{ sequence_number: sequenceNumber }, chainId] = await Promise.all([
     client.getAccount(accountFrom.address()),
@@ -21,7 +34,7 @@ export async function publishModule(accountFrom: AptosAccount, moduleHex: string
     1000n,
     1n,
     BigInt(Math.floor(Date.now() / 1000) + 10),
-    new TxnBuilderTypes.ChainId(chainId),
+    new TxnBuilderTypes.ChainId(chainId)
   );
 
   const bcsTxn = AptosClient.generateBCSTransaction(accountFrom, rawTxn);
@@ -30,27 +43,34 @@ export async function publishModule(accountFrom: AptosAccount, moduleHex: string
   return transactionRes.hash;
 }
 /** Initializes the new coin */
-async function initializeCoin(accountFrom: AptosAccount, coinTypeAddress: HexString, coinName: string): Promise<string> {
+async function initializeCoin(
+  accountFrom: AptosAccount,
+  coinTypeAddress: HexString,
+  coinName: string
+): Promise<string> {
   const token = new TxnBuilderTypes.TypeTagStruct(
-    TxnBuilderTypes.StructTag.fromString(`${coinTypeAddress.hex()}::${coinName}`),
+    TxnBuilderTypes.StructTag.fromString(
+      `${coinTypeAddress.hex()}::${coinName}`
+    )
   );
 
   const serializer = new BCS.Serializer();
   serializer.serializeBool(false);
 
-  const entryFunctionPayload = new TxnBuilderTypes.TransactionPayloadEntryFunction(
-    TxnBuilderTypes.EntryFunction.natural(
-      "0x1::managed_coin",
-      "initialize",
-      [token],
-      [
-        BCS.bcsSerializeStr(coinName),
-        BCS.bcsSerializeStr(coinName),
-        BCS.bcsSerializeU8(6),
-        serializer.getBytes(),
-      ],
-    ),
-  );
+  const entryFunctionPayload =
+    new TxnBuilderTypes.TransactionPayloadEntryFunction(
+      TxnBuilderTypes.EntryFunction.natural(
+        "0x1::managed_coin",
+        "initialize",
+        [token],
+        [
+          BCS.bcsSerializeStr(coinName),
+          BCS.bcsSerializeStr(coinName),
+          BCS.bcsSerializeU8(6),
+          serializer.getBytes(),
+        ]
+      )
+    );
 
   const [{ sequence_number: sequenceNumber }, chainId] = await Promise.all([
     client.getAccount(accountFrom.address()),
@@ -64,7 +84,7 @@ async function initializeCoin(accountFrom: AptosAccount, coinTypeAddress: HexStr
     1000n,
     1n,
     BigInt(Math.floor(Date.now() / 1000) + 10),
-    new TxnBuilderTypes.ChainId(chainId),
+    new TxnBuilderTypes.ChainId(chainId)
   );
 
   const bcsTxn = AptosClient.generateBCSTransaction(accountFrom, rawTxn);
@@ -74,14 +94,26 @@ async function initializeCoin(accountFrom: AptosAccount, coinTypeAddress: HexStr
 }
 
 /** Receiver needs to register the coin before they can receive it */
-async function registerCoin(coinReceiver: AptosAccount, coinTypeAddress: HexString, coinName: string): Promise<string> {
+async function registerCoin(
+  coinReceiver: AptosAccount,
+  coinTypeAddress: HexString,
+  coinName: string
+): Promise<string> {
   const token = new TxnBuilderTypes.TypeTagStruct(
-    TxnBuilderTypes.StructTag.fromString(`${coinTypeAddress.hex()}::${coinName}`),
+    TxnBuilderTypes.StructTag.fromString(
+      `${coinTypeAddress.hex()}::${coinName}`
+    )
   );
 
-  const entryFunctionPayload = new TxnBuilderTypes.TransactionPayloadEntryFunction(
-    TxnBuilderTypes.EntryFunction.natural("0x1::coins", "register", [token], []),
-  );
+  const entryFunctionPayload =
+    new TxnBuilderTypes.TransactionPayloadEntryFunction(
+      TxnBuilderTypes.EntryFunction.natural(
+        "0x1::coins",
+        "register",
+        [token],
+        []
+      )
+    );
 
   const [{ sequence_number: sequenceNumber }, chainId] = await Promise.all([
     client.getAccount(coinReceiver.address()),
@@ -95,7 +127,7 @@ async function registerCoin(coinReceiver: AptosAccount, coinTypeAddress: HexStri
     1000n,
     1n,
     BigInt(Math.floor(Date.now() / 1000) + 10),
-    new TxnBuilderTypes.ChainId(chainId),
+    new TxnBuilderTypes.ChainId(chainId)
   );
 
   const bcsTxn = AptosClient.generateBCSTransaction(coinReceiver, rawTxn);
@@ -110,20 +142,28 @@ async function mintCoin(
   coinTypeAddress: HexString,
   receiverAddress: HexString,
   amount: number,
-  coinName: string,
+  coinName: string
 ): Promise<string> {
   const token = new TxnBuilderTypes.TypeTagStruct(
-    TxnBuilderTypes.StructTag.fromString(`${coinTypeAddress.hex()}::${coinName}`),
+    TxnBuilderTypes.StructTag.fromString(
+      `${coinTypeAddress.hex()}::${coinName}`
+    )
   );
 
-  const entryFunctionPayload = new TxnBuilderTypes.TransactionPayloadEntryFunction(
-    TxnBuilderTypes.EntryFunction.natural(
-      "0x1::managed_coin",
-      "mint",
-      [token],
-      [BCS.bcsToBytes(TxnBuilderTypes.AccountAddress.fromHex(receiverAddress.hex())), BCS.bcsSerializeUint64(amount)],
-    ),
-  );
+  const entryFunctionPayload =
+    new TxnBuilderTypes.TransactionPayloadEntryFunction(
+      TxnBuilderTypes.EntryFunction.natural(
+        "0x1::managed_coin",
+        "mint",
+        [token],
+        [
+          BCS.bcsToBytes(
+            TxnBuilderTypes.AccountAddress.fromHex(receiverAddress.hex())
+          ),
+          BCS.bcsSerializeUint64(amount),
+        ]
+      )
+    );
 
   const [{ sequence_number: sequenceNumber }, chainId] = await Promise.all([
     client.getAccount(coinOwner.address()),
@@ -137,7 +177,7 @@ async function mintCoin(
     1000n,
     1n,
     BigInt(Math.floor(Date.now() / 1000) + 10),
-    new TxnBuilderTypes.ChainId(chainId),
+    new TxnBuilderTypes.ChainId(chainId)
   );
 
   const bcsTxn = AptosClient.generateBCSTransaction(coinOwner, rawTxn);
@@ -145,11 +185,15 @@ async function mintCoin(
   return pendingTxn.hash;
 }
 
-async function getBalance(accountAddress: MaybeHexString, coinTypeAddress: HexString, coinName: string): Promise<number> {
+async function getBalance(
+  accountAddress: MaybeHexString,
+  coinTypeAddress: HexString,
+  coinName: string
+): Promise<number> {
   try {
     const resource = await client.getAccountResource(
       accountAddress,
-      `0x1::coin::CoinStore<${coinTypeAddress.hex()}::${coinName}>`,
+      `0x1::coin::CoinStore<${coinTypeAddress.hex()}::${coinName}>`
     );
     return parseInt((resource.data as any)["coin"]["value"]);
   } catch (_) {
@@ -157,51 +201,84 @@ async function getBalance(accountAddress: MaybeHexString, coinTypeAddress: HexSt
   }
 }
 
-export async function getTestCoinBalance(privateKey: string, coinName: string) : Promise<number> {
-  const privateKeyHex = Uint8Array.from(
-    Buffer.from(privateKey, "hex"),
-  );
+export async function getTestCoinBalance(
+  privateKey: string,
+  coinName: string
+): Promise<number> {
+  const privateKeyHex = Uint8Array.from(Buffer.from(privateKey, "hex"));
   const coinMasterAccount = new AptosAccount(privateKeyHex);
-  return await getBalance(coinMasterAccount.address(), coinMasterAccount.address(), coinName)
+  return await getBalance(
+    coinMasterAccount.address(),
+    coinMasterAccount.address(),
+    coinName
+  );
 }
 
-export async function createTestCoin(privateKey: string, coinModuleByteCodePath: string, coinName: string) {
-  const privateKeyHex = Uint8Array.from(
-    Buffer.from(privateKey, "hex"),
-  );
+export async function createTestCoin(
+  privateKey: string,
+  coinModuleByteCodePath: string,
+  coinName: string
+) {
+  const privateKeyHex = Uint8Array.from(Buffer.from(privateKey, "hex"));
   const coinMasterAccount = new AptosAccount(privateKeyHex);
-
+  coinName = addCoinAddressIfNecessary(coinMasterAccount.address().toString(), coinName);
   console.log("\n=== Name, Account, Coins ===");
-  console.log(`Current Balance: ${coinMasterAccount.address()}: ${await getBalance(coinMasterAccount.address(), coinMasterAccount.address(), coinName)}`);
+  console.log(
+    `Current Balance: ${coinMasterAccount.address()}: ${await getBalance(
+      coinMasterAccount.address(),
+      coinMasterAccount.address(),
+      coinName
+    )}`
+  );
 
   const moduleHex = fs.readFileSync(coinModuleByteCodePath).toString("hex");
-  
+
   let txHash;
 
   // 1. Publish coin module.
   console.log("Publishing coin module...");
   txHash = await publishModule(coinMasterAccount, moduleHex);
-  console.log(txHash)
+  console.log(txHash);
   console.log(await client.waitForTransaction(txHash));
 
   // 2. Initialize coin.
   console.log("Initializing new coin...");
-  txHash = await initializeCoin(coinMasterAccount, coinMasterAccount.address(), coinName);
-  console.log(txHash)
+  txHash = await initializeCoin(
+    coinMasterAccount,
+    coinMasterAccount.address(),
+    coinName
+  );
+  console.log(txHash);
   console.log(await client.waitForTransaction(txHash));
 
   // 3. Register coin to receive it.
   console.log("Register coin");
-  txHash = await registerCoin(coinMasterAccount, coinMasterAccount.address(), coinName);
-  console.log(txHash)
+  txHash = await registerCoin(
+    coinMasterAccount,
+    coinMasterAccount.address(),
+    coinName
+  );
+  console.log(txHash);
   await client.waitForTransaction(txHash);
 
   // 4. Mint new coins.
   console.log("Minting 100 coins");
-  txHash = await mintCoin(coinMasterAccount, coinMasterAccount.address(), coinMasterAccount.address(), 100 * Math.pow(10, 6), coinName);
-  console.log(txHash)
+  txHash = await mintCoin(
+    coinMasterAccount,
+    coinMasterAccount.address(),
+    coinMasterAccount.address(),
+    100 * Math.pow(10, 6),
+    coinName
+  );
+  console.log(txHash);
   await client.waitForTransaction(txHash);
 
   // 5. Check new balance
-  console.log(`New balance: ${await getBalance(coinMasterAccount.address(), coinMasterAccount.address(), coinName)}`);
+  console.log(
+    `New balance: ${await getBalance(
+      coinMasterAccount.address(),
+      coinMasterAccount.address(),
+      coinName
+    )}`
+  );
 }
