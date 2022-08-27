@@ -4,6 +4,7 @@ import {
   TxnBuilderTypes,
   BCS,
 } from "aptos";
+import { TransactionPayloadEntryFunction } from "aptos/dist/transaction_builder/aptos_types";
 
 import { client } from './aptos-client'
 
@@ -22,23 +23,14 @@ function toFixedPoint(n: number) {
   return Math.pow(10, 10) * n
 }
 
-export async function initializeFerum(
+async function sendSignedtransaction(
   signerPrivateKey: string,
+  entryFunctionPayload: TransactionPayloadEntryFunction,
 ) {
   const signerPrivateKeyHex = Uint8Array.from(
     Buffer.from(signerPrivateKey, "hex")
   );
   const signerAccount = new AptosAccount(signerPrivateKeyHex);
-  const entryFunctionPayload =
-    new TxnBuilderTypes.TransactionPayloadEntryFunction(
-      TxnBuilderTypes.EntryFunction.natural(
-        `${signerAccount.address()}::market`,
-        "init_ferum",
-        [],
-        []
-      )
-    );
-
   const [{ sequence_number: sequenceNumber }, chainId] = await Promise.all([
     client.getAccount(signerAccount.address()),
     client.getChainId(),
@@ -58,6 +50,25 @@ export async function initializeFerum(
   const pendingTxn = await client.submitSignedBCSTransaction(bcsTxn);
 
   return pendingTxn.hash;
+}
+
+export async function initializeFerum(
+  signerPrivateKey: string,
+) {
+  const signerPrivateKeyHex = Uint8Array.from(
+    Buffer.from(signerPrivateKey, "hex")
+  );
+  const signerAccount = new AptosAccount(signerPrivateKeyHex);
+  const entryFunctionPayload =
+    new TxnBuilderTypes.TransactionPayloadEntryFunction(
+      TxnBuilderTypes.EntryFunction.natural(
+        `${signerAccount.address()}::market`,
+        "init_ferum",
+        [],
+        []
+      )
+    );
+  return await sendSignedtransaction(signerPrivateKey, entryFunctionPayload)
 }
 
 export async function initializeOrderbook(
@@ -78,26 +89,7 @@ export async function initializeOrderbook(
         []
       )
     );
-
-  const [{ sequence_number: sequenceNumber }, chainId] = await Promise.all([
-    client.getAccount(signerAccount.address()),
-    client.getChainId(),
-  ]);
-
-  const rawTxn = new TxnBuilderTypes.RawTransaction(
-    TxnBuilderTypes.AccountAddress.fromHex(signerAccount.address()),
-    BigInt(sequenceNumber),
-    entryFunctionPayload,
-    1000n,
-    1n,
-    BigInt(Math.floor(Date.now() / 1000) + 10),
-    new TxnBuilderTypes.ChainId(chainId)
-  );
-
-  const bcsTxn = AptosClient.generateBCSTransaction(signerAccount, rawTxn);
-  const pendingTxn = await client.submitSignedBCSTransaction(bcsTxn);
-
-  return pendingTxn.hash;
+    return await sendSignedtransaction(signerPrivateKey, entryFunctionPayload)
 }
 
 export async function cancelOrder(
@@ -119,26 +111,7 @@ export async function cancelOrder(
         ]
       )
     );
-
-  const [{ sequence_number: sequenceNumber }, chainId] = await Promise.all([
-    client.getAccount(signerAccount.address()),
-    client.getChainId(),
-  ]);
-
-  const rawTxn = new TxnBuilderTypes.RawTransaction(
-    TxnBuilderTypes.AccountAddress.fromHex(signerAccount.address()),
-    BigInt(sequenceNumber),
-    entryFunctionPayload,
-    1000n,
-    1n,
-    BigInt(Math.floor(Date.now() / 1000) + 10),
-    new TxnBuilderTypes.ChainId(chainId)
-  );
-
-  const bcsTxn = AptosClient.generateBCSTransaction(signerAccount, rawTxn);
-  const pendingTxn = await client.submitSignedBCSTransaction(bcsTxn);
-
-  return pendingTxn.hash;
+    return await sendSignedtransaction(signerPrivateKey, entryFunctionPayload)
 }
 
 export async function addLimitOrder(
@@ -166,26 +139,7 @@ export async function addLimitOrder(
         ]
       )
     );
-
-  const [{ sequence_number: sequenceNumber }, chainId] = await Promise.all([
-    client.getAccount(signerAccount.address()),
-    client.getChainId(),
-  ]);
-
-  const rawTxn = new TxnBuilderTypes.RawTransaction(
-    TxnBuilderTypes.AccountAddress.fromHex(signerAccount.address()),
-    BigInt(sequenceNumber),
-    entryFunctionPayload,
-    1000n,
-    1n,
-    BigInt(Math.floor(Date.now() / 1000) + 10),
-    new TxnBuilderTypes.ChainId(chainId)
-  );
-
-  const bcsTxn = AptosClient.generateBCSTransaction(signerAccount, rawTxn);
-  const pendingTxn = await client.submitSignedBCSTransaction(bcsTxn);
-
-  return pendingTxn.hash;
+    return await sendSignedtransaction(signerPrivateKey, entryFunctionPayload)
 }
 
 export async function addMarketOrder(
@@ -213,24 +167,5 @@ export async function addMarketOrder(
         ]
       )
     );
-
-  const [{ sequence_number: sequenceNumber }, chainId] = await Promise.all([
-    client.getAccount(signerAccount.address()),
-    client.getChainId(),
-  ]);
-
-  const rawTxn = new TxnBuilderTypes.RawTransaction(
-    TxnBuilderTypes.AccountAddress.fromHex(signerAccount.address()),
-    BigInt(sequenceNumber),
-    entryFunctionPayload,
-    1000n,
-    1n,
-    BigInt(Math.floor(Date.now() / 1000) + 10),
-    new TxnBuilderTypes.ChainId(chainId)
-  );
-
-  const bcsTxn = AptosClient.generateBCSTransaction(signerAccount, rawTxn);
-  const pendingTxn = await client.submitSignedBCSTransaction(bcsTxn);
-
-  return pendingTxn.hash;
+    return await sendSignedtransaction(signerPrivateKey, entryFunctionPayload)
 }
