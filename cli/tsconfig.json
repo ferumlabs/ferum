@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "lib": [
+      "es2021",
+      "dom"
+    ],
+    "types": [
+      "node"
+    ],
+    "module": "commonjs",
+    "target": "es2021",
+    "outDir": "./lib",
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "moduleResolution": "node",
+    "noImplicitAny": true,
+    "allowJs": true,
+    "preserveConstEnums": true,
+    "sourceMap": true,
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "**/__tests__/*"]
+}
