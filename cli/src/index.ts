@@ -10,6 +10,7 @@ import { Transaction_UserTransaction } from "aptos/dist/generated";
 import { publishModuleUsingCLI } from "./utils/module-publish-utils";
 import { client, NODE_URL } from './aptos-client';
 import Config, {CONFIG_PATH} from './config';
+import { testModuleUsingCLI } from "./utils/module-testing-utils";
 
 // Register test coin symbols with ferum account alias.
 for (let symbol in TEST_COINS) {
@@ -112,6 +113,19 @@ signedCmd("publish-ferum")
     try {
       await publishModuleUsingCLI(NODE_URL, account, modulePath, maxGasNum);
       Config.setFerumAddress((account as AptosAccount).address().toString());
+    } 
+    catch {
+      console.error('Unable to publish module.');
+    }
+  });
+ 
+signedCmd("test-ferum")
+  .requiredOption("-m, --module-path <string>", "Module path.")
+  .action(async (_, cmd) => {
+    const { account, modulePath } = cmd.opts();
+    log.info('Testing modules under account', account.address());
+    try {
+      await testModuleUsingCLI(NODE_URL, account, modulePath);
     } 
     catch {
       console.error('Unable to publish module.');
