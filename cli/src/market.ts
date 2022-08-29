@@ -4,18 +4,9 @@ import {
   BCS,
 } from "aptos";
 
-import { sendSignedTransactionWithPrivateKey } from  "./utils/transaction-utils";
-import { addAddressIfNecessary } from './utils/module-name-utils';
-import { TestCoinSymbol, TEST_COINS } from  "./test-coins";
+import { sendSignedTransactionWithAccount, sendSignedTransactionWithPrivateKey } from  "./utils/transaction-utils";
 
-function coinTypeTags(address: string, instrumentCoin: string, quoteCoin: string) {
-  if (instrumentCoin in TEST_COINS) {
-    instrumentCoin = addAddressIfNecessary(address, TEST_COINS[instrumentCoin as TestCoinSymbol]);
-  }
-  if (quoteCoin in TEST_COINS) {
-    quoteCoin = addAddressIfNecessary(address, TEST_COINS[quoteCoin as TestCoinSymbol]);
-  }
-
+function coinTypeTags(instrumentCoin: string, quoteCoin: string) {
   const instrumentCoinTypeTag = new TxnBuilderTypes.TypeTagStruct(
     TxnBuilderTypes.StructTag.fromString(instrumentCoin)
   );
@@ -31,12 +22,8 @@ function toFixedPoint(n: number) {
 }
 
 export async function initializeFerum(
-  signerPrivateKey: string,
+  signerAccount: AptosAccount,
 ) {
-  const signerPrivateKeyHex = Uint8Array.from(
-    Buffer.from(signerPrivateKey, "hex")
-  );
-  const signerAccount = new AptosAccount(signerPrivateKeyHex);
   const entryFunctionPayload =
     new TxnBuilderTypes.TransactionPayloadEntryFunction(
       TxnBuilderTypes.EntryFunction.natural(
@@ -46,75 +33,65 @@ export async function initializeFerum(
         []
       )
     );
-  return await sendSignedTransactionWithPrivateKey(signerPrivateKey, entryFunctionPayload)
+  return await sendSignedTransactionWithAccount(signerAccount, entryFunctionPayload)
 }
 
 export async function initializeMarket(
-  signerPrivateKey: string,
+  signerAccount: AptosAccount,
   instrumentCoin: string,
   instrumentDecimals: number,
   quoteCoin: string,
   quoteDecimals: number,
 ) {
-  const signerPrivateKeyHex = Uint8Array.from(
-    Buffer.from(signerPrivateKey, "hex")
-  );
-  const signerAccount = new AptosAccount(signerPrivateKeyHex);
   const entryFunctionPayload =
     new TxnBuilderTypes.TransactionPayloadEntryFunction(
       TxnBuilderTypes.EntryFunction.natural(
         `${signerAccount.address()}::market`,
         "init_market",
-        coinTypeTags(signerAccount.address().toString(), instrumentCoin, quoteCoin),
+        coinTypeTags(instrumentCoin, quoteCoin),
         [
           BCS.bcsSerializeU8(instrumentDecimals),
           BCS.bcsSerializeU8(quoteDecimals),
         ]
       )
     );
-    return await sendSignedTransactionWithPrivateKey(signerPrivateKey, entryFunctionPayload)
+    return await sendSignedTransactionWithAccount(signerAccount, entryFunctionPayload)
 }
 
 export async function cancelOrder(
-  signerPrivateKey: string,
+  signerAccount: AptosAccount,
   orderID: number,
+  instrumentCoinType: string,
+  quoteCoinType: string,
 ) {
-  const signerPrivateKeyHex = Uint8Array.from(
-    Buffer.from(signerPrivateKey, "hex")
-  );
-  const signerAccount = new AptosAccount(signerPrivateKeyHex);
   const entryFunctionPayload =
     new TxnBuilderTypes.TransactionPayloadEntryFunction(
       TxnBuilderTypes.EntryFunction.natural(
         `${signerAccount.address()}::market`,
         "cancel_order",
-        [],
+        coinTypeTags(instrumentCoinType, quoteCoinType),
         [
           BCS.bcsSerializeU128(orderID),
         ]
       )
     );
-    return await sendSignedTransactionWithPrivateKey(signerPrivateKey, entryFunctionPayload)
+    return await sendSignedTransactionWithAccount(signerAccount, entryFunctionPayload)
 }
 
 export async function addLimitOrder(
-  signerPrivateKey: string,
+  signerAccount: AptosAccount,
   instrumentCoin: string,
   quoteCoin: string,
   side: 'buy' | 'sell',
   price: number,
   quantity: number,
 ) {
-  const signerPrivateKeyHex = Uint8Array.from(
-    Buffer.from(signerPrivateKey, "hex")
-  );
-  const signerAccount = new AptosAccount(signerPrivateKeyHex);
   const entryFunctionPayload =
     new TxnBuilderTypes.TransactionPayloadEntryFunction(
       TxnBuilderTypes.EntryFunction.natural(
         `${signerAccount.address()}::market`,
         "add_limit_order",
-        coinTypeTags(signerAccount.address().toString(), instrumentCoin, quoteCoin),
+        coinTypeTags(instrumentCoin, quoteCoin),
         [
           BCS.bcsSerializeU8(side === 'buy' ? 1 : 0),
           BCS.bcsSerializeUint64(toFixedPoint(price)),
@@ -122,27 +99,23 @@ export async function addLimitOrder(
         ]
       )
     );
-    return await sendSignedTransactionWithPrivateKey(signerPrivateKey, entryFunctionPayload)
+    return await sendSignedTransactionWithAccount(signerAccount, entryFunctionPayload)
 }
 
 export async function addMarketOrder(
-  signerPrivateKey: string,
+  signerAccount: AptosAccount,
   instrumentCoin: string,
   quoteCoin: string,
   side: 'buy' | 'sell',
   quantity: number,
   maxCollateral: number,
 ) {
-  const signerPrivateKeyHex = Uint8Array.from(
-    Buffer.from(signerPrivateKey, "hex")
-  );
-  const signerAccount = new AptosAccount(signerPrivateKeyHex);
   const entryFunctionPayload =
     new TxnBuilderTypes.TransactionPayloadEntryFunction(
       TxnBuilderTypes.EntryFunction.natural(
         `${signerAccount.address()}::market`,
         "add_market_order",
-        coinTypeTags(signerAccount.address().toString(), instrumentCoin, quoteCoin),
+        coinTypeTags(instrumentCoin, quoteCoin),
         [
           BCS.bcsSerializeU8(side === 'buy' ? 1 : 0),
           BCS.bcsSerializeUint64(toFixedPoint(quantity)),
@@ -150,5 +123,5 @@ export async function addMarketOrder(
         ]
       )
     );
-    return await sendSignedTransactionWithPrivateKey(signerPrivateKey, entryFunctionPayload)
+    return await sendSignedTransactionWithAccount(signerAccount, entryFunctionPayload)
 }

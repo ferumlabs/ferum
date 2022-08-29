@@ -6,7 +6,7 @@ import {
   HexString,
 } from "aptos";
 import { client } from "./aptos-client";
-import { addAddressIfNecessary } from "./utils/module-name-utils";
+import Config, { CONFIG_PATH } from "./config";
 import { sendSignedTransactionWithAccount } from "./utils/transaction-utils";
 
 export type TestCoinSymbol = 'FMA' | 'FMB';
@@ -15,6 +15,11 @@ export const TEST_COINS: {[key in TestCoinSymbol]: string} = {
   'FMA': 'test_coins::FakeMoneyA',
   'FMB': 'test_coins::FakeMoneyB',
 };
+
+// Resgiter type aliases for TEST coins.
+for (let symbol in TEST_COINS) {
+  Config.setAliasForType(symbol, TEST_COINS[symbol as TestCoinSymbol]);
+}
 
 /** Publish a new module to the blockchain within the specified account */
 /** Currently broken until Aptos fixes their SDK */ 
@@ -141,15 +146,10 @@ async function getBalance(
 }
 
 export async function getTestCoinBalance(
-  privateKey: string,
+  coinMasterAccount: AptosAccount,
   coinSymbol: TestCoinSymbol,
 ): Promise<number> {
-  const privateKeyHex = Uint8Array.from(Buffer.from(privateKey, "hex"));
-  const coinMasterAccount = new AptosAccount(privateKeyHex);
-  const coinName = addAddressIfNecessary(
-    coinMasterAccount.address().toString(),
-    TEST_COINS[coinSymbol],
-  );
+  const coinName = Config.tryResolveAlias(coinSymbol);
   return await getBalance(
     coinMasterAccount.address(),
     coinName
@@ -158,15 +158,10 @@ export async function getTestCoinBalance(
 
 // Sets up the test coin for the specified account.
 export async function createTestCoin(
-  privateKey: string,
+  coinMasterAccount: AptosAccount,
   coinSymbol: TestCoinSymbol,
 ) {
-  const privateKeyHex = Uint8Array.from(Buffer.from(privateKey, "hex"));
-  const coinMasterAccount = new AptosAccount(privateKeyHex);
-  const coinName = addAddressIfNecessary(
-    coinMasterAccount.address().toString(),
-    TEST_COINS[coinSymbol],
-  );
+  const coinName = Config.tryResolveAlias(coinSymbol);
 
   // 0. Show current balance.
   const currentBalance = await getBalance(
