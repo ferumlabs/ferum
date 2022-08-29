@@ -14,7 +14,7 @@ program.version("1.1.0");
 log.setLevel("info");
 
 programCommand("get-address")
-  .option("-pk, --private-key <string>", "private key of the account.", process.env.APTOS_KEY)
+  .option("-pk, --private-key [string]", "private key of the account.", process.env.APTOS_KEY)
   .action(async (_, cmd) => {
     const { privateKey } = cmd.opts();
     const privateKeyHex = Uint8Array.from(Buffer.from(privateKey, "hex"));
@@ -24,7 +24,7 @@ programCommand("get-address")
   });
 
 programCommand("publish-modules")
-  .option("-pk, --private-key <string>", "private key of the module account.", process.env.APTOS_KEY)
+  .option("-pk, --private-key [string]", "private key of the module account.", process.env.APTOS_KEY)
   .option("-m, --module-path <string>", "coin module path.")
   .option("-m, --max-gas [number]", "max gas used for transaction.", "10000")
   .action(async (_, cmd) => {
@@ -48,7 +48,7 @@ programCommand("publish-modules")
   });
  
 programCommand("create-test-coins")
-  .option("-pk, --private-key <string>", "private key of the module account.", process.env.APTOS_KEY)
+  .option("-pk, --private-key [string]", "private key of the module account.", process.env.APTOS_KEY)
   .action(async (_, cmd) => {
     const { privateKey } = cmd.opts();
     await createTestCoin(privateKey, "FMA");
@@ -56,7 +56,7 @@ programCommand("create-test-coins")
   });
 
 programCommand("test-coin-balances")
-  .option("-pk, --private-key <string>", "private key of the test coin module account.", process.env.APTOS_KEY)
+  .option("-pk, --private-key [string]", "private key of the test coin module account.", process.env.APTOS_KEY)
   .action(async (_, cmd) => {
     const { privateKey } = cmd.opts();
 
@@ -69,9 +69,10 @@ programCommand("test-coin-balances")
   });
 
 programCommand("init-ferum")
-  .option("-pk, --private-key <string>", "private key of the signer.", process.env.APTOS_KEY)
+  .option("-pk, --private-key [string]", "private key of the signer.", process.env.APTOS_KEY)
   .action(async (_, cmd) => {
     const { privateKey } = cmd.opts();
+    console.log(privateKey);
     const txHash = await initializeFerum(privateKey)
     console.log(`Started pending transaction: ${txHash}.`)
     const txResult = await client.waitForTransactionWithResult(txHash) as Transaction_UserTransaction;
@@ -79,7 +80,7 @@ programCommand("init-ferum")
   });
 
 programCommand("init-orderbook")
-  .option("-pk, --private-key <string>", "private key of the signer.", process.env.APTOS_KEY)
+  .option("-pk, --private-key [string]", "private key of the signer.", process.env.APTOS_KEY)
   .option("-ic, --instrument-coin <string>", "instrument coin.")
   .option("-qc, --quote-coin <string>", "quote coin.")
   .action(async (_, cmd) => {
@@ -91,7 +92,7 @@ programCommand("init-orderbook")
   });
 
   programCommand("add-limit-order")
-  .option("-pk, --private-key <string>", "private key of the signer.", process.env.APTOS_KEY)
+  .option("-pk, --private-key [string]", "private key of the signer.", process.env.APTOS_KEY)
   .option("-ic, --instrument-coin <string>", "instrument token.")
   .option("-qc, --quote-coin <string>", "quote token.")
   .option("-p, --price <number>", "quote price.")
@@ -106,7 +107,7 @@ programCommand("init-orderbook")
   });
 
   programCommand("add-market-order")
-  .option("-pk, --private-key <string>", "private key of the signer.", process.env.APTOS_KEY)
+  .option("-pk, --private-key [string]", "private key of the signer.", process.env.APTOS_KEY)
   .option("-ic, --instrument-coin <string>", "instrument token.")
   .option("-qc, --quote-coin <string>", "quote token.")
   .option("-s, --side <string>", "side: either buy or sell.")
@@ -122,7 +123,7 @@ programCommand("init-orderbook")
 
 
   programCommand("cancel-order")
-  .option("-pk, --private-key <string>", "private key of the signer.", process.env.APTOS_KEY)
+  .option("-pk, --private-key [string]", "private key of the signer.", process.env.APTOS_KEY)
   .option("-id, --order-id <number>", "order id.")
   .action(async (_, cmd) => {
     const { privateKey, orderID } = cmd.opts();
