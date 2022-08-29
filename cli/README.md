@@ -23,13 +23,13 @@ ts-node src/index.ts add-limit-order -ic FMA -qc FMB -p 2000 -q 1000 -s sell
 ### Add Market Order
 
 ```terminal
-nts-node src/index.ts add-market-order -ic FMA -qc FMB -c 2000 -q 1000 -s sell
+ts-node src/index.ts add-market-order -ic FMA -qc FMB -c 2000 -q 1000 -s sell
 ```
 
 ### Cancel Order
 
 ```terminal
-node lib/index.js cancel-order -ic FMA -qc FMB -id 12345
+ts-node lib/index.js cancel-order -ic FMA -qc FMB -id 12345
 ```
 
 ### Create Test Coins
