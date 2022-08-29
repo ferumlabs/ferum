@@ -115,7 +115,7 @@ signedCmd("publish-ferum")
 
     try {
       await publishModuleUsingCLI(NODE_URL, account, modulePath, maxGasNum);
-      Config.setFerrumAddress(account.address());
+      Config.setFerrumAddress((account as AptosAccount).address().toString());
     } 
     catch {
       console.error('Unable to publish module.');
@@ -193,11 +193,6 @@ signedCmd("init-market")
   });
 
 signedCmd("add-limit-order")
-  .option(
-    "-pk, --private-key [string]", 
-    "Private key of the account signing this transaction. Optional. Will use the APTOS_KEY env flag if not provided.",
-    process.env.APTOS_KEY,
-  )
   .requiredOption(
     "-ic, --instrument-coin-type <string>", 
     "Instrument CoinType. Must be a fully qualified type (address::module::CoinType) or an alias."

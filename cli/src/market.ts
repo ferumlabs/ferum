@@ -17,10 +17,6 @@ function coinTypeTags(instrumentCoin: string, quoteCoin: string) {
   return [instrumentCoinTypeTag, quoteCoinTypeTag]
 }
 
-function toFixedPoint(n: number) {
-  return Math.pow(10, 10) * n
-}
-
 export async function initializeFerum(
   signerAccount: AptosAccount,
 ) {
@@ -94,8 +90,8 @@ export async function addLimitOrder(
         coinTypeTags(instrumentCoin, quoteCoin),
         [
           BCS.bcsSerializeU8(side === 'buy' ? 1 : 0),
-          BCS.bcsSerializeUint64(toFixedPoint(price)),
-          BCS.bcsSerializeUint64(toFixedPoint(quantity)),
+          BCS.bcsSerializeUint64(price),
+          BCS.bcsSerializeUint64(quantity),
         ]
       )
     );
@@ -118,8 +114,8 @@ export async function addMarketOrder(
         coinTypeTags(instrumentCoin, quoteCoin),
         [
           BCS.bcsSerializeU8(side === 'buy' ? 1 : 0),
-          BCS.bcsSerializeUint64(toFixedPoint(quantity)),
-          BCS.bcsSerializeUint64(toFixedPoint(maxCollateral)),
+          BCS.bcsSerializeUint64(quantity),
+          BCS.bcsSerializeUint64(maxCollateral),
         ]
       )
     );
