@@ -1,6 +1,8 @@
 # Created by https://www.toptal.com/developers/gitignore/api/react,macos,nextjs
 # Edit at https://www.toptal.com/developers/gitignore?templates=react,macos,nextjs
 
+.idea
+
 ### macOS ###
 # General
 .DS_Store

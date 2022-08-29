@@ -1,6 +1,6 @@
 module ferum::market {
     use aptos_framework::coin;
-    use aptos_std::event::{EventHandle, emit_event, destroy_handle};
+    use aptos_std::event::{EventHandle, emit_event};
     use aptos_framework::account::{new_event_handle};
     use aptos_std::table;
     use std::vector;
@@ -97,13 +97,20 @@ module ferum::market {
         iDecimals: u8,
         /// Number of decimals for the quote coin.
         qDecimals: u8,
+
+        /// Finalize order events for this market.
+        finalizeEvents: EventHandle<FinalizeEvent>,
+        /// Execution events for this market.
+        executionEvents: EventHandle<ExecutionEvent>,
+        /// Create order events for this market.
+        createOrderEvents: EventHandle<CreateEvent>,
     }
 
     ///
     /// Events.
     ///
 
-    struct ExecutionEvent<phantom I, phantom Q> has drop, store {
+    struct ExecutionEvent has drop, store {
         orderID: u128,
         owner: address,
         orderMetadata: OrderMetadata,
@@ -116,14 +123,14 @@ module ferum::market {
         qty: FixedPoint,
     }
 
-    struct FinalizeEvent<phantom I, phantom Q> has drop, store {
+    struct FinalizeEvent has drop, store {
         orderID: u128,
         owner: address,
         orderMetadata: OrderMetadata,
         cancelAgent: u8,
     }
 
-    struct CreateEvent<phantom I, phantom Q> has drop, store {
+    struct CreateEvent has drop, store {
         orderID: u128,
         owner: address,
         orderMetadata: OrderMetadata,
@@ -136,6 +143,10 @@ module ferum::market {
         assert!(iCoinDecimals >= instrumentDecimals && qCoinDecimals >= quoteDecimals, ERR_INVALID_DECIMAL_CONFIG);
         assert!(instrumentDecimals + quoteDecimals <= min_u8(iCoinDecimals, qCoinDecimals), ERR_INVALID_DECIMAL_CONFIG);
 
+        let finalizeEvents = new_event_handle<FinalizeEvent>(owner);
+        let createOrderEvents = new_event_handle<CreateEvent>(owner);
+        let executionEvents = new_event_handle<ExecutionEvent>(owner);
+
         let book = OrderBook<I, Q>{
             marketOrders: vector::empty(),
             sells: vector::empty(),
@@ -145,6 +156,10 @@ module ferum::market {
             idCounter: 0,
             iDecimals: instrumentDecimals,
             qDecimals: quoteDecimals,
+            finalizeEvents,
+            createOrderEvents,
+            executionEvents,
+
         };
         move_to(owner, book);
 
@@ -173,22 +188,18 @@ module ferum::market {
         let bookAddr = get_market_addr<I, Q>();
         assert!(exists<OrderBook<I, Q>>(bookAddr), ERR_BOOK_NOT_EXISTS);
 
-        let finalize_event_handle = new_event_handle<FinalizeEvent<I, Q>>(owner);
-
         let book = borrow_global_mut<OrderBook<I, Q>>(bookAddr);
         assert!(table::contains(&book.orderMap, orderID), ERR_UNKNOWN_ORDER);
         let order = table::borrow_mut(&mut book.orderMap, orderID);
         let ownerAddr = address_of(owner);
         assert!(ownerAddr == order.owner, ERR_NOT_OWNER);
         mark_cancelled_order(
-            &mut finalize_event_handle,
+            &mut book.finalizeEvents,
             ownerAddr,
             order,
             CANCEL_AGENT_USER,
         );
         clean_orders(book);
-
-        destroy_handle(finalize_event_handle);
     }
 
     ///
@@ -292,7 +303,7 @@ module ferum::market {
     fun add_order<I, Q>(owner: &signer, book: &mut OrderBook<I, Q>, order: Order<I, Q>) {
         validate_order(&order);
 
-        emit_order_created_event(owner, &order);
+        emit_order_created_event(owner, book, &order);
 
         if (order.metadata.type == TYPE_MARKET) {
             vector::push_back(&mut book.marketOrders, order.id);
@@ -305,14 +316,10 @@ module ferum::market {
         let orderMap = &mut book.orderMap;
         table::add(orderMap, order.id, order);
 
-        process_orders(owner, book)
+        process_orders(book)
     }
 
-    fun process_orders<I, Q>(owner: &signer, book: &mut OrderBook<I, Q>) {
-        // Create event handlers.
-        let execution_event_handle = new_event_handle<ExecutionEvent<I, Q>>(owner);
-        let finalize_event_handle = new_event_handle<FinalizeEvent<I, Q>>(owner);
-
+    fun process_orders<I, Q>(book: &mut OrderBook<I, Q>) {
         let buys = &book.buys;
         let sells = &book.sells;
         let marketOrders = &book.marketOrders;
@@ -325,8 +332,8 @@ module ferum::market {
                 let order = get_order_from_list_mut(orderMap, marketOrders, i);
                 if (order.metadata.side == SIDE_BUY) {
                     execute_market_order(
-                        &mut execution_event_handle,
-                        &mut finalize_event_handle,
+                        &mut book.executionEvents,
+                        &mut book.finalizeEvents,
                         orderMap,
                         sells,
                         order.id,
@@ -334,8 +341,8 @@ module ferum::market {
                 }
                 else {
                     execute_market_order(
-                        &mut execution_event_handle,
-                        &mut finalize_event_handle,
+                        &mut book.executionEvents,
+                        &mut book.finalizeEvents,
                         orderMap,
                         buys,
                         order.id,
@@ -357,17 +364,12 @@ module ferum::market {
 
         // If there are no orders in any one sides, we can return.
         if (vector::length(buys) == 0 || vector::length(sells) == 0) {
-            destroy_handle(execution_event_handle);
-            destroy_handle(finalize_event_handle);
             return
         };
 
-        execute_limit_orders(&mut execution_event_handle, &mut finalize_event_handle, book);
+        execute_limit_orders(book);
 
         clean_orders(book);
-
-        destroy_handle(execution_event_handle);
-        destroy_handle(finalize_event_handle);
     }
 
     fun get_order_from_list_mut<I, Q>(
@@ -427,11 +429,7 @@ module ferum::market {
         };
     }
 
-    fun execute_limit_orders<I, Q>(
-        execution_event_handle: &mut EventHandle<ExecutionEvent<I, Q>>,
-        finalize_event_handle: &mut EventHandle<FinalizeEvent<I, Q>>,
-        book: &mut OrderBook<I, Q>,
-    ) {
+    fun execute_limit_orders<I, Q>(book: &mut OrderBook<I, Q>) {
         let orderMap = &mut book.orderMap;
         let buys = &book.buys;
         let sells = &book.sells;
@@ -472,7 +470,7 @@ module ferum::market {
 
             swap_collateral(orderMap, maxBidID, minAskID, price, executedQty);
 
-            emit_event(execution_event_handle, ExecutionEvent<I, Q>{
+            emit_event(&mut book.executionEvents, ExecutionEvent {
                 orderID: maxBidID,
                 owner: maxBidOwner,
                 orderMetadata: maxBidMetadata,
@@ -485,7 +483,7 @@ module ferum::market {
                 qty: executedQty,
             });
 
-            emit_event(execution_event_handle, ExecutionEvent<I, Q>{
+            emit_event(&mut book.executionEvents, ExecutionEvent {
                 orderID: minAskID,
                 owner: minAskOwner,
                 orderMetadata: minAskMetadata,
@@ -501,7 +499,7 @@ module ferum::market {
             // Update order status.
             {
                 let maxBidMut = get_order_from_list_mut(orderMap, buys, maxBidIdx);
-                if (finalize_order_if_needed(finalize_event_handle, maxBidMut)) {
+                if (finalize_order_if_needed(&mut book.finalizeEvents, maxBidMut)) {
                     if (maxBidIdx == 0) {
                         break
                     };
@@ -511,7 +509,7 @@ module ferum::market {
             };
             {
                 let minAskMut = get_order_from_list_mut(orderMap, sells, minAskIdx);
-                if (finalize_order_if_needed(finalize_event_handle, minAskMut)) {
+                if (finalize_order_if_needed(&mut book.finalizeEvents, minAskMut)) {
                     if (minAskIdx == 0) {
                         break
                     };
@@ -523,8 +521,8 @@ module ferum::market {
     }
 
     fun execute_market_order<I, Q>(
-        execution_event_handle: &mut EventHandle<ExecutionEvent<I, Q>>,
-        finalize_event_handle: &mut EventHandle<FinalizeEvent<I, Q>>,
+        execution_event_handle: &mut EventHandle<ExecutionEvent >,
+        finalize_event_handle: &mut EventHandle<FinalizeEvent>,
         orderMap: &mut table::Table<u128, Order<I, Q>>,
         orderList: &vector<u128>,
         orderID: u128,
@@ -592,7 +590,7 @@ module ferum::market {
                 );
             };
 
-            emit_event(execution_event_handle, ExecutionEvent<I, Q>{
+            emit_event(execution_event_handle, ExecutionEvent {
                 orderID,
                 owner: orderOwner,
                 orderMetadata,
@@ -605,7 +603,7 @@ module ferum::market {
                 qty: executedQty,
             });
 
-            emit_event(execution_event_handle, ExecutionEvent<I, Q>{
+            emit_event(execution_event_handle, ExecutionEvent {
                 orderID: bookOrderID,
                 owner: bookOrderOwner,
                 orderMetadata: bookOrderMetadata,
@@ -711,14 +709,14 @@ module ferum::market {
     ///
 
     fun finalize_order_if_needed<I, Q>(
-        finalize_event_handle: &mut EventHandle<FinalizeEvent<I, Q>>,
+        finalize_event_handle: &mut EventHandle<FinalizeEvent>,
         order: &mut Order<I, Q>,
     ): bool {
         let hasCollateral = has_remaining_collateral(order);
         let hasQty = has_remaining_qty(order);
         if (!hasCollateral || !hasQty) {
             order.metadata.status = if (hasQty) STATUS_PARTIALLY_FILLED else STATUS_FILLED;
-            emit_event(finalize_event_handle, FinalizeEvent<I, Q>{
+            emit_event(finalize_event_handle, FinalizeEvent{
                 owner: order.owner,
                 orderID: order.id,
                 orderMetadata: order.metadata,
@@ -729,14 +727,12 @@ module ferum::market {
         false
     }
 
-    fun emit_order_created_event<I, Q>(owner: &signer, order: &Order<I, Q>) {
-        let event_handle = new_event_handle<CreateEvent<I, Q>>(owner);
-        emit_event(&mut event_handle, CreateEvent<I, Q>{
+    fun emit_order_created_event<I, Q>(owner: &signer, book: &mut OrderBook<I, Q>, order: &Order<I, Q>) {
+        emit_event(&mut book.createOrderEvents, CreateEvent{
             orderID: order.id,
             owner: address_of(owner),
             orderMetadata: order.metadata,
         });
-        destroy_handle(event_handle);
     }
 
     fun has_remaining_qty<I, Q>(order: &Order<I, Q>): bool {
@@ -758,13 +754,13 @@ module ferum::market {
     }
 
     public fun mark_cancelled_order<I, Q>(
-        finalize_event_handle: &mut EventHandle<FinalizeEvent<I, Q>>,
+        finalize_event_handle: &mut EventHandle<FinalizeEvent>,
         owner: address,
         order: &mut Order<I, Q>,
         cancelAgent: u8,
     ) {
         order.metadata.status = STATUS_CANCELLED;
-        emit_event(finalize_event_handle, FinalizeEvent<I, Q>{
+        emit_event(finalize_event_handle, FinalizeEvent{
             orderID: order.id,
             owner,
             orderMetadata: order.metadata,
