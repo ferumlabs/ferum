@@ -2,7 +2,7 @@
 
 1. Create a new profile: `ts-node src/index.ts create-profile -n ferum` (you can name it whatever).
 
-1. Publish ferum modules: `ts-node src/index.ts publish-ferum -m ../../ferrum.xyz`.
+1. Publish ferum modules: `ts-node src/index.ts publish-ferum -m ../contract`.
 
 1. Create test coins: `ts-node src/index.ts create-test-coins`.
 
