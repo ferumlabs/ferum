@@ -3,84 +3,118 @@
 import { program } from "commander";
 import log from "loglevel";
 import util from "util";
-import { createTestCoin, getTestCoinBalance} from "./test-coin";
+import { createTestCoin, getTestCoinBalance, TestCoinSymbol, TEST_COINS } from "./test-coins";
 import { initializeFerum, initializeOrderbook, addLimitOrder, addMarketOrder, cancelOrder } from "./market";
-import { AptosClient } from "aptos";
+import { AptosAccount } from "aptos";
 import { Transaction_UserTransaction } from "aptos/dist/generated";
-
-export const NODE_URL = "https://fullnode.devnet.aptoslabs.com";
-
-const client = new AptosClient(NODE_URL);
+import { publishModuleUsingCLI } from "./utils/module-publish-utils";
+import { client, NODE_URL } from './aptos-client';
 
 program.version("1.1.0");
 log.setLevel("info");
 
-programCommand("create-test-coin")
-  .option("-sk, --signer-key <string>", "private key of the test coin module account.", process.env.APTOS_KEY)
-  .option("-m, --module-path <string>", "coin module path.")
-  .option("-n, --coin-name <string>", "coin name.")
+programCommand("get-address")
+  .option("-pk, --private-key <string>", "private key of the account.", process.env.APTOS_KEY)
   .action(async (_, cmd) => {
-    const { signerKey, modulePath, coinName} = cmd.opts();
-    await createTestCoin(signerKey, modulePath, coinName)
+    const { privateKey } = cmd.opts();
+    const privateKeyHex = Uint8Array.from(Buffer.from(privateKey, "hex"));
+    const account = new AptosAccount(privateKeyHex);
+
+    console.log(`Address: ${account.address()}`);
+  });
+
+programCommand("publish-modules")
+  .option("-pk, --private-key <string>", "private key of the module account.", process.env.APTOS_KEY)
+  .option("-m, --module-path <string>", "coin module path.")
+  .option("-m, --max-gas [number]", "max gas used for transaction.", "10000")
+  .action(async (_, cmd) => {
+    const { privateKey, modulePath, maxGas } = cmd.opts();
+
+    if (Number(maxGas) === NaN) {
+      throw new Error('Invalid max-gas param');
+    }
+
+    const privateKeyHex = Uint8Array.from(Buffer.from(privateKey, "hex"));
+    const account = new AptosAccount(privateKeyHex);
+
+    console.log('Publishing modules under account', account.address());
+
+    try {
+      await publishModuleUsingCLI(NODE_URL, account, modulePath, maxGas);
+    } 
+    catch {
+      console.error('Unable to publish module.');
+    }
+  });
+ 
+programCommand("create-test-coins")
+  .option("-pk, --private-key <string>", "private key of the module account.", process.env.APTOS_KEY)
+  .action(async (_, cmd) => {
+    const { privateKey } = cmd.opts();
+    await createTestCoin(privateKey, "FMA");
+    await createTestCoin(privateKey, "FMB");
   });
 
 programCommand("test-coin-balances")
-  .option("-sk, --signer-key <string>", "private key of the test coin module account.", process.env.APTOS_KEY)
+  .option("-pk, --private-key <string>", "private key of the test coin module account.", process.env.APTOS_KEY)
   .action(async (_, cmd) => {
-    const { signerKey } = cmd.opts();
-    prettyPrint("Coin Balances", {
-      "test coins: " : await getTestCoinBalance(signerKey, "test_coin::TestCoin"),
-      "berry coins: " :  await getTestCoinBalance(signerKey, "berry_coin::BerryCoin"),
-    })
+    const { privateKey } = cmd.opts();
+
+    const balances: {[key: string]: number} = {};
+    for (let coinSymbol in TEST_COINS) {
+      balances[coinSymbol] = await getTestCoinBalance(privateKey, coinSymbol as TestCoinSymbol);
+    }
+
+    prettyPrint("Coin Balances", balances);
   });
 
 programCommand("init-ferum")
-  .option("-sk, --signer-key <string>", "private key of the signer.", process.env.APTOS_KEY)
+  .option("-pk, --private-key <string>", "private key of the signer.", process.env.APTOS_KEY)
   .action(async (_, cmd) => {
-    const { signerKey } = cmd.opts();
-    const txHash = await initializeFerum(signerKey)
+    const { privateKey } = cmd.opts();
+    const txHash = await initializeFerum(privateKey)
     console.log(`Started pending transaction: ${txHash}.`)
     const txResult = await client.waitForTransactionWithResult(txHash) as Transaction_UserTransaction;
     prettyPrint(`Completed transaction with success: ${txResult.success}:`, txResult)
   });
 
 programCommand("init-orderbook")
-  .option("-sk, --signer-key <string>", "private key of the signer.", process.env.APTOS_KEY)
+  .option("-pk, --private-key <string>", "private key of the signer.", process.env.APTOS_KEY)
   .option("-ic, --instrument-coin <string>", "instrument coin.")
   .option("-qc, --quote-coin <string>", "quote coin.")
   .action(async (_, cmd) => {
-    const { signerKey, instrumentCoin, quoteCoin } = cmd.opts();
-    const txHash = await initializeOrderbook(signerKey, instrumentCoin, quoteCoin)
+    const { privateKey, instrumentCoin, quoteCoin } = cmd.opts();
+    const txHash = await initializeOrderbook(privateKey, instrumentCoin, quoteCoin)
     console.log(`Started pending transaction: ${txHash}.`)
     const txResult = await client.waitForTransactionWithResult(txHash) as Transaction_UserTransaction;
     prettyPrint(`Completed transaction with success: ${txResult.success}:`, txResult)
   });
 
   programCommand("add-limit-order")
-  .option("-sk, --signer-key <string>", "private key of the signer.", process.env.APTOS_KEY)
+  .option("-pk, --private-key <string>", "private key of the signer.", process.env.APTOS_KEY)
   .option("-ic, --instrument-coin <string>", "instrument token.")
   .option("-qc, --quote-coin <string>", "quote token.")
   .option("-p, --price <number>", "quote price.")
   .option("-q, --quantity <number>", "quote price.")
   .option("-s, --side <string>", "side: either buy or sell.")
   .action(async (_, cmd) => {
-    const { signerKey, instrumentCoin, quoteCoin, price, quantity, side } = cmd.opts();
-    const txHash = await addLimitOrder(signerKey, instrumentCoin, quoteCoin, side, price, quantity)
+    const { privateKey, instrumentCoin, quoteCoin, price, quantity, side } = cmd.opts();
+    const txHash = await addLimitOrder(privateKey, instrumentCoin, quoteCoin, side, price, quantity)
     console.log(`Started pending transaction: ${txHash}.`)
     const txResult = await client.waitForTransactionWithResult(txHash) as Transaction_UserTransaction;
     prettyPrint(`Completed transaction with success: ${txResult.success}:`, txResult)
   });
 
   programCommand("add-market-order")
-  .option("-sk, --signer-key <string>", "private key of the signer.", process.env.APTOS_KEY)
+  .option("-pk, --private-key <string>", "private key of the signer.", process.env.APTOS_KEY)
   .option("-ic, --instrument-coin <string>", "instrument token.")
   .option("-qc, --quote-coin <string>", "quote token.")
   .option("-s, --side <string>", "side: either buy or sell.")
   .option("-q, --quantity <number>", "quote price.")
   .option("-c, --max-collateral <number>", "max collateral.")
   .action(async (_, cmd) => {
-    const { signerKey, instrumentCoin, quoteCoin, side, quantity, maxCollateral } = cmd.opts();
-    const txHash = await addMarketOrder(signerKey, instrumentCoin, quoteCoin, side, quantity, maxCollateral)
+    const { privateKey, instrumentCoin, quoteCoin, side, quantity, maxCollateral } = cmd.opts();
+    const txHash = await addMarketOrder(privateKey, instrumentCoin, quoteCoin, side, quantity, maxCollateral)
     console.log(`Started pending transaction: ${txHash}.`)
     const txResult = await client.waitForTransactionWithResult(txHash) as Transaction_UserTransaction;
     prettyPrint(`Completed transaction with success: ${txResult.success}:`, txResult)
@@ -88,11 +122,11 @@ programCommand("init-orderbook")
 
 
   programCommand("cancel-order")
-  .option("-sk, --signer-key <string>", "private key of the signer.", process.env.APTOS_KEY)
+  .option("-pk, --private-key <string>", "private key of the signer.", process.env.APTOS_KEY)
   .option("-id, --order-id <number>", "order id.")
   .action(async (_, cmd) => {
-    const { signerKey, orderID } = cmd.opts();
-    const txHash = await cancelOrder(signerKey, orderID)
+    const { privateKey, orderID } = cmd.opts();
+    const txHash = await cancelOrder(privateKey, orderID)
     console.log(`Started pending transaction: ${txHash}.`)
     const txResult = await client.waitForTransactionWithResult(txHash) as Transaction_UserTransaction;
     prettyPrint(`Completed transaction with success: ${txResult.success}:`, txResult)

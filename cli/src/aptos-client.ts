@@ -1,5 +1,5 @@
 import { AptosClient } from "aptos";
 
-const NODE_URL = "https://fullnode.devnet.aptoslabs.com";
+export const NODE_URL = "https://fullnode.devnet.aptoslabs.com/v1";
 
 export const client = new AptosClient(NODE_URL);

@@ -2,6 +2,7 @@ import {
   AptosAccount,
   AptosClient,
   TxnBuilderTypes,
+  BCS,
 } from "aptos";
 import { TransactionPayload } from "aptos/dist/transaction_builder/aptos_types";
 
@@ -22,23 +23,8 @@ export async function sendSignedTransactionWithAccount(
   signerAccount: AptosAccount,
   entryFunctionPayload: TransactionPayload,
 ) {
-  const [{ sequence_number: sequenceNumber }, chainId] = await Promise.all([
-    client.getAccount(signerAccount.address()),
-    client.getChainId(),
-  ]);
-
-  const rawTxn = new TxnBuilderTypes.RawTransaction(
-    TxnBuilderTypes.AccountAddress.fromHex(signerAccount.address()),
-    BigInt(sequenceNumber),
-    entryFunctionPayload,
-    1000n,
-    1n,
-    BigInt(Math.floor(Date.now() / 1000) + 10),
-    new TxnBuilderTypes.ChainId(chainId)
-  );
-
+  const rawTxn = await client.generateRawTransaction(signerAccount.address(), entryFunctionPayload);
   const bcsTxn = AptosClient.generateBCSTransaction(signerAccount, rawTxn);
   const pendingTxn = await client.submitSignedBCSTransaction(bcsTxn);
-
   return pendingTxn.hash;
 }
