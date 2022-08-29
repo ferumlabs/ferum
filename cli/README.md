@@ -1,12 +1,36 @@
 # Ferum CLI
 
-1. Set APTOS_KEY env var to your private key `export APTOS_KEY="55679798d5e00e0330b33259181422f1b1039adce44a930a1fde039e272bede7"`
+1. Create a new profile: `ts-node src/index.ts create-profile -n ferum` (you can name it whatever).
 
-2. Run `tsc --watch` from `ferum-cli` directory to continuously build.
+1. Publish ferum modules: `ts-node src/index.ts publish-ferum -m ../../ferrum.xyz`.
 
-3. Play with the commands below:
+1. Create test coins: `ts-node src/index.ts create-test-coins`.
+
+1. Initialize ferum: `ts-node src/index.ts init-coins`.
+
+1. Create a market: `ts-node src/index.ts init-market -ic FMA -qc FMB -id 3 -qd 3`.
+
+1. Play with the commands below:
 
 ## Commands
+
+### Add Limit Order
+
+```terminal
+ts-node src/index.ts add-limit-order -ic FMA -qc FMB -p 2000 -q 1000 -s sell
+```
+
+### Add Market Order
+
+```terminal
+nts-node src/index.ts add-market-order -ic FMA -qc FMB -c 2000 -q 1000 -s sell
+```
+
+### Cancel Order
+
+```terminal
+node lib/index.js cancel-order -ic FMA -qc FMB -id 12345
+```
 
 ### Create Test Coins
 
@@ -14,38 +38,15 @@
 ts-node src/index.ts create-test-coin -m ~/Desktop/ferrum.xyz/build/ferum/bytecode_modules/test_coin.mv -cn test_coin::Test_Coin
 ```
 
-### Check Test Coin Balances
+### Init Market
 
 ```terminal
-node lib/index.js test-coin-balances
+ts-node src/index.ts init-market -ic FMA -qc FMB -id 3 -qd 3
 ```
 
-### Init Ferum
+### Other Commands
 
-```terminal
-node lib/index.js init-ferum
-```
+See `ts-node src/index.ts --help` for a full list of commands.
 
-### Init Order Book
 
-```terminal
-node lib/index.js init-orderbook -ic 0xc27207dd9813d91f069ebe109c269f17943e5b94271fef29e2292ab5e2f7706f::test_coin::TestCoin -qc 0xc27207dd9813d91f069ebe109c269f17943e5b94271fef29e2292ab5e2f7706f::test_coin::TestCoin
-```
 
-### Add Limit Order
-
-```terminal
-node lib/index.js add-limit-order -ic 0xc27207dd9813d91f069ebe109c269f17943e5b94271fef29e2292ab5e2f7706f::test_coin::TestCoin -qc 0x1::aptos_coin::AptosCoin -s buy -p 100 -q 10
-```
-
-### Add Market Order
-
-```terminal
-node lib/index.js add-market-order -ic 0xc27207dd9813d91f069ebe109c269f17943e5b94271fef29e2292ab5e2f7706f::test_coin::TestCoin -qc 0x1::aptos_coin::AptosCoin -s buy -q 100 -c 100
-```
-
-### Cancel Order
-
-```terminal
-node lib/index.js cancel-order -id 12345
-```
