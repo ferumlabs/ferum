@@ -99,7 +99,6 @@ program.command("get-address")
     const { privateKey } = cmd.opts();
     const privateKeyHex = Uint8Array.from(Buffer.from(privateKey, "hex"));
     const account = new AptosAccount(privateKeyHex);
-
     log.info(`Address: ${account.address()}`);
   });
 
@@ -108,14 +107,11 @@ signedCmd("publish-ferum")
   .option("-g, --max-gas [number]", "Max gas used for transaction. Optional. Defaults to 10000.", "10000")
   .action(async (_, cmd) => {
     const { account, modulePath, maxGas } = cmd.opts();
-
     const maxGasNum = parseNumber(maxGas, 'max-gas');
-
     log.info('Publishing modules under account', account.address());
-
     try {
       await publishModuleUsingCLI(NODE_URL, account, modulePath, maxGasNum);
-      Config.setFerrumAddress((account as AptosAccount).address().toString());
+      Config.setFerumAddress((account as AptosAccount).address().toString());
     } 
     catch {
       console.error('Unable to publish module.');
@@ -126,9 +122,6 @@ signedCmd("create-test-coins")
   .description('Create FakeMoneyA (FMA) and FakeMoneyB (FMB) test coins.')
   .action(async (_, cmd) => {
     const { account } = cmd.opts();
-
-
-
     await createTestCoin(account, "FMA");
     await createTestCoin(account, "FMB");
   });
@@ -137,12 +130,10 @@ signedCmd("test-coin-balances")
   .description('Get FakeMoneyA (FMA) and FakeMoneyB (FMB) balances for the signing account.')
   .action(async (_, cmd) => {
     const { account } = cmd.opts();
-
     const balances: {[key: string]: number} = {};
     for (let coinSymbol in TEST_COINS) {
       balances[coinSymbol] = await getTestCoinBalance(account, coinSymbol as TestCoinSymbol);
     }
-
     prettyPrint("Coin Balances", balances);
   });
 

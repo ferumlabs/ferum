@@ -2,7 +2,7 @@ import { AptosAccount, AptosAccountObject } from "aptos";
 import fs from "fs";
 
 import log from "loglevel";
-import { client, faucetClient } from "./aptos-client";
+import { faucetClient } from "./aptos-client";
 
 type Profile = AptosAccountObject;
 
@@ -10,7 +10,7 @@ type Config = {
   TypeAliases: {[key: string]: string},
   Profiles: {[key: string]: Profile},
   CurrentProfile: string | null,
-  FerrumAddress: string | null,
+  FerumAddress: string | null,
 }
 
 export const CONFIG_PATH = `${process.env.HOME}/.ferum_config`;
@@ -18,7 +18,7 @@ let ConfigCache: Config = {
   TypeAliases: {},
   CurrentProfile: null,
   Profiles: {},
-  FerrumAddress: null,
+  FerumAddress: null,
 };
 
 if (!fs.existsSync(CONFIG_PATH)) {
@@ -36,12 +36,11 @@ function addAddressIfNecessary(address: string | null, type: string): string {
     return `${address}::${type}`
   }
   return type
-
 }
 
 export default {
-  setFerrumAddress: function(address: string) {
-    ConfigCache.FerrumAddress = address;
+  setFerumAddress: function(address: string) {
+    ConfigCache.FerumAddress = address;
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(ConfigCache));
   },
 
@@ -77,7 +76,7 @@ export default {
   tryResolveAlias: function(maybeAlias: string): string {
     if (maybeAlias in ConfigCache['TypeAliases']) {
       return addAddressIfNecessary(
-        ConfigCache.FerrumAddress,
+        ConfigCache.FerumAddress,
         ConfigCache['TypeAliases'][maybeAlias],
       );
     }
