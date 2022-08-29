@@ -23,10 +23,15 @@ programCommand("get-address")
     console.log(`Address: ${account.address()}`);
   });
 
-programCommand("publish-modules")
-  .option("-pk, --private-key [string]", "private key of the module account.", process.env.APTOS_KEY)
-  .option("-m, --module-path <string>", "coin module path.")
-  .option("-m, --max-gas [number]", "max gas used for transaction.", "10000")
+programCommand("publish-ferum")
+  .option(
+    "-pk, --private-key [string]", 
+    "Private key of account ferum should be deployed to. " +
+    "Optional. Will use the APTOS_KEY env flag if not provided.", 
+    process.env.APTOS_KEY,
+  )
+  .option("-m, --module-path <string>", "Module path.")
+  .option("-g, --max-gas [number]", "Max gas used for transaction. Optional. Defaults to 10000.", "10000")
   .action(async (_, cmd) => {
     const { privateKey, modulePath, maxGas } = cmd.opts();
 
@@ -46,7 +51,12 @@ programCommand("publish-modules")
   });
  
 programCommand("create-test-coins")
-  .option("-pk, --private-key [string]", "private key of the module account.", process.env.APTOS_KEY)
+  .description('Create FakeMoneyA (FMA) and FakeMoneyB (FMB) test coins.')
+  .option(
+    "-pk, --private-key [string]", 
+    "Private key of the account signing this transaction. Optional. Will use the APTOS_KEY env flag if not provided.", 
+    process.env.APTOS_KEY,
+  )
   .action(async (_, cmd) => {
     const { privateKey } = cmd.opts();
     await createTestCoin(privateKey, "FMA");
@@ -54,7 +64,12 @@ programCommand("create-test-coins")
   });
 
 programCommand("test-coin-balances")
-  .option("-pk, --private-key [string]", "private key of the test coin module account.", process.env.APTOS_KEY)
+  .description('Get FakeMoneyA (FMA) and FakeMoneyB (FMB) balances for the signing account.')
+  .option(
+    "-pk, --private-key [string]", 
+    "Private key of the account signing this transaction. Optional. Will use the APTOS_KEY env flag if not provided.",
+    process.env.APTOS_KEY,
+  )
   .action(async (_, cmd) => {
     const { privateKey } = cmd.opts();
 
@@ -67,7 +82,11 @@ programCommand("test-coin-balances")
   });
 
 programCommand("init-ferum")
-  .option("-pk, --private-key [string]", "private key of the signer.", process.env.APTOS_KEY)
+  .option(
+    "-pk, --private-key [string]", 
+    "Private key of the account signing this transaction. Optional. Will use the APTOS_KEY env flag if not provided.", 
+    process.env.APTOS_KEY,
+  )
   .action(async (_, cmd) => {
     const { privateKey } = cmd.opts();
     const txHash = await initializeFerum(privateKey)
@@ -77,26 +96,32 @@ programCommand("init-ferum")
   });
 
 programCommand("init-market")
-  .option("-pk, --private-key [string]", "private key of the signer.", process.env.APTOS_KEY)
+  .option(
+    "-pk, --private-key [string]", 
+    "Private key of the account signing this transaction. Optional. Will use the APTOS_KEY env flag if not provided.",
+    process.env.APTOS_KEY,
+  )
   .option(
     "-ic, --instrument-coin-type <string>", 
-    "instrument coin type. can be a symbol if identifying a test coin. \
-    Other wise, must be a fully qualified coin type name (addrss::module::CoinType)."
+    "Instrument CoinType. Can be a symbol if identifying a test coin. " +
+    "Otherwise, must be a fully qualified type (address::module::CoinType)."
   )
   .option(
     "-id, --instrument-decimals <number>", 
-    "decimal places for the instrument coin. Must be <= the underlying coin's decimals. \
-    The sum of the instrument and quote decimals must also be <= min(coin::decimals(Instrument), coin::decimals(Quote))"
+    "Decimal places for the instrument coin type. Must be <= coin::decimals(InstrumentCointType)." +
+    "The sum of the instrument and quote decimals must also be <= " +
+    "min(coin::decimals(InstrumentCoinType), coin::decimals(QuoteCoinType))"
   )
   .option(
     "-qc, --quote-coin-type <string>", 
-    "quote coin type. can be a symbol if identifying a test coin. \
-    Other wise, must be a fully qualified coin type name (addrss::module::CoinType)."
+    "Quote CoinType. Can be a symbol if identifying a test coin. " +
+    "Otherwise, must be a fully qualified type (address::module::CoinType)."
   )
   .option(
     "-qd, --quote-decimals <number>", 
-    "decimal places for the quote coin. Must be <= the underlying coin's decimals. \
-    The sum of the instrument and quote decimals must also be <= min(coin::decimals(Instrument), coin::decimals(Quote))"
+    "Decimal places for the quote coin type. Must be <= coin::decimals(QuoteCoinType). " +
+    "The sum of the instrument and quote decimals must also be <= " +
+    "min(coin::decimals(InstrumentCoinType), coin::decimals(QuoteCoinType))"
   )
   .action(async (_, cmd) => {
     const { privateKey, instrumentCoinType, quoteCoinType, quoteDecimals, instrumentDecimals } = cmd.opts();
@@ -111,12 +136,31 @@ programCommand("init-market")
   });
 
   programCommand("add-limit-order")
-  .option("-pk, --private-key [string]", "private key of the signer.", process.env.APTOS_KEY)
-  .option("-ic, --instrument-coin <string>", "instrument token.")
-  .option("-qc, --quote-coin <string>", "quote token.")
-  .option("-p, --price <number>", "quote price.")
-  .option("-q, --quantity <number>", "quote price.")
-  .option("-s, --side <string>", "side: either buy or sell.")
+  .option(
+    "-pk, --private-key [string]", 
+    "Private key of the account signing this transaction. Optional. Will use the APTOS_KEY env flag if not provided.",
+    process.env.APTOS_KEY,
+  )
+  .option(
+    "-ic, --instrument-coin <string>", 
+    "Instrument CoinType.",
+  )
+  .option(
+    "-qc, --quote-coin <string>", 
+    "Quote CoinType.",
+  )
+  .option(
+    "-p, --price <number>", 
+    "Limit price for the order, in terms of coin::Coin<QuoteCoinType>.",
+  )
+  .option(
+    "-q, --quantity <number>", 
+    "Quantity for the order, in terms of coin::Coin<InstrumentCoinType>",
+  )
+  .option(
+    "-s, --side <buy | sell>", 
+    "Side for the order, either buy or sell.",
+  )
   .action(async (_, cmd) => {
     const { privateKey, instrumentCoin, quoteCoin, price, quantity, side } = cmd.opts();
     const txHash = await addLimitOrder(privateKey, instrumentCoin, quoteCoin, side, price, quantity)
@@ -126,12 +170,31 @@ programCommand("init-market")
   });
 
   programCommand("add-market-order")
-  .option("-pk, --private-key [string]", "private key of the signer.", process.env.APTOS_KEY)
-  .option("-ic, --instrument-coin <string>", "instrument token.")
-  .option("-qc, --quote-coin <string>", "quote token.")
-  .option("-s, --side <string>", "side: either buy or sell.")
-  .option("-q, --quantity <number>", "quote price.")
-  .option("-c, --max-collateral <number>", "max collateral.")
+  .option(
+    "-pk, --private-key [string]", 
+    "Private key of the account signing this transaction. Optional. Will use the APTOS_KEY env flag if not provided.",
+    process.env.APTOS_KEY,
+  )
+  .option(
+    "-ic, --instrument-coin <string>", 
+    "Instrument CoinType.",
+  )
+  .option(
+    "-qc, --quote-coin <string>", 
+    "Quote CoinType.",
+  )
+  .option(
+    "-q, --quantity <number>", 
+    "Quantity for the order, in terms of coin::Coin<InstrumentCoinType>",
+  )
+  .option(
+    "-s, --side <buy | sell>", 
+    "Side for the order, either buy or sell.",
+  )
+  .option(
+    "-c, --max-collateral [number]", 
+    "Only required for a buy order. Max amount of coin::Coin<QuoteCoinType> allowed to be spent.",
+  )
   .action(async (_, cmd) => {
     const { privateKey, instrumentCoin, quoteCoin, side, quantity, maxCollateral } = cmd.opts();
     const txHash = await addMarketOrder(privateKey, instrumentCoin, quoteCoin, side, quantity, maxCollateral)
@@ -142,8 +205,12 @@ programCommand("init-market")
 
 
   programCommand("cancel-order")
-  .option("-pk, --private-key [string]", "private key of the signer.", process.env.APTOS_KEY)
-  .option("-id, --order-id <number>", "order id.")
+  .option(
+    "-pk, --private-key [string]", 
+    "Private key of the account signing this transaction. Optional. Will use the APTOS_KEY env flag if not provided.",
+    process.env.APTOS_KEY,
+  )
+  .option("-id, --order-id <number>", "Order id.")
   .action(async (_, cmd) => {
     const { privateKey, orderID } = cmd.opts();
     const txHash = await cancelOrder(privateKey, orderID)
