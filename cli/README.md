@@ -35,7 +35,13 @@ ts-node lib/index.js cancel-order -ic FMA -qc FMB -id 12345
 ### Create Test Coins
 
 ```terminal
-ts-node src/index.ts create-test-coin -m ~/Desktop/ferrum.xyz/build/ferum/bytecode_modules/test_coin.mv -cn test_coin::Test_Coin
+ts-node src/index.ts create-test-coin
+```
+
+### Check Test Coin Balance
+
+```
+ts-node src/index.ts test-coin-balances
 ```
 
 ### Init Market
