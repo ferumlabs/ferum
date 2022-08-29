@@ -6,7 +6,7 @@
 
 1. Create test coins: `ts-node src/index.ts create-test-coins`.
 
-1. Initialize ferum: `ts-node src/index.ts init-coins`.
+1. Initialize ferum: `ts-node src/index.ts init-ferum`.
 
 1. Create a market: `ts-node src/index.ts init-market -ic FMA -qc FMB -id 3 -qd 3`.
 
