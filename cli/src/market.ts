@@ -4,9 +4,18 @@ import {
   BCS,
 } from "aptos";
 
-import { sendSignedTransactionWithPrivateKey } from  "./utils/transaction-utils"
+import { sendSignedTransactionWithPrivateKey } from  "./utils/transaction-utils";
+import { addAddressIfNecessary } from './utils/module-name-utils';
+import { TestCoinSymbol, TEST_COINS } from  "./test-coins";
 
-function coinTypeTags(instrumentCoin: string, quoteCoin: string) {
+function coinTypeTags(address: string, instrumentCoin: string, quoteCoin: string) {
+  if (instrumentCoin in TEST_COINS) {
+    instrumentCoin = addAddressIfNecessary(address, TEST_COINS[instrumentCoin as TestCoinSymbol]);
+  }
+  if (quoteCoin in TEST_COINS) {
+    quoteCoin = addAddressIfNecessary(address, TEST_COINS[quoteCoin as TestCoinSymbol]);
+  }
+
   const instrumentCoinTypeTag = new TxnBuilderTypes.TypeTagStruct(
     TxnBuilderTypes.StructTag.fromString(instrumentCoin)
   );
@@ -31,7 +40,7 @@ export async function initializeFerum(
   const entryFunctionPayload =
     new TxnBuilderTypes.TransactionPayloadEntryFunction(
       TxnBuilderTypes.EntryFunction.natural(
-        `${signerAccount.address()}::market`,
+        `${signerAccount.address()}::ferum`,
         "init_ferum",
         [],
         []
@@ -40,10 +49,12 @@ export async function initializeFerum(
   return await sendSignedTransactionWithPrivateKey(signerPrivateKey, entryFunctionPayload)
 }
 
-export async function initializeOrderbook(
+export async function initializeMarket(
   signerPrivateKey: string,
   instrumentCoin: string,
-  quoteCoin: string
+  instrumentDecimals: number,
+  quoteCoin: string,
+  quoteDecimals: number,
 ) {
   const signerPrivateKeyHex = Uint8Array.from(
     Buffer.from(signerPrivateKey, "hex")
@@ -53,9 +64,12 @@ export async function initializeOrderbook(
     new TxnBuilderTypes.TransactionPayloadEntryFunction(
       TxnBuilderTypes.EntryFunction.natural(
         `${signerAccount.address()}::market`,
-        "init_book",
-        coinTypeTags(instrumentCoin, quoteCoin),
-        []
+        "init_market",
+        coinTypeTags(signerAccount.address().toString(), instrumentCoin, quoteCoin),
+        [
+          BCS.bcsSerializeU8(instrumentDecimals),
+          BCS.bcsSerializeU8(quoteDecimals),
+        ]
       )
     );
     return await sendSignedTransactionWithPrivateKey(signerPrivateKey, entryFunctionPayload)
@@ -100,7 +114,7 @@ export async function addLimitOrder(
       TxnBuilderTypes.EntryFunction.natural(
         `${signerAccount.address()}::market`,
         "add_limit_order",
-        coinTypeTags(instrumentCoin, quoteCoin),
+        coinTypeTags(signerAccount.address().toString(), instrumentCoin, quoteCoin),
         [
           BCS.bcsSerializeU8(side === 'buy' ? 1 : 0),
           BCS.bcsSerializeUint64(toFixedPoint(price)),
@@ -128,7 +142,7 @@ export async function addMarketOrder(
       TxnBuilderTypes.EntryFunction.natural(
         `${signerAccount.address()}::market`,
         "add_market_order",
-        coinTypeTags(instrumentCoin, quoteCoin),
+        coinTypeTags(signerAccount.address().toString(), instrumentCoin, quoteCoin),
         [
           BCS.bcsSerializeU8(side === 'buy' ? 1 : 0),
           BCS.bcsSerializeUint64(toFixedPoint(quantity)),

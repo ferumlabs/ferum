@@ -6,7 +6,7 @@ import {
   HexString,
 } from "aptos";
 import { client } from "./aptos-client";
-import { addCoinAddressIfNecessary } from "./utils/module-name-utils";
+import { addAddressIfNecessary } from "./utils/module-name-utils";
 import { sendSignedTransactionWithAccount } from "./utils/transaction-utils";
 
 export type TestCoinSymbol = 'FMA' | 'FMB';
@@ -146,7 +146,7 @@ export async function getTestCoinBalance(
 ): Promise<number> {
   const privateKeyHex = Uint8Array.from(Buffer.from(privateKey, "hex"));
   const coinMasterAccount = new AptosAccount(privateKeyHex);
-  const coinName = addCoinAddressIfNecessary(
+  const coinName = addAddressIfNecessary(
     coinMasterAccount.address().toString(),
     TEST_COINS[coinSymbol],
   );
@@ -163,7 +163,7 @@ export async function createTestCoin(
 ) {
   const privateKeyHex = Uint8Array.from(Buffer.from(privateKey, "hex"));
   const coinMasterAccount = new AptosAccount(privateKeyHex);
-  const coinName = addCoinAddressIfNecessary(
+  const coinName = addAddressIfNecessary(
     coinMasterAccount.address().toString(),
     TEST_COINS[coinSymbol],
   );
