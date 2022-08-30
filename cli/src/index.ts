@@ -120,13 +120,13 @@ signedCmd("publish-ferum")
   });
  
 signedCmd("test-ferum")
-  .requiredOption("-m, --module-path <string>", "Module path.")
+  .requiredOption("-m, --module-path <string>", "Module path.", "../contract")
   .action(async (_, cmd) => {
     const { account, modulePath } = cmd.opts();
     log.info('Testing modules under account', account.address());
     try {
       await testModuleUsingCLI(NODE_URL, account, modulePath);
-    } 
+    }
     catch {
       console.error('Unable to publish module.');
     }

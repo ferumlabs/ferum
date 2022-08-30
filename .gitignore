@@ -12,6 +12,8 @@
 # Icon must end with two \r
 Icon
 
+# Dev Environment
+.idea
 
 # Thumbnails
 ._*
@@ -29,7 +31,7 @@ Icon
 .AppleDB
 .AppleDesktop
 Network Trash Folder
-Temporary Items
+Temporary Itemsi
 .apdisk
 
 ### macOS Patch ###

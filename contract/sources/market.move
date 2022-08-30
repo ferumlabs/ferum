@@ -856,6 +856,14 @@ module ferum::market {
 
     #[test(owner = @ferum, user = @0x2)]
     #[expected_failure]
+    fun test_init_market_with_duplicate_market<I, Q>(owner: &signer) {
+        init_ferum(owner);
+        init_market<I, Q>(owner, 4, 4);
+        init_market<I, Q>(owner, 4, 4);
+    }
+
+    #[test(owner = @ferum, user = @0x2)]
+    #[expected_failure]
     fun test_add_limit_order_to_uninited_book(owner: &signer, user: &signer) acquires OrderBook {
         // Tests that a limit order added for uninitialized book fails.
 
