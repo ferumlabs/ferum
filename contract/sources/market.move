@@ -7,7 +7,7 @@ module ferum::market {
     use std::signer::address_of;
 
     use ferum::ferum::{init_ferum, register_market, get_market_addr};
-    use ferum::fixedpoint::{Self, FixedPoint};
+    use ferum::fixed_point_128::{Self, FixedPoint128};
     use ferum::list;
 
     #[test_only]
@@ -65,9 +65,9 @@ module ferum::market {
 
     struct OrderMetadata has drop, store, copy {
         side: u8,
-        remainingQty: FixedPoint,
-        originalQty: FixedPoint,
-        price: FixedPoint,
+        remainingQty: FixedPoint128,
+        originalQty: FixedPoint128,
+        price: FixedPoint128,
         type: u8,
         status: u8,
     }
@@ -119,8 +119,8 @@ module ferum::market {
         oppositeOwner: address,
         oppositeOrderMetadata: OrderMetadata,
 
-        price: FixedPoint,
-        qty: FixedPoint,
+        price: FixedPoint128,
+        qty: FixedPoint128,
     }
 
     struct FinalizeEvent has drop, store {
@@ -229,8 +229,8 @@ module ferum::market {
         let ownerAddr = address_of(owner);
         let book = borrow_global_mut<OrderBook<I, Q>>(bookAddr);
 
-        let priceFixedPoint = fixedpoint::from_u64(price, book.qDecimals);
-        let qtyFixedPoint = fixedpoint::from_u64(qty, book.iDecimals);
+        let priceFixedPoint = fixed_point_128::from_u64(price, book.qDecimals);
+        let qtyFixedPoint = fixed_point_128::from_u64(qty, book.iDecimals);
 
         let (buyCollateral, sellCollateral) = obtain_limit_order_collateral<I, Q>(
             owner,
@@ -271,7 +271,7 @@ module ferum::market {
 
         let book = borrow_global_mut<OrderBook<I, Q>>(bookAddr);
 
-        let qtyFixedPoint = fixedpoint::from_u64(qty, book.iDecimals);
+        let qtyFixedPoint = fixed_point_128::from_u64(qty, book.iDecimals);
 
         let ownerAddr = address_of(owner);
 
@@ -290,7 +290,7 @@ module ferum::market {
             sellCollateral,
             metadata: OrderMetadata{
                 side,
-                price: fixedpoint::zero(),
+                price: fixed_point_128::zero(),
                 remainingQty: qtyFixedPoint,
                 type: TYPE_MARKET,
                 originalQty: qtyFixedPoint,
@@ -418,13 +418,13 @@ module ferum::market {
             let listOrderMetadata = &listOrder.metadata;
 
             if (orderMetadata.side == SIDE_BUY) {
-                if (fixedpoint::lte(listOrderMetadata.price, orderMetadata.price)) {
+                if (fixed_point_128::lte(listOrderMetadata.price, orderMetadata.price)) {
                     list::insert(orderList, i+1, order.id);
                     break
                 }
             }
             else {
-                if (fixedpoint::gte(listOrderMetadata.price, orderMetadata.price)) {
+                if (fixed_point_128::gte(listOrderMetadata.price, orderMetadata.price)) {
                     list::insert(orderList, i+1, order.id);
                     break
                 }
@@ -448,34 +448,34 @@ module ferum::market {
         let minAskIdx = vector::length(sells) - 1;
         let minAskPrice = get_order_from_list(orderMap, sells, minAskIdx).metadata.price;
 
-        while (fixedpoint::gte(maxBidPrice, minAskPrice) && maxBidIdx >= 0 && minAskIdx >= 0) {
+        while (fixed_point_128::gte(maxBidPrice, minAskPrice) && maxBidIdx >= 0 && minAskIdx >= 0) {
             let maxBid = get_order_from_list(orderMap, buys, maxBidIdx);
             let maxBidID = maxBid.id;
             let minAsk = get_order_from_list(orderMap, sells, minAskIdx);
             let minAskID = minAsk.id;
             // Shouldn't need to worry about over executing collateral because the minAsk price is less than the
             // maxBid price.
-            let executedQty = fixedpoint::min(maxBid.metadata.remainingQty, minAsk.metadata.remainingQty);
+            let executedQty = fixed_point_128::min(maxBid.metadata.remainingQty, minAsk.metadata.remainingQty);
 
             let maxBidMut = get_order_from_list_mut(orderMap, buys, maxBidIdx);
-            maxBidMut.metadata.remainingQty = fixedpoint::sub(maxBidMut.metadata.remainingQty, executedQty);
+            maxBidMut.metadata.remainingQty = fixed_point_128::sub(maxBidMut.metadata.remainingQty, executedQty);
             let maxBidMetadata = maxBidMut.metadata;
             let maxBidOwner = maxBidMut.owner;
 
             let minAskMut = get_order_from_list_mut(orderMap, sells, minAskIdx);
-            minAskMut.metadata.remainingQty = fixedpoint::sub(minAskMut.metadata.remainingQty, executedQty);
+            minAskMut.metadata.remainingQty = fixed_point_128::sub(minAskMut.metadata.remainingQty, executedQty);
             let minAskMetadata = minAskMut.metadata;
             let minAskOwner = minAskMut.owner;
 
             // Give the midpoint for the price.
             // TODO: add fee.
-            let price = fixedpoint::divide_round_up(
-                fixedpoint::add(minAskPrice, maxBidPrice),
-                fixedpoint::from_u64(2, 0),
+            let price = fixed_point_128::divide_round_up(
+                fixed_point_128::add(minAskPrice, maxBidPrice),
+                fixed_point_128::from_u64(2, 0),
             );
             // Its possible for the midpoint to have more decimal places than the market allows for quotes.
             // In this case, round up.
-            price = fixedpoint::round_up_to_decimals(price, book.qDecimals);
+            price = fixed_point_128::round_up_to_decimals(price, book.qDecimals);
 
             swap_collateral(orderMap, maxBidID, minAskID, price, executedQty);
 
@@ -554,15 +554,15 @@ module ferum::market {
                     // For a buy order, we need to factor in the remaining collateral for the order when deciding what
                     // the execution qty should be.
                     let remainingCollateral = get_remaining_collateral(order);
-                    let maxQtyAtPrice = fixedpoint::divide_trunc(remainingCollateral, bookOrder.metadata.price);
-                    let remainingQty =  fixedpoint::min(
+                    let maxQtyAtPrice = fixed_point_128::divide_trunc(remainingCollateral, bookOrder.metadata.price);
+                    let remainingQty =  fixed_point_128::min(
                         bookOrder.metadata.remainingQty,
                         order.metadata.remainingQty,
                     );
-                    fixedpoint::min(maxQtyAtPrice, remainingQty)
+                    fixed_point_128::min(maxQtyAtPrice, remainingQty)
                 } else {
                     // For a sell order, we can just use the remaining quantity.
-                    fixedpoint::min(
+                    fixed_point_128::min(
                         bookOrder.metadata.remainingQty,
                         order.metadata.remainingQty,
                     )
@@ -570,13 +570,13 @@ module ferum::market {
             };
 
             let bookOrder = table::borrow_mut(orderMap, bookOrderID);
-            bookOrder.metadata.remainingQty = fixedpoint::sub(bookOrder.metadata.remainingQty, executedQty);
+            bookOrder.metadata.remainingQty = fixed_point_128::sub(bookOrder.metadata.remainingQty, executedQty);
             let bookOrderID = bookOrder.id;
             let bookOrderOwner = bookOrder.owner;
             let bookOrderMetadata = bookOrder.metadata;
 
             let order = table::borrow_mut(orderMap, orderID);
-            order.metadata.remainingQty = fixedpoint::sub(order.metadata.remainingQty, executedQty);
+            order.metadata.remainingQty = fixed_point_128::sub(order.metadata.remainingQty, executedQty);
             let orderID = order.id;
             let orderOwner = order.owner;
             let orderMetadata = order.metadata;
@@ -696,10 +696,10 @@ module ferum::market {
     fun validate_order<I, Q>(order: &Order<I, Q>) {
         let metadata = &order.metadata;
         if (metadata.type == TYPE_MARKET) {
-            assert!(fixedpoint::eq(metadata.price, fixedpoint::zero()), ERR_INVALID_PRICE);
+            assert!(fixed_point_128::eq(metadata.price, fixed_point_128::zero()), ERR_INVALID_PRICE);
         }
         else if (metadata.type == TYPE_LIMIT) {
-            assert!(fixedpoint::gt(metadata.price, fixedpoint::zero()), ERR_INVALID_PRICE);
+            assert!(fixed_point_128::gt(metadata.price, fixed_point_128::zero()), ERR_INVALID_PRICE);
         };
     }
 
@@ -745,20 +745,20 @@ module ferum::market {
     }
 
     fun has_remaining_qty<I, Q>(order: &Order<I, Q>): bool {
-        !fixedpoint::eq(order.metadata.remainingQty, fixedpoint::zero())
+        !fixed_point_128::eq(order.metadata.remainingQty, fixed_point_128::zero())
     }
 
     fun has_remaining_collateral<I, Q>(order: &Order<I, Q>): bool {
         coin::value(&order.buyCollateral) > 0 || coin::value(&order.sellCollateral) > 0
     }
 
-    fun get_remaining_collateral<I, Q>(order: &Order<I, Q>): FixedPoint {
+    fun get_remaining_collateral<I, Q>(order: &Order<I, Q>): FixedPoint128 {
         if (order.metadata.side == SIDE_BUY) {
             let coinDecimals = coin::decimals<Q>();
-            fixedpoint::from_u64(coin::value(&order.buyCollateral), coinDecimals)
+            fixed_point_128::from_u64(coin::value(&order.buyCollateral), coinDecimals)
         } else {
             let coinDecimals = coin::decimals<I>();
-            fixedpoint::from_u64(coin::value(&order.sellCollateral), coinDecimals)
+            fixed_point_128::from_u64(coin::value(&order.sellCollateral), coinDecimals)
         }
     }
 
@@ -789,14 +789,14 @@ module ferum::market {
     fun obtain_limit_order_collateral<I, Q>(
         owner: &signer,
         side: u8,
-        price: FixedPoint,
-        qty: FixedPoint,
+        price: FixedPoint128,
+        qty: FixedPoint128,
     ): (coin::Coin<Q>, coin::Coin<I>) {
         if (side == SIDE_BUY) {
             (
                 coin::withdraw<Q>(
                     owner,
-                    fixedpoint::to_u64(fixedpoint::multiply_round_up(price, qty), coin::decimals<Q>()),
+                    fixed_point_128::to_u64(fixed_point_128::multiply_round_up(price, qty), coin::decimals<Q>()),
                 ),
                 coin::zero<I>(),
             )
@@ -805,7 +805,7 @@ module ferum::market {
                 coin::zero<Q>(),
                 coin::withdraw<I>(
                     owner,
-                    fixedpoint::to_u64(qty, coin::decimals<I>()),
+                    fixed_point_128::to_u64(qty, coin::decimals<I>()),
                 ),
             )
         }
@@ -814,14 +814,14 @@ module ferum::market {
     fun obtain_market_order_collateral<I, Q>(
         owner: &signer,
         side: u8,
-        qty: FixedPoint,
+        qty: FixedPoint128,
         maxCollateralAmt: u64,
     ): (coin::Coin<Q>, coin::Coin<I>) {
         if (side == SIDE_BUY) {
             (coin::withdraw<Q>(owner, maxCollateralAmt), coin::zero<I>())
         } else {
             let coinDecimals = coin::decimals<I>();
-            (coin::zero<Q>(), coin::withdraw<I>(owner,  fixedpoint::to_u64(qty, coinDecimals)))
+            (coin::zero<Q>(), coin::withdraw<I>(owner,  fixed_point_128::to_u64(qty, coinDecimals)))
         }
     }
 
@@ -830,8 +830,8 @@ module ferum::market {
         orderMap: &mut table::Table<u128, Order<I, Q>>,
         buyID: u128,
         sellID: u128,
-        price: FixedPoint,
-        qty: FixedPoint,
+        price: FixedPoint128,
+        qty: FixedPoint128,
     ) {
         {
             let sell = table::borrow(orderMap, sellID);
@@ -850,16 +850,16 @@ module ferum::market {
         };
     }
 
-    fun extract_buy_collateral<I, Q>(order: &mut Order<I, Q>, price: FixedPoint, qty: FixedPoint): coin::Coin<Q> {
-        let collateralUsed = fixedpoint::multiply_trunc(price, qty);
+    fun extract_buy_collateral<I, Q>(order: &mut Order<I, Q>, price: FixedPoint128, qty: FixedPoint128): coin::Coin<Q> {
+        let collateralUsed = fixed_point_128::multiply_trunc(price, qty);
         let coinDecimals = coin::decimals<Q>();
-        let amt = fixedpoint::to_u64(collateralUsed, coinDecimals);
+        let amt = fixed_point_128::to_u64(collateralUsed, coinDecimals);
         coin::extract(&mut order.buyCollateral, amt)
     }
 
-    fun extract_sell_collateral<I, Q>(order: &mut Order<I, Q>, qty: FixedPoint): coin::Coin<I> {
+    fun extract_sell_collateral<I, Q>(order: &mut Order<I, Q>, qty: FixedPoint128): coin::Coin<I> {
         let coinDecimals = coin::decimals<I>();
-        let amt = fixedpoint::to_u64(qty, coinDecimals);
+        let amt = fixed_point_128::to_u64(qty, coinDecimals);
         coin::extract(&mut order.sellCollateral, amt)
     }
 
