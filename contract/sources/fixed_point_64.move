@@ -2,12 +2,17 @@
 /// a u128. Has fixed decimal places of 10 and a max value of MAX_U64.
 ///
 /// Operations that result in an overflow will error out.
-module ferum::fixed_point_128 {
-    struct FixedPoint128 has store, drop, copy {
+module ferum::fixed_point_64 {
+
+    struct FixedPoint64 has store, drop, copy {
+        /// This might seem a bit odd at first; why is FixedPoint64 actually
+        /// representing the value as 128 bits! But it makes sense since only
+        /// the first 64 bits are used for the whole number, the rest are for
+        /// fractional part.
         val: u128,
     }
 
-    /// The max value that can be represented using a u128.
+    /// The max value that can be represented using a u128. 
     const MAX_U128: u128 = 340282366920938463463374607431768211455u128;
     /// Number of decimal places in a FixedPoint value.
     const DECIMAL_PLACES: u8 = 10;
@@ -26,59 +31,59 @@ module ferum::fixed_point_128 {
 
     /// Create a new FixedPoint from a u64 value. No conversion is performed.
     /// Example: new_u64(12345) == 0.0000012345
-    public fun new_u64(val: u64): FixedPoint128 {
-        FixedPoint128 { val: (val as u128) }
+    public fun new_u64(val: u64): FixedPoint64 {
+        FixedPoint64 { val: (val as u128) }
     }
 
     /// Create a new FixedPoint from a u128 value. No conversion is performed.
     /// Example: new_u128(12345) == 0.0000012345
-    public fun new_u128(val: u128): FixedPoint128 {
-        FixedPoint128 { val }
+    public fun new_u128(val: u128): FixedPoint64 {
+        FixedPoint64 { val }
     }
 
     /// Return then underlying value of the FixedPoint.
-    public fun value(a: FixedPoint128): u128 {
+    public fun value(a: FixedPoint64): u128 {
         a.val
     }
 
     /// Return a FixedPoint that equals 0.
-    public fun zero(): FixedPoint128 {
-        FixedPoint128 { val: 0 }
+    public fun zero(): FixedPoint64 {
+        FixedPoint64 { val: 0 }
     }
 
     /// Return a FixedPoint that equals 1.
-    public fun one(): FixedPoint128 {
-        FixedPoint128 { val: exp(DECIMAL_PLACES) }
+    public fun one(): FixedPoint64 {
+        FixedPoint64 { val: exp(DECIMAL_PLACES) }
     }
 
     /// Return a FixedPoint that equals 0.5.
-    public fun half(): FixedPoint128 {
-        FixedPoint128 { val: one().val / 2 }
+    public fun half(): FixedPoint64 {
+        FixedPoint64 { val: one().val / 2 }
     }
 
     /// Returns the max FixedPoint value.
-    public fun max_fp(): FixedPoint128 {
-        FixedPoint128 { val: MAX_U128 }
+    public fun max_fp(): FixedPoint64 {
+        FixedPoint64 { val: MAX_U128 }
     }
 
     /// Returns the min FixedPoint value.
-    public fun min_fp(): FixedPoint128 {
-        FixedPoint128 { val: 0 }
+    public fun min_fp(): FixedPoint64 {
+        FixedPoint64 { val: 0 }
     }
 
     /// Returns a FixedPoint truncated to the given decimal places.
-    public fun trunc_to_decimals(a: FixedPoint128, decimals: u8): FixedPoint128 {
+    public fun trunc_to_decimals(a: FixedPoint64, decimals: u8): FixedPoint64 {
         from_u128(to_u128_internal(a, decimals, MODE_TRUNCATE), decimals)
     }
 
     /// Returns a FixedPoint rounded up to the given decimal places.
-    public fun round_up_to_decimals(a: FixedPoint128, decimals: u8): FixedPoint128 {
+    public fun round_up_to_decimals(a: FixedPoint64, decimals: u8): FixedPoint64 {
         from_u128(to_u128_internal(a, decimals, MODE_ROUND_UP), decimals)
     }
 
     /// Converts the FixedPoint to a u64 value with the given number of decimal places.
     /// Truncates any digits that are lost.
-    public fun to_u64_trunc(a: FixedPoint128, decimals: u8): u64 {
+    public fun to_u64_trunc(a: FixedPoint64, decimals: u8): u64 {
         let converted = to_u128_internal(a, decimals, MODE_TRUNCATE);
         // Runtime will error on overflow.
         (converted as u64)
@@ -86,7 +91,7 @@ module ferum::fixed_point_128 {
 
     /// Converts the FixedPoint to a u128 value with the given number of decimal places.
     /// Truncates any digits that are lost.
-    public fun to_u128_trunc(a: FixedPoint128, decimals: u8): u64 {
+    public fun to_u128_trunc(a: FixedPoint64, decimals: u8): u64 {
         let converted = to_u128_internal(a, decimals, MODE_TRUNCATE);
         // Runtime will error on overflow.
         (converted as u64)
@@ -94,7 +99,7 @@ module ferum::fixed_point_128 {
 
     /// Converts the FixedPoint to a u64 value with the given number of decimal places.
     /// Rounds up if digits are lost.
-    public fun to_u64_round_up(a: FixedPoint128, decimals: u8): u64 {
+    public fun to_u64_round_up(a: FixedPoint64, decimals: u8): u64 {
         let converted = to_u128_internal(a, decimals, MODE_ROUND_UP);
         // Runtime will error on overflow.
         (converted as u64)
@@ -102,7 +107,7 @@ module ferum::fixed_point_128 {
 
     /// Converts the FixedPoint to a u128 value with the given number of decimal places.
     /// Rounds up if digits are lost.
-    public fun to_u128_round_up(a: FixedPoint128, decimals: u8): u64 {
+    public fun to_u128_round_up(a: FixedPoint64, decimals: u8): u64 {
         let converted = to_u128_internal(a, decimals, MODE_ROUND_UP);
         // Runtime will error on overflow.
         (converted as u64)
@@ -110,7 +115,7 @@ module ferum::fixed_point_128 {
 
     /// Converts the FixedPoint to a u64 value with the given number of decimal places.
     /// Errors if any digits are lost.
-    public fun to_u64(a: FixedPoint128, decimals: u8): u64 {
+    public fun to_u64(a: FixedPoint64, decimals: u8): u64 {
         let converted = to_u128_internal(a, decimals, MODE_NO_PRECISION_LOSS);
         // Runtime will error on overflow.
         (converted as u64)
@@ -118,7 +123,7 @@ module ferum::fixed_point_128 {
 
     /// Converts the FixedPoint to a u128 value with the given number of decimal places.
     /// Errors if any digits are lost.
-    public fun to_u128(a: FixedPoint128, decimals: u8): u64 {
+    public fun to_u128(a: FixedPoint64, decimals: u8): u64 {
         let converted = to_u128_internal(a, decimals, MODE_NO_PRECISION_LOSS);
         // Runtime will error on overflow.
         (converted as u64)
@@ -126,7 +131,7 @@ module ferum::fixed_point_128 {
 
     /// Converts the FixedPoint to a u64 value with the given number of decimal places.
     /// Errors if any digits are lost.
-    fun to_u128_internal(a: FixedPoint128, decimals: u8, mode: u8): u128 {
+    fun to_u128_internal(a: FixedPoint64, decimals: u8, mode: u8): u128 {
         assert!(decimals <= DECIMAL_PLACES, ERR_EXCEED_MAX_DECIMALS);
 
         let decimalMult = exp(DECIMAL_PLACES);
@@ -148,12 +153,12 @@ module ferum::fixed_point_128 {
     }
 
     /// Converts the value with the specified decimal places to a FixedPoint value.
-    public fun from_u64(v: u64, decimals: u8): FixedPoint128 {
+    public fun from_u64(v: u64, decimals: u8): FixedPoint64 {
         from_u128((v as u128), decimals)
     }
 
     /// Converts the value with the specified decimal places to a FixedPoint value.
-    public fun from_u128(v: u128, decimals: u8): FixedPoint128 {
+    public fun from_u128(v: u128, decimals: u8): FixedPoint64 {
         assert!(decimals <= DECIMAL_PLACES, ERR_EXCEED_MAX_DECIMALS);
 
         let intPart = v / exp(decimals);
@@ -162,80 +167,80 @@ module ferum::fixed_point_128 {
         let decimalMult = exp(DECIMAL_PLACES);
         let val = intPart * decimalMult + decimalsPart * exp(DECIMAL_PLACES - decimals);
         assert!(val <= MAX_VALUE, ERR_EXCEED_MAX);
-        FixedPoint128 { val: intPart * decimalMult + decimalsPart * exp(DECIMAL_PLACES - decimals) }
+        FixedPoint64 { val: intPart * decimalMult + decimalsPart * exp(DECIMAL_PLACES - decimals) }
     }
 
     /// Multiplies two FixedPoints, truncating if the number of decimal places exceeds DECIMAL_PLACES.
-    public fun multiply_trunc(a: FixedPoint128, b: FixedPoint128): FixedPoint128 {
+    public fun multiply_trunc(a: FixedPoint64, b: FixedPoint64): FixedPoint64 {
         let val = a.val * b.val / exp(DECIMAL_PLACES);
         assert!(val <= MAX_VALUE, ERR_EXCEED_MAX);
-        FixedPoint128 { val }
+        FixedPoint64 { val }
     }
 
     /// Multiplies two FixedPoints, rounding up if the number of decimal places exceeds DECIMAL_PLACES.
-    public fun multiply_round_up(a: FixedPoint128, b: FixedPoint128): FixedPoint128 {
+    public fun multiply_round_up(a: FixedPoint64, b: FixedPoint64): FixedPoint64 {
         let decimalMult = exp(DECIMAL_PLACES);
         let val = a.val * b.val / decimalMult;
         if (val * decimalMult < a.val * b.val) {
             val = val + 1;
         };
         assert!(val <= MAX_VALUE, ERR_EXCEED_MAX);
-        FixedPoint128 { val }
+        FixedPoint64 { val }
     }
 
     /// Divides two FixedPoints, truncating if the number of decimal places exceeds DECIMAL_PLACES.
-    public fun divide_trunc(a: FixedPoint128, b: FixedPoint128): FixedPoint128 {
+    public fun divide_trunc(a: FixedPoint64, b: FixedPoint64): FixedPoint64 {
         let val = a.val * exp(DECIMAL_PLACES) / b.val;
         assert!(val <= MAX_VALUE, ERR_EXCEED_MAX);
-        FixedPoint128 { val }
+        FixedPoint64 { val }
     }
 
     /// Divides two FixedPoints, rounding up if the number of decimal places exceeds DECIMAL_PLACES.
-    public fun divide_round_up(a: FixedPoint128, b: FixedPoint128): FixedPoint128 {
+    public fun divide_round_up(a: FixedPoint64, b: FixedPoint64): FixedPoint64 {
         let decimalMult = exp(DECIMAL_PLACES);
         let val = a.val * decimalMult / b.val;
         if (val * b.val < a.val * decimalMult) {
             val = val + 1;
         };
         assert!(val <= MAX_VALUE, ERR_EXCEED_MAX);
-        FixedPoint128 { val }
+        FixedPoint64 { val }
     }
 
     /// Adds two FixedPoints.
-    public fun add(a: FixedPoint128, b: FixedPoint128): FixedPoint128 {
+    public fun add(a: FixedPoint64, b: FixedPoint64): FixedPoint64 {
         // Runtime will error on overflow.
-        FixedPoint128 { val: a.val + b.val }
+        FixedPoint64 { val: a.val + b.val }
     }
 
     /// Subtracts two FixedPoints.
-    public fun sub(a: FixedPoint128, b: FixedPoint128): FixedPoint128 {
+    public fun sub(a: FixedPoint64, b: FixedPoint64): FixedPoint64 {
         // Runtime will error on overflow.
-        FixedPoint128 { val: a.val - b.val }
+        FixedPoint64 { val: a.val - b.val }
     }
 
     /// Self explanatory comparison functions.
 
-    public fun lt(a: FixedPoint128, b: FixedPoint128): bool {
+    public fun lt(a: FixedPoint64, b: FixedPoint64): bool {
         a.val < b.val
     }
 
-    public fun lte(a: FixedPoint128, b: FixedPoint128): bool {
+    public fun lte(a: FixedPoint64, b: FixedPoint64): bool {
         a.val <= b.val
     }
 
-    public fun gt(a: FixedPoint128, b: FixedPoint128): bool {
+    public fun gt(a: FixedPoint64, b: FixedPoint64): bool {
         a.val > b.val
     }
 
-    public fun gte(a: FixedPoint128, b: FixedPoint128): bool {
+    public fun gte(a: FixedPoint64, b: FixedPoint64): bool {
         a.val >= b.val
     }
 
-    public fun eq(a: FixedPoint128, b: FixedPoint128): bool {
+    public fun eq(a: FixedPoint64, b: FixedPoint64): bool {
         a.val == b.val
     }
 
-    public fun max(a: FixedPoint128, b: FixedPoint128): FixedPoint128 {
+    public fun max(a: FixedPoint64, b: FixedPoint64): FixedPoint64 {
         if (a.val >= b.val) {
             a
         } else {
@@ -243,7 +248,7 @@ module ferum::fixed_point_128 {
         }
     }
 
-    public fun min(a: FixedPoint128, b: FixedPoint128): FixedPoint128 {
+    public fun min(a: FixedPoint64, b: FixedPoint64): FixedPoint64 {
         if (a.val < b.val) {
             a
         } else {
@@ -336,6 +341,24 @@ module ferum::fixed_point_128 {
     }
 
     #[test]
+    fun test_zero() {
+        let zero = zero();
+        assert!(zero.val == 0, 0);
+    }
+
+    #[test]
+    fun test_one() {
+        let one = one();
+        assert!(one.val == 10000000000, 0);
+    }
+
+    #[test]
+    fun test_half() {
+        let half = half();
+        assert!(half.val == 5000000000, 0);
+    }
+
+    #[test]
     #[expected_failure]
     fun test_from_large_integer() {
         from_u128(MAX_U128, 10);
@@ -383,6 +406,14 @@ module ferum::fixed_point_128 {
     fun test_multiply() {
         let a = from_u64(1056, 0);
         let b = from_u64(2056, 0);
+        let product = multiply_trunc(a, b);
+        assert!(to_u64(product, 0) == 2171136, 0);
+    }
+
+    #[test]
+    fun test_multiply_with_decimals() {
+        let a = from_u64(1056, 3);
+        let b = from_u64(2056, 6);
         let product = multiply_trunc(a, b);
         assert!(to_u64(product, 0) == 2171136, 0);
     }

@@ -7,3 +7,4 @@ AptosFramework = { git = "https://github.com/aptos-labs/aptos-core.git", subdir 
 
 [addresses]
 # ferum needs to be defined when publishing the module.
+ferum="0x8c9fc5a29c29bd5535c7ad38d6ed7da08aa33919c343d57aeafb4029e63dc13e"
