@@ -1,8 +1,6 @@
 import {
   AptosAccount,
   AptosClient,
-  TxnBuilderTypes,
-  BCS,
 } from "aptos";
 import { TransactionPayload } from "aptos/dist/transaction_builder/aptos_types";
 

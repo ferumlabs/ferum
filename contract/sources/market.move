@@ -220,7 +220,7 @@ module ferum::market {
         let ownerAddr = address_of(owner);
         let book = borrow_global_mut<OrderBook<I, Q>>(bookAddr);
 
-        let priceFixedPoint =  fixedpoint::from_u64(price, book.qDecimals);
+        let priceFixedPoint = fixedpoint::from_u64(price, book.qDecimals);
         let qtyFixedPoint = fixedpoint::from_u64(qty, book.iDecimals);
 
         let (buyCollateral, sellCollateral) = obtain_limit_order_collateral<I, Q>(

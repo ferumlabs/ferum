@@ -7,8 +7,8 @@ import { faucetClient } from "./aptos-client";
 type Profile = AptosAccountObject;
 
 type Config = {
-  TypeAliases: {[key: string]: string},
-  Profiles: {[key: string]: Profile},
+  TypeAliases: { [key: string]: string },
+  Profiles: { [key: string]: Profile },
   CurrentProfile: string | null,
   FerumAddress: string | null,
 }
@@ -22,10 +22,13 @@ let ConfigCache: Config = {
 };
 
 if (!fs.existsSync(CONFIG_PATH)) {
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(ConfigCache));
-} 
-else {
+  syncConfig()
+} else {
   ConfigCache = JSON.parse(fs.readFileSync(CONFIG_PATH).toString());
+}
+
+function syncConfig() {
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(ConfigCache, null, 2));
 }
 
 function addAddressIfNecessary(address: string | null, type: string): string {
@@ -39,18 +42,18 @@ function addAddressIfNecessary(address: string | null, type: string): string {
 }
 
 export default {
-  setFerumAddress: function(address: string) {
+  setFerumAddress: function (address: string) {
     ConfigCache.FerumAddress = address;
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(ConfigCache));
   },
 
-  getProfileAccount: function(name: string): AptosAccount {
+  getProfileAccount: function (name: string): AptosAccount {
     const profile = ConfigCache.Profiles[name];
     if (!profile) throw new Error(`Profile ${name} not in Profile map.`);
     return AptosAccount.fromAptosAccountObject(profile);
   },
 
-  createNewProfile: async function(name: string) {
+  createNewProfile: async function (name: string) {
     const account = new AptosAccount();
     await faucetClient.fundAccount(account.address(), 20000);
 
@@ -58,32 +61,32 @@ export default {
       log.debug(`Overwriting profile ${name}`);
     }
     ConfigCache.Profiles[name] = account.toPrivateKeyObject();
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(ConfigCache));
+    syncConfig()
   },
 
-  addExistingProfile: async function(name: string, privateKey: string) {
+  addExistingProfile: async function (name: string, privateKey: string) {
     const privateKeyHex = Uint8Array.from(Buffer.from(privateKey, "hex"));
     const account = new AptosAccount(privateKeyHex)
     if (name in ConfigCache.Profiles) {
       log.debug(`Overwriting profile ${name}`);
     }
     ConfigCache.Profiles[name] = account.toPrivateKeyObject();
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(ConfigCache));
+    syncConfig()
   },
 
-  setCurrentProfile: function(name: string) {
+  setCurrentProfile: function (name: string) {
     if (!(name in ConfigCache.Profiles)) {
       throw new Error(`${name} not a defined profile`);
     }
     ConfigCache.CurrentProfile = name;
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(ConfigCache));
+    syncConfig()
   },
 
-  getCurrentProfileName: function(): string | null {
+  getCurrentProfileName: function (): string | null {
     return ConfigCache.CurrentProfile;
   },
 
-  tryResolveAlias: function(maybeAlias: string): string {
+  tryResolveAlias: function (maybeAlias: string): string {
     if (maybeAlias in ConfigCache['TypeAliases']) {
       return addAddressIfNecessary(
         ConfigCache.FerumAddress,
@@ -93,15 +96,15 @@ export default {
     return maybeAlias;
   },
 
-  setAliasForType: function(alias: string, type: string) {
+  setAliasForType: function (alias: string, type: string) {
     if (alias in ConfigCache['TypeAliases']) {
       log.debug(`Overwriting alias registered with type ${type}`);
     }
     ConfigCache['TypeAliases'][alias] = type;
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(ConfigCache));
+    syncConfig()
   },
 
-  clearAlias: function(symbol: string): boolean {
+  clearAlias: function (symbol: string): boolean {
     if (!(symbol in ConfigCache['TypeAliases'])) {
       log.debug(`Symbol ${symbol} not registered`);
       return false;
@@ -110,7 +113,11 @@ export default {
     return true;
   },
 
-  getTypeAliasMap: function(): {[key: string]: string} {
+  getTypeAliasMap: function (): { [key: string]: string } {
     return ConfigCache.TypeAliases;
+  },
+
+  _private: {
+    addAddressIfNecessary
   }
 }

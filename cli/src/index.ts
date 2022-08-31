@@ -304,7 +304,6 @@ signedCmd("cancel-order")
 // Helpers
 //
 
-// Parses the private key passed into an Account object.
 function signedCmd(name: string) {
   return program.command(name)
     .option(
