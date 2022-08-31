@@ -5,6 +5,7 @@ import {
   MaybeHexString,
   HexString,
 } from "aptos";
+import { assert } from "console";
 import { client } from "./aptos-client";
 import Config, { CONFIG_PATH } from "./config";
 import { sendSignedTransactionWithAccount } from "./utils/transaction-utils";
@@ -48,7 +49,6 @@ async function initializeCoin(
   const token = new TxnBuilderTypes.TypeTagStruct(
     TxnBuilderTypes.StructTag.fromString(coinName),
   );
-
   const entryFunctionPayload =
     new TxnBuilderTypes.TransactionPayloadEntryFunction(
       TxnBuilderTypes.EntryFunction.natural(
@@ -175,7 +175,7 @@ export async function createTestCoin(
   let txHash;
 
   // 1. Initialize coin.
-  console.log(`Initializing ${coinSymbol}...`);
+  console.log(`Initializing ${coinSymbol} | ${coinName}...`);
   txHash = await initializeCoin(
     coinMasterAccount,
     coinName,

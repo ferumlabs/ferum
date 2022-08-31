@@ -9,8 +9,9 @@ import { AptosAccount } from "aptos";
 import { Transaction_UserTransaction } from "aptos/dist/generated";
 import { publishModuleUsingCLI } from "./utils/module-publish-utils";
 import { client, NODE_URL } from './aptos-client';
-import Config, {CONFIG_PATH} from './config';
+import Config, { CONFIG_PATH } from './config';
 import { testModuleUsingCLI } from "./utils/module-testing-utils";
+import { assert } from "console";
 
 // Register test coin symbols with ferum account alias.
 for (let symbol in TEST_COINS) {
@@ -31,19 +32,20 @@ program.command("create-profile")
   .description('Initializes a profile.')
   .requiredOption('-n, --name <string>', 'Name for profile')
   .action(async (_, cmd) => {
-    const {name} = cmd.opts();
+    const { name } = cmd.opts();
     await Config.createNewProfile(name);
     Config.setCurrentProfile(name);
     log.info(`Created profile ${name} and selected it as the current one`);
   });
 
-program.command("add-existing-profile")
-  .description('Adds an existing profile.')
+program.command("import-existing-profile")
+  .description('Imports an existing profile.')
   .requiredOption('-n, --name <string>', 'Name for profile')
   .requiredOption("-pk, --private-key [string]", "Private key assoicated with the existing profile.")
+  .requiredOption("-fa, --ferumAccount [string]", "Address of the published ferum module.")
   .action(async (_, cmd) => {
-    const {name, privateKey} = cmd.opts();
-    await Config.addExistingProfile(name, privateKey);
+    const { name, privateKey, ferumAccount } = cmd.opts();
+    await Config.importExistingProfile(name, privateKey, ferumAccount);
     Config.setCurrentProfile(name);
     log.info(`Added profile ${name} and selected it as the current one`);
   });
@@ -60,7 +62,7 @@ program.command("set-current-profile")
       log.info(`${name} is not a profile. Create it using create-profile`);
       return;
     }
-    
+
     log.info('Current profile is now', name);
   });
 
@@ -90,7 +92,7 @@ program.command("set-type-alias")
   )
   .requiredOption("-a, --alias <string>", "Alias for the type.")
   .action(async (_, cmd) => {
-    const {type, symbol} = cmd.opts();
+    const { type, symbol } = cmd.opts();
     Config.setAliasForType(symbol, type);
     log.info(`Set symbol for coin type ${type} to ${symbol}.`);
   });
@@ -124,12 +126,12 @@ signedCmd("publish-ferum")
     try {
       await publishModuleUsingCLI(NODE_URL, account, modulePath, maxGasNum);
       Config.setFerumAddress((account as AptosAccount).address().toString());
-    } 
+    }
     catch {
       console.error('Unable to publish module.');
     }
   });
- 
+
 signedCmd("test-ferum")
   .requiredOption("-m, --module-path <string>", "Module path.", "../contract")
   .action(async (_, cmd) => {
@@ -142,7 +144,7 @@ signedCmd("test-ferum")
       console.error('Unable to publish module.');
     }
   });
- 
+
 signedCmd("create-test-coins")
   .description('Create FakeMoneyA (FMA) and FakeMoneyB (FMB) test coins.')
   .action(async (_, cmd) => {
@@ -155,7 +157,7 @@ signedCmd("test-coin-balances")
   .description('Get FakeMoneyA (FMA) and FakeMoneyB (FMB) balances for the signing account.')
   .action(async (_, cmd) => {
     const { account } = cmd.opts();
-    const balances: {[key: string]: number} = {};
+    const balances: { [key: string]: number } = {};
     for (let coinSymbol in TEST_COINS) {
       balances[coinSymbol] = await getTestCoinBalance(account, coinSymbol as TestCoinSymbol);
     }
@@ -173,21 +175,21 @@ signedCmd("init-ferum")
 
 signedCmd("init-market")
   .requiredOption(
-    "-ic, --instrument-coin-type <string>", 
+    "-ic, --instrument-coin-type <string>",
     "Instrument CoinType. Must be a fully qualified type (address::module::CoinType) or an alias."
   )
   .requiredOption(
-    "-id, --instrument-decimals <number>", 
+    "-id, --instrument-decimals <number>",
     "Decimal places for the instrument coin type. Must be <= coin::decimals(InstrumentCointType)." +
     "The sum of the instrument and quote decimals must also be <= " +
     "min(coin::decimals(InstrumentCoinType), coin::decimals(QuoteCoinType))"
   )
   .requiredOption(
-    "-qc, --quote-coin-type <string>", 
+    "-qc, --quote-coin-type <string>",
     "Quote CoinType. Must be a fully qualified type (address::module::CoinType) or an alias."
   )
   .requiredOption(
-    "-qd, --quote-decimals <number>", 
+    "-qd, --quote-decimals <number>",
     "Decimal places for the quote coin type. Must be <= coin::decimals(QuoteCoinType). " +
     "The sum of the instrument and quote decimals must also be <= " +
     "min(coin::decimals(InstrumentCoinType), coin::decimals(QuoteCoinType))"
@@ -210,23 +212,23 @@ signedCmd("init-market")
 
 signedCmd("add-limit-order")
   .requiredOption(
-    "-ic, --instrument-coin-type <string>", 
+    "-ic, --instrument-coin-type <string>",
     "Instrument CoinType. Must be a fully qualified type (address::module::CoinType) or an alias."
   )
   .requiredOption(
-    "-qc, --quote-coin-type <string>", 
+    "-qc, --quote-coin-type <string>",
     "Quote CoinType. Must be a fully qualified type (address::module::CoinType) or an alias."
   )
   .requiredOption(
-    "-p, --price <number>", 
+    "-p, --price <number>",
     "Limit price for the order, in terms of coin::Coin<QuoteCoinType>.",
   )
   .requiredOption(
-    "-q, --quantity <number>", 
+    "-q, --quantity <number>",
     "Quantity for the order, in terms of coin::Coin<InstrumentCoinType>",
   )
   .requiredOption(
-    "-s, --side <buy | sell>", 
+    "-s, --side <buy | sell>",
     "Side for the order, either buy or sell.",
   )
   .action(async (_, cmd) => {
@@ -244,23 +246,23 @@ signedCmd("add-limit-order")
 
 signedCmd("add-market-order")
   .requiredOption(
-    "-ic, --instrument-coin-type <string>", 
+    "-ic, --instrument-coin-type <string>",
     "Instrument CoinType. Must be a fully qualified type (address::module::CoinType) or an alias."
   )
   .requiredOption(
-    "-qc, --quote-coin-type <string>", 
+    "-qc, --quote-coin-type <string>",
     "Quote CoinType. Must be a fully qualified type (address::module::CoinType) or an alias."
   )
   .requiredOption(
-    "-q, --quantity <number>", 
+    "-q, --quantity <number>",
     "Quantity for the order, in terms of coin::Coin<InstrumentCoinType>",
   )
   .requiredOption(
-    "-s, --side <buy | sell>", 
+    "-s, --side <buy | sell>",
     "Side for the order, either buy or sell.",
   )
   .requiredOption(
-    "-c, --max-collateral [number]", 
+    "-c, --max-collateral [number]",
     "Only required for a buy order. Max amount of coin::Coin<QuoteCoinType> allowed to be spent.",
   )
   .action(async (_, cmd) => {
@@ -279,11 +281,11 @@ signedCmd("add-market-order")
 
 signedCmd("cancel-order")
   .requiredOption(
-    "-ic, --instrument-coin-type <string>", 
+    "-ic, --instrument-coin-type <string>",
     "Instrument CoinType. Must be a fully qualified type (address::module::CoinType) or an alias."
   )
   .requiredOption(
-    "-qc, --quote-coin-type <string>", 
+    "-qc, --quote-coin-type <string>",
     "Quote CoinType. Must be a fully qualified type (address::module::CoinType) or an alias."
   )
   .requiredOption("-id, --order-id <number>", "Order id.")
@@ -307,12 +309,12 @@ signedCmd("cancel-order")
 function signedCmd(name: string) {
   return program.command(name)
     .option(
-      "-pk, --private-key <string>", 
-      `Private key of account used to sign transaction. Will fallback to profile-name if not set.`, 
+      "-pk, --private-key <string>",
+      `Private key of account used to sign transaction. Will fallback to profile-name if not set.`,
     )
     .option(
-      "-pn, --profile <string>", 
-      `Name of profile to use to sign this transaction. Will fallback to current profile if not set.`, 
+      "-pn, --profile <string>",
+      `Name of profile to use to sign this transaction. Will fallback to current profile if not set.`,
     )
     .hook('preAction', cmd => {
       const { privateKey, profileName } = cmd.opts();
@@ -336,7 +338,7 @@ function signedCmd(name: string) {
       }
       cmd.setOptionValue('account', account);
     });
-}  
+}
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function setLogLevel(value: any) {

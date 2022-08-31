@@ -1,4 +1,5 @@
 import { AptosAccount, AptosAccountObject } from "aptos";
+import { assert } from "console";
 import fs from "fs";
 
 import log from "loglevel";
@@ -44,7 +45,11 @@ function addAddressIfNecessary(address: string | null, type: string): string {
 export default {
   setFerumAddress: function (address: string) {
     ConfigCache.FerumAddress = address;
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(ConfigCache));
+    syncConfig()
+  },
+
+  getFerumAddress: function () {
+    return ConfigCache.FerumAddress
   },
 
   getProfileAccount: function (name: string): AptosAccount {
@@ -56,7 +61,6 @@ export default {
   createNewProfile: async function (name: string) {
     const account = new AptosAccount();
     await faucetClient.fundAccount(account.address(), 20000);
-
     if (name in ConfigCache.Profiles) {
       log.debug(`Overwriting profile ${name}`);
     }
@@ -64,13 +68,14 @@ export default {
     syncConfig()
   },
 
-  addExistingProfile: async function (name: string, privateKey: string) {
+  importExistingProfile: async function (name: string, privateKey: string, ferumAccount: string) {
     const privateKeyHex = Uint8Array.from(Buffer.from(privateKey, "hex"));
     const account = new AptosAccount(privateKeyHex)
     if (name in ConfigCache.Profiles) {
       log.debug(`Overwriting profile ${name}`);
     }
     ConfigCache.Profiles[name] = account.toPrivateKeyObject();
+    this.setFerumAddress(ferumAccount);
     syncConfig()
   },
 
@@ -87,6 +92,7 @@ export default {
   },
 
   tryResolveAlias: function (maybeAlias: string): string {
+    assert(this.getFerumAddress(), "Ferum address not set!")
     if (maybeAlias in ConfigCache['TypeAliases']) {
       return addAddressIfNecessary(
         ConfigCache.FerumAddress,
@@ -110,6 +116,7 @@ export default {
       return false;
     }
     delete ConfigCache['TypeAliases'][symbol];
+    syncConfig()
     return true;
   },
 
