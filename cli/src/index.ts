@@ -37,6 +37,17 @@ program.command("create-profile")
     log.info(`Created profile ${name} and selected it as the current one`);
   });
 
+program.command("add-existing-profile")
+  .description('Adds an existing profile.')
+  .requiredOption('-n, --name <string>', 'Name for profile')
+  .requiredOption("-pk, --private-key [string]", "Private key assoicated with the existing profile.")
+  .action(async (_, cmd) => {
+    const {name, privateKey} = cmd.opts();
+    await Config.addExistingProfile(name, privateKey);
+    Config.setCurrentProfile(name);
+    log.info(`Added profile ${name} and selected it as the current one`);
+  });
+
 program.command("set-current-profile")
   .description('Sets specified profile as the current.')
   .requiredOption('-n, --name <string>', 'Name of profile')

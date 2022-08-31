@@ -61,6 +61,16 @@ export default {
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(ConfigCache));
   },
 
+  addExistingProfile: async function(name: string, privateKey: string) {
+    const privateKeyHex = Uint8Array.from(Buffer.from(privateKey, "hex"));
+    const account = new AptosAccount(privateKeyHex)
+    if (name in ConfigCache.Profiles) {
+      log.debug(`Overwriting profile ${name}`);
+    }
+    ConfigCache.Profiles[name] = account.toPrivateKeyObject();
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(ConfigCache));
+  },
+
   setCurrentProfile: function(name: string) {
     if (!(name in ConfigCache.Profiles)) {
       throw new Error(`${name} not a defined profile`);
