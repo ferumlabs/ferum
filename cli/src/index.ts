@@ -11,7 +11,8 @@ import { publishModuleUsingCLI } from "./utils/module-publish-utils";
 import { client, NODE_URL } from './aptos-client';
 import Config, { CONFIG_PATH } from './config';
 import { testModuleUsingCLI } from "./utils/module-testing-utils";
-import { assert } from "console";
+
+const DEFAULT_CONTRACT_DIR = "../contract"
 
 // Register test coin symbols with ferum account alias.
 for (let symbol in TEST_COINS) {
@@ -117,7 +118,7 @@ program.command("get-address")
   });
 
 signedCmd("publish-ferum")
-  .requiredOption("-m, --module-path <string>", "Module path.")
+  .requiredOption("-m, --module-path <string>", "Module path.", DEFAULT_CONTRACT_DIR)
   .option("-g, --max-gas [number]", "Max gas used for transaction. Optional. Defaults to 10000.", "10000")
   .action(async (_, cmd) => {
     const { account, modulePath, maxGas } = cmd.opts();
@@ -133,7 +134,7 @@ signedCmd("publish-ferum")
   });
 
 signedCmd("test-ferum")
-  .requiredOption("-m, --module-path <string>", "Module path.", "../contract")
+  .requiredOption("-m, --module-path <string>", "Module path.", DEFAULT_CONTRACT_DIR)
   .action(async (_, cmd) => {
     const { account, modulePath } = cmd.opts();
     log.info('Testing modules under account', account.address());
