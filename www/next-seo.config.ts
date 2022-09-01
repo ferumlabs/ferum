@@ -1,6 +1,6 @@
 import { DefaultSeoProps } from "next-seo";
 
-const APP_DESCRIPTION = "Blazing fast decentralized exchange on the Aptos blockchain!"
+const APP_DESCRIPTION = "Ferum is the most developer friendly on-chain order book on Aptos!"
 
 const APP_DEFAULT_SEO: DefaultSeoProps = {
   title: "Ferum",
