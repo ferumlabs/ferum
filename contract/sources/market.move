@@ -7,7 +7,7 @@ module ferum::market {
     use std::signer::address_of;
 
     use ferum::ferum::{init_ferum, register_market, get_market_addr};
-    use ferum::fixed_point_64::{Self, FixedPoint64};
+    use ferum_std::fixed_point_64::{Self, FixedPoint64};
     use ferum::list;
 
     #[test_only]
