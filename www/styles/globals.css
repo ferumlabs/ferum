@@ -10,6 +10,11 @@
   font-display: swap;
 }
 
+@supports(padding:max(0px)) {
+  body, header, footer {
+      padding-top: min(0vmin, env(safe-area-inset-top));
+  }
+}
 
 :root {
   --main-bg-color: #642C27;
