@@ -16,9 +16,9 @@ module ferum::market {
     #[test_only]
     use aptos_framework::account;
 
-    ///
-    /// Errors
-    ///
+    //
+    // Errors
+    //
 
     const ERR_NOT_ALLOWED: u64 = 0;
     const ERR_NOT_ADMIN: u64 = 1;
@@ -34,9 +34,9 @@ module ferum::market {
     const ERR_MARKET_ORDER_NOT_PENDING: u64 = 11;
     const ERR_INVALID_DECIMAL_CONFIG: u64 = 12;
 
-    ///
-    /// Enums.
-    ///
+    //
+    // Enums.
+    //
 
     const SIDE_SELL: u8 = 0;
     const SIDE_BUY: u8 = 1;
@@ -53,15 +53,15 @@ module ferum::market {
     const CANCEL_AGENT_IOC: u8 = 1;
     const CANCEL_AGENT_USER: u8 = 2;
 
-    ///
-    /// Constants.
-    ///
+    //
+    // Constants.
+    //
 
     const MAX_DECIMALS: u8 = 10;
 
-    ///
-    /// Structs.
-    ///
+    //
+    // Structs.
+    //
 
     struct OrderMetadata has drop, store, copy {
         side: u8,
@@ -81,34 +81,34 @@ module ferum::market {
     }
 
     struct OrderBook<phantom I, phantom Q> has key, store {
-        /// Order IDs of marker orders.
+        // Order IDs of marker orders.
         marketOrders: vector<u128>,
-        /// Order IDs stored in order of decreasing price.
+        // Order IDs stored in order of decreasing price.
         sells: vector<u128>,
-        /// Order IDs stored in order of increasing price.
+        // Order IDs stored in order of increasing price.
         buys: vector<u128>,
-        /// Map of all non finalized orders.
+        // Map of all non finalized orders.
         orderMap: table::Table<u128, Order<I, Q>>,
-        /// Map of all finalized orders.
+        // Map of all finalized orders.
         finalizedOrderMap: table::Table<u128, Order<I, Q>>,
-        /// Counter to generate order ID.
+        // Counter to generate order ID.
         idCounter: u128,
-        /// Number of decimals for the instrument coin.
+        // Number of decimals for the instrument coin.
         iDecimals: u8,
-        /// Number of decimals for the quote coin.
+        // Number of decimals for the quote coin.
         qDecimals: u8,
 
-        /// Finalize order events for this market.
+        // Finalize order events for this market.
         finalizeEvents: EventHandle<FinalizeEvent>,
-        /// Execution events for this market.
+        // Execution events for this market.
         executionEvents: EventHandle<ExecutionEvent>,
-        /// Create order events for this market.
+        // Create order events for this market.
         createOrderEvents: EventHandle<CreateEvent>,
     }
 
-    ///
-    /// Events.
-    ///
+    //
+    // Events.
+    //
 
     struct ExecutionEvent has drop, store {
         orderID: u128,
@@ -136,6 +136,16 @@ module ferum::market {
         orderMetadata: OrderMetadata,
     }
 
+    /// Description: Initializes the market for the given instrument and quote coins.
+    ///
+    /// Types:
+    ///     - I: CoinType of the instrument coin of this market. For APT/USDC, APT is I.
+    ///     - Q: CoinType for the quote coin of this market. For APT/USDC, USDC is Q.
+    ///
+    /// Parameters:
+    ///     - owner: Wallet signing the transaction.
+    ///     - instrumentDecimals: Number of decimal places the instrument coin should support for this market.
+    ///     - quoteDecimals: Number of decimal places the quote coin should support for this market.
     public entry fun init_market<I, Q>(owner: &signer, instrumentDecimals: u8, quoteDecimals: u8) {
         let ownerAddr = address_of(owner);
         assert!(!exists<OrderBook<I, Q>>(ownerAddr), ERR_BOOK_EXISTS);
@@ -202,10 +212,9 @@ module ferum::market {
         clean_orders(book);
     }
 
-    ///
-    /// Private functions.
-    ///
-    ///
+    //
+    // Private functions.
+    //
 
     fun add_limit_order_internal<I, Q>(
         owner: &signer,
@@ -680,9 +689,9 @@ module ferum::market {
         };
     }
 
-    ///
-    /// Validation functions.
-    ///
+    //
+    // Validation functions.
+    //
 
     fun validate_order<I, Q>(order: &Order<I, Q>) {
         let metadata = &order.metadata;
@@ -704,9 +713,9 @@ module ferum::market {
         (iDecimals, qDecimals)
     }
 
-    ///
-    /// Order specific helpers.
-    ///
+    //
+    // Order specific helpers.
+    //
 
     fun finalize_order_if_needed<I, Q>(
         finalize_event_handle: &mut EventHandle<FinalizeEvent>,
@@ -773,9 +782,9 @@ module ferum::market {
         (buyCollateral, sellCollateral)
     }
 
-    ///
-    /// Collateral functions.
-    ///
+    //
+    // Collateral functions.
+    //
 
     fun obtain_limit_order_collateral<I, Q>(
         owner: &signer,
@@ -816,7 +825,7 @@ module ferum::market {
         }
     }
 
-    /// Moves collateral from orders to owners based on the execution details.
+    // Moves collateral from orders to owners based on the execution details.
     fun swap_collateral<I, Q>(
         orderMap: &mut table::Table<u128, Order<I, Q>>,
         buyID: u128,
