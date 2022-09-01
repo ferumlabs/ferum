@@ -6,7 +6,7 @@ import { NavigationLinks } from "../components/Navigation";
 const Home: NextPage = () => {
   return (
     <div className="flex flex-col items-center justify-center gap-20 h-full w-full">
-      <Image layout="fill" src={require('../public/sand.png')} objectFit="cover" placeholder="blur" />
+      <Image layout="fill" sizes="33vw" src={require('../public/sand.png')} objectFit="cover" placeholder="blur" />
       <div className="relative max-w-[400px] w-[90%] h-[300px] md:h-[400px]">
         <Image layout="fill" src='/alchemy.svg' />
       </div>
