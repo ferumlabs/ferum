@@ -1,8 +1,16 @@
-import Link from "next/link";
-import Navigation from "./Navigation";
-import { NavigationLinks } from "./Navigation";
+import {ReactNode} from 'react';
 
-const Container = (props: any) => {
+import Navigation from "./Navigation";
+
+
+type ContainerProps = {
+  showsNavigation?: boolean,
+  disableResponsive?: boolean 
+  disableMargins?: boolean,
+  children: ReactNode[] | ReactNode
+}
+
+const Container = ({showsNavigation, disableResponsive, disableMargins, children}: ContainerProps) => {
   return (
     // 1. There is a top level flex box with height 100%.
     // 2. The first child is an optional navigation bar with a set height and no shrink.
@@ -10,24 +18,24 @@ const Container = (props: any) => {
     // 4. The second child's top is offset by navigation's height to allow centering on screen.
     // 5. Z index on the child that has navigation is increased to prevent the second child eating events.
     <div className="flex flex-col h-full">
-      {props.showsNavigation && (
+      {showsNavigation && (
         <div className="shrink-0 z-50">
           <Navigation />
         </div>
       )}
       <div
         className={`grow ${
-          props.disableResponsible 
+          disableResponsive 
             ? "w-full" 
             : "xl:max-w-7xl lg:mx-auto md:max-w-5xl"
         } ${
-          !props.disableMargins
+          !disableMargins
           && "mx-8"
         } ${
-          props.showsNavigation && "-mt-34"
+          showsNavigation && "-mt-34"
         }`}
       >
-        {props.children}
+        {children}
       </div>
     </div>
   );

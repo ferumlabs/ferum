@@ -1,23 +1,21 @@
 import type { NextPage } from "next";
-import Container from "../components/Container";
-import Button from "../components/Button";
+import Image from "next/image";
+
 import { NavigationLinks } from "../components/Navigation";
 
 const Home: NextPage = () => {
   return (
-    <Container showsNavigation={true}>
-      <div className="flex flex-col items-center justify-center min-h-[75vh] w-full lg:py-10 space-y-5">
-          <h1 className="lg:text-8xl text-4xl  text-white text-center font-bold ">
-            First Decentralized Exchange on Aptos
-          </h1>
-          <p className="lg:text-2xl text-base opacity-90 leading-normal text-center">
-            Harness the power of DeFi. Built on Move. 
-          </p>
-          <div>
-            <Button title="Join Waitlist" href={NavigationLinks.typeform}/>
-          </div>
-        </div>
-    </Container>
+    <div className="flex flex-col items-center justify-center gap-20 h-full w-full bg-[url('/sand.png')] bg-cover">
+      <div className="alchemy-shadow max-w-[400px] w-[90%] h-[300px] md:h-[400px]"><Image layout="fill" src='/alchemy.svg' /></div>
+      <div className="flex flex-row gap-10">
+        <a target="_blank" rel="noopener noreferrer" href={NavigationLinks.twitter}>
+          <Image className="transition duration-300 hover:opacity-40 cursor-pointer" src="/twitter.svg" width={40} height={40} />
+        </a>
+        <a target="_blank" rel="noopener noreferrer" href={NavigationLinks.discord}>
+          <Image className="transition duration-300 hover:opacity-40 cursor-pointer" src="/discord.svg" width={40} height={40} />
+        </a>
+      </div>
+    </div>
   );
 };
 
