@@ -6,7 +6,7 @@ import Button from "./Button";
 export const NavigationLinks = {
   twitter: "https://twitter.com/ferumxyz",
   typeform: "https://survey.typeform.com/to/xVtSzJUI",
-  discord: "https://discord.gg/YjVDD8Pt",
+  discord: "https://discord.gg/ferum",
 };
 
 const CompanyLogo = (props: any) => {
