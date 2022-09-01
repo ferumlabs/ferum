@@ -53,12 +53,12 @@ footer > p, a {
   @apply underline;
 }
 
-.alchemy-shadow {
-  filter: 
+.alchemy {
+  /* filter: 
     drop-shadow(0px 6px 80px rgba(0, 0, 0, 0.63)) 
     drop-shadow(0px 2.50666px 42.0065px rgba(0, 0, 0, 0.452878)) 
     drop-shadow(0px 1.34018px 30.9007px rgba(0, 0, 0, 0.375548)) 
     drop-shadow(0px 0.751293px 23.6768px rgba(0, 0, 0, 0.315)) 
     drop-shadow(0px 0.399006px 16.6974px rgba(0, 0, 0, 0.254452)) 
-    drop-shadow(0px 0.166035px 8.91975px rgba(0, 0, 0, 0.177122));
+    drop-shadow(0px 0.166035px 8.91975px rgba(0, 0, 0, 0.177122)); */
 }
