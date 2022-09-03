@@ -114,7 +114,7 @@ program.command("get-address")
     const { privateKey } = cmd.opts();
     const privateKeyHex = Uint8Array.from(Buffer.from(privateKey, "hex"));
     const account = new AptosAccount(privateKeyHex);
-    log.info(`Address: ${account.address()}`);
+    log.info(`Address: ${account.address().toString()}`);
   });
 
 signedCmd("publish-ferum")
@@ -123,7 +123,7 @@ signedCmd("publish-ferum")
   .action(async (_, cmd) => {
     const { account, modulePath, maxGas } = cmd.opts();
     const maxGasNum = parseNumber(maxGas, 'max-gas');
-    log.info('Publishing modules under account', account.address());
+    log.info('Publishing modules under account', account.address().toString());
     try {
       await publishModuleUsingCLI(NODE_URL, account, modulePath, maxGasNum);
       Config.setFerumAddress((account as AptosAccount).address().toString());
@@ -137,7 +137,7 @@ signedCmd("test-ferum")
   .requiredOption("-m, --module-path <string>", "Module path.", DEFAULT_CONTRACT_DIR)
   .action(async (_, cmd) => {
     const { account, modulePath } = cmd.opts();
-    log.info('Testing modules under account', account.address());
+    log.info('Testing modules under account', account.address().toString());
     try {
       await testModuleUsingCLI(NODE_URL, account, modulePath);
     }
