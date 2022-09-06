@@ -67,9 +67,15 @@ module ferum::market {
     // Structs.
     //
 
+    // Struct representing id for an order.
     struct OrderID has copy, drop, store {
         owner: address,
         counter: u128,
+    }
+
+    // Market specific user information
+    struct UserMarketInfo<phantom I, phantom Q> has key {
+        idCounter: u128,
     }
 
     struct OrderMetadata has drop, store, copy {
@@ -115,6 +121,7 @@ module ferum::market {
         createOrderEvents: EventHandle<CreateEvent>,
         // Price update events for this market.
         priceUpdateEvents: EventHandle<PriceUpdateEvent>,
+
     }
 
     // Struct encapsulating price at a given timestamp for the market.
@@ -226,7 +233,7 @@ module ferum::market {
         price: u64,
         qty: u64,
         clientOrderID: String,
-    ) acquires OrderBook {
+    ) acquires OrderBook, UserMarketInfo {
         add_limit_order<I, Q>(owner, side, price, qty, clientOrderID);
     }
 
@@ -236,7 +243,7 @@ module ferum::market {
         qty: u64,
         maxCollateralAmt: u64,
         clientOrderID: String,
-    ) acquires OrderBook {
+    ) acquires OrderBook, UserMarketInfo {
         add_market_order<I, Q>(owner, side, qty, maxCollateralAmt, clientOrderID);
     }
 
@@ -273,10 +280,11 @@ module ferum::market {
         price: u64,
         qty: u64,
         clientOrderID: String,
-    ): OrderID acquires OrderBook {
+    ): OrderID acquires OrderBook, UserMarketInfo {
         let bookAddr = get_market_addr<I, Q>();
         assert!(exists<OrderBook<I, Q>>(bookAddr), ERR_BOOK_NOT_EXISTS);
         validate_coins<I, Q>();
+        create_user_info_if_needed<I, Q>(owner);
 
         let ownerAddr = address_of(owner);
         let book = borrow_global_mut<OrderBook<I, Q>>(bookAddr);
@@ -290,7 +298,7 @@ module ferum::market {
             priceFixedPoint,
             qtyFixedPoint,
         );
-        let orderID = gen_order_id(ownerAddr, book);
+        let orderID = gen_order_id<I, Q>(ownerAddr);
         let order = Order<I, Q>{
             id: orderID,
             buyCollateral,
@@ -317,10 +325,11 @@ module ferum::market {
         qty: u64,
         maxCollateralAmt: u64,
         clientOrderID: String,
-    ): OrderID acquires OrderBook {
+    ): OrderID acquires OrderBook, UserMarketInfo {
         let bookAddr = get_market_addr<I, Q>();
         assert!(exists<OrderBook<I, Q>>(bookAddr), ERR_BOOK_NOT_EXISTS);
         validate_coins<I, Q>();
+        create_user_info_if_needed<I, Q>(owner);
 
         let book = borrow_global_mut<OrderBook<I, Q>>(bookAddr);
 
@@ -335,7 +344,7 @@ module ferum::market {
             maxCollateralAmt,
         );
 
-        let orderID = gen_order_id(ownerAddr, book);
+        let orderID = gen_order_id<I, Q>(ownerAddr);
         let order = Order<I, Q>{
             id: orderID,
             buyCollateral,
@@ -360,9 +369,10 @@ module ferum::market {
     // Private functions.
     //
 
-    fun gen_order_id<I, Q>(owner: address, book: &mut OrderBook<I, Q>): OrderID {
-        let counter = book.idCounter;
-        book.idCounter = book.idCounter + 1;
+    fun gen_order_id<I, Q>(owner: address): OrderID acquires UserMarketInfo {
+        let market_info = borrow_global_mut<UserMarketInfo<I, Q>>(owner);
+        let counter = market_info.idCounter;
+        market_info.idCounter = market_info.idCounter + 1;
         OrderID {
             owner,
             counter,
@@ -972,6 +982,15 @@ module ferum::market {
         coin::extract(&mut order.sellCollateral, amt)
     }
 
+    fun create_user_info_if_needed<I, Q>(owner: &signer) {
+        if (exists<UserMarketInfo<I, Q>>(address_of(owner))) {
+            return
+        };
+        move_to(owner, UserMarketInfo<I, Q> {
+            idCounter: 0,
+        });
+    }
+
     #[test(owner = @ferum)]
     #[expected_failure]
     fun test_init_market_with_duplicate_market<I, Q>(owner: &signer) {
@@ -982,7 +1001,7 @@ module ferum::market {
 
     #[test(owner = @ferum, user = @0x2)]
     #[expected_failure]
-    fun test_add_limit_order_to_uninited_book(owner: &signer, user: &signer) acquires OrderBook {
+    fun test_add_limit_order_to_uninited_book(owner: &signer, user: &signer) acquires OrderBook, UserMarketInfo {
         // Tests that a limit order added for uninitialized book fails.
 
         account::create_account_for_test(address_of(owner));
@@ -994,7 +1013,7 @@ module ferum::market {
 
     #[test(owner = @ferum, user = @0x2)]
     #[expected_failure]
-    fun test_add_market_order_to_uninited_book(owner: &signer, user: &signer) acquires OrderBook {
+    fun test_add_market_order_to_uninited_book(owner: &signer, user: &signer) acquires OrderBook, UserMarketInfo {
         // Tests that a limit order added for uninitialized book fails.
 
         account::create_account_for_test(address_of(owner));
@@ -1006,7 +1025,7 @@ module ferum::market {
 
     #[test(owner = @ferum, aptos = @0x1, user = @0x2)]
     #[expected_failure]
-    fun test_add_buy_order_exceed_balance(owner: &signer, aptos: &signer, user: &signer) acquires OrderBook {
+    fun test_add_buy_order_exceed_balance(owner: &signer, aptos: &signer, user: &signer) acquires OrderBook, UserMarketInfo {
         // Tests that a buy order that requires more collateral than the user has fails.
 
         account::create_account_for_test(address_of(owner));
@@ -1019,7 +1038,7 @@ module ferum::market {
 
     #[test(owner = @ferum, aptos = @0x1, user = @0x2)]
     #[expected_failure]
-    fun test_add_buy_order_exceed_balance_price(owner: &signer, aptos: &signer, user: &signer) acquires OrderBook {
+    fun test_add_buy_order_exceed_balance_price(owner: &signer, aptos: &signer, user: &signer) acquires OrderBook, UserMarketInfo {
         // Tests that a buy order that requires more collateral than the user has fails.
 
         account::create_account_for_test(address_of(owner));
@@ -1032,7 +1051,7 @@ module ferum::market {
 
     #[test(owner = @ferum, aptos = @0x1, user = @0x2)]
     #[expected_failure]
-    fun test_add_sell_order_exceed_balance(owner: &signer, aptos: &signer, user: &signer) acquires OrderBook {
+    fun test_add_sell_order_exceed_balance(owner: &signer, aptos: &signer, user: &signer) acquires OrderBook, UserMarketInfo {
         // Tests that a sell order that requires more collateral than the user has fails.
 
         account::create_account_for_test(address_of(owner));
@@ -1044,7 +1063,7 @@ module ferum::market {
     }
 
     #[test(owner = @ferum, aptos = @0x1, user = @0x2)]
-    fun test_add_sell_order_no_precision_loss(owner: &signer, aptos: &signer, user: &signer) acquires OrderBook {
+    fun test_add_sell_order_no_precision_loss(owner: &signer, aptos: &signer, user: &signer) acquires OrderBook, UserMarketInfo {
         // Tests that a sell order placed with the minimum qty doesn't fail.
 
         account::create_account_for_test(address_of(owner));
@@ -1058,7 +1077,7 @@ module ferum::market {
     }
 
     #[test(owner = @ferum, aptos = @0x1, user = @0x2)]
-    fun test_add_orders_to_empty_book(owner: &signer, aptos: &signer, user: &signer) acquires OrderBook {
+    fun test_add_orders_to_empty_book(owner: &signer, aptos: &signer, user: &signer) acquires OrderBook, UserMarketInfo {
         // Tests that orders can be added to empty book and none of them trigger.
 
         account::create_account_for_test(address_of(owner));
@@ -1079,7 +1098,7 @@ module ferum::market {
     }
 
     #[test(owner = @ferum, aptos = @0x1, user = @0x2)]
-    fun test_add_market_orders_cancelled(owner: &signer, aptos: &signer, user: &signer) acquires OrderBook {
+    fun test_add_market_orders_cancelled(owner: &signer, aptos: &signer, user: &signer) acquires OrderBook, UserMarketInfo {
         // Tests that market orders should get cancelled because there is nothing to execute them against.
 
         account::create_account_for_test(address_of(owner));
@@ -1121,7 +1140,7 @@ module ferum::market {
     }
 
     #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x3)]
-    fun test_market_buy_execute_against_limit(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook {
+    fun test_market_buy_execute_against_limit(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook, UserMarketInfo {
         // Tests that market buy order execute against limit orders.
 
         account::create_account_for_test(address_of(owner));
@@ -1174,7 +1193,7 @@ module ferum::market {
     }
 
     #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x3)]
-    fun test_market_sell_execute_against_limit(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook {
+    fun test_market_sell_execute_against_limit(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook, UserMarketInfo {
         // Tests that market sell order execute against limit orders.
 
         account::create_account_for_test(address_of(owner));
@@ -1228,7 +1247,7 @@ module ferum::market {
     }
 
     #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x3)]
-    fun test_market_sell_execute_against_multiple_limits(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook {
+    fun test_market_sell_execute_against_multiple_limits(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook, UserMarketInfo {
         // Tests that market sell order execute against multiple limit orders.
 
         account::create_account_for_test(address_of(owner));
@@ -1294,7 +1313,7 @@ module ferum::market {
     }
 
     #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x3)]
-    fun test_market_buy_execute_against_multiple_limits(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook {
+    fun test_market_buy_execute_against_multiple_limits(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook, UserMarketInfo {
         // Tests that market buy order execute against multiple limit orders.
 
         account::create_account_for_test(address_of(owner));
@@ -1360,7 +1379,7 @@ module ferum::market {
     }
 
     #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x3)]
-    fun test_market_sell_eat_book_not_filled(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook {
+    fun test_market_sell_eat_book_not_filled(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook, UserMarketInfo {
         // Tests that market sell order that eats through the book is cancelled.
 
         account::create_account_for_test(address_of(owner));
@@ -1414,7 +1433,7 @@ module ferum::market {
     }
 
     #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x3)]
-    fun test_market_buy_eat_book_not_filled(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook {
+    fun test_market_buy_eat_book_not_filled(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook, UserMarketInfo {
         // Tests that market buy order that eats through the book is cancelled.
 
         account::create_account_for_test(address_of(owner));
@@ -1468,7 +1487,7 @@ module ferum::market {
     }
 
     #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x3)]
-    fun test_limit_buy_execute(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook {
+    fun test_limit_buy_execute(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook, UserMarketInfo {
         // Tests that limit buy order executes against other limit orders.
 
         account::create_account_for_test(address_of(owner));
@@ -1521,7 +1540,7 @@ module ferum::market {
     }
 
     #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x3)]
-    fun test_limit_sell_execute(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook {
+    fun test_limit_sell_execute(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook, UserMarketInfo {
         // Tests that limit sell order executes against other limit orders.
 
         account::create_account_for_test(address_of(owner));
@@ -1574,7 +1593,7 @@ module ferum::market {
     }
 
     #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x3)]
-    fun test_limit_buy_execute_multiple(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook {
+    fun test_limit_buy_execute_multiple(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook, UserMarketInfo {
         // Tests that limit buy order executes against multiple other limit orders.
 
         account::create_account_for_test(address_of(owner));
@@ -1639,7 +1658,7 @@ module ferum::market {
     }
 
     #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x3)]
-    fun test_limit_sell_execute_multiple(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook {
+    fun test_limit_sell_execute_multiple(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook, UserMarketInfo {
         // Tests that limit sell order executes against multiple other limit orders.
 
         account::create_account_for_test(address_of(owner));
@@ -1704,7 +1723,7 @@ module ferum::market {
     }
 
     #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x3)]
-    fun test_limit_orders_precision(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook {
+    fun test_limit_orders_precision(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook, UserMarketInfo {
         // Tests that limit order executions that require more precision than the market's instrumentDecimals or
         // quoteDecimals don't fail (because both parameters are set so that they can be multiplied without exceeding
         // the underlying coin's decimals).
@@ -1752,7 +1771,7 @@ module ferum::market {
     }
 
     #[test(owner = @ferum, aptos = @0x1)]
-    fun test_quote(owner: &signer, aptos: &signer) acquires OrderBook {
+    fun test_quote(owner: &signer, aptos: &signer) acquires OrderBook, UserMarketInfo {
         // Tests quote is set correctly given an orderbook state.
 
         account::create_account_for_test(address_of(owner));
@@ -1806,7 +1825,7 @@ module ferum::market {
     }
 
     #[test(owner = @ferum, aptos = @0x1)]
-    fun test_quote_empty_sell_book(owner: &signer, aptos: &signer) acquires OrderBook {
+    fun test_quote_empty_sell_book(owner: &signer, aptos: &signer) acquires OrderBook, UserMarketInfo {
         // Tests quote is set correctly given an empty sell orderbook.
 
         account::create_account_for_test(address_of(owner));
@@ -1834,7 +1853,7 @@ module ferum::market {
     }
 
     #[test(owner = @ferum, aptos = @0x1)]
-    fun test_quote_empty_buy_book(owner: &signer, aptos: &signer) acquires OrderBook {
+    fun test_quote_empty_buy_book(owner: &signer, aptos: &signer) acquires OrderBook, UserMarketInfo {
         // Tests quote is set correctly given an empty sell orderbook.
 
         account::create_account_for_test(address_of(owner));
