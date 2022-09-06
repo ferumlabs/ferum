@@ -27,7 +27,21 @@ module ferum::coin_test_helpers {
     }
 
     #[test_only]
-    public fun setup_fake_coins(owner: &signer, other: &signer, amt: u64, decimals: u8) {
+    public fun setup_fake_coins(
+        owner: &signer,
+        other: &signer,
+        amt: u64,
+        decimals: u8,
+    ) acquires FakeMoneyACapabilities, FakeMoneyBCapabilities {
+        create_fake_coins(owner, decimals);
+        register_fma(owner, owner, amt);
+        register_fmb(owner, owner, amt);
+        register_fma(owner, other, amt);
+        register_fmb(owner, other, amt);
+    }
+
+    #[test_only]
+    public fun create_fake_coins(owner: &signer, decimals: u8) {
         {
             let (
                 burn,
@@ -40,10 +54,6 @@ module ferum::coin_test_helpers {
                 decimals,
                 true
             );
-            coin::register<FMA>(owner);
-            coin::register<FMA>(other);
-            coin::deposit(address_of(owner), coin::mint(amt, &mint));
-            coin::deposit(address_of(other), coin::mint(amt, &mint));
             move_to(owner, FakeMoneyACapabilities {
                 burn,
                 freeze,
@@ -62,10 +72,6 @@ module ferum::coin_test_helpers {
                 decimals,
                 true
             );
-            coin::register<FMB>(owner);
-            coin::register<FMB>(other);
-            coin::deposit(address_of(owner), coin::mint(amt, &mint));
-            coin::deposit(address_of(other), coin::mint(amt, &mint));
             move_to(owner, FakeMoneyBCapabilities {
                 burn,
                 freeze,

@@ -12,10 +12,11 @@ module ferum::market {
     use ferum::list;
 
     #[test_only]
-    use ferum::coin_test_helpers::{FMA, FMB, setup_fake_coins, register_fmb, register_fma};
+    use ferum::coin_test_helpers::{FMA, FMB, setup_fake_coins, register_fmb, register_fma, create_fake_coins};
     use ferum::utils::min_u8;
     #[test_only]
     use aptos_framework::account;
+    use aptos_framework::timestamp;
 
     //
     // Errors
@@ -108,6 +109,17 @@ module ferum::market {
         executionEvents: EventHandle<ExecutionEvent>,
         // Create order events for this market.
         createOrderEvents: EventHandle<CreateEvent>,
+        // Price update events for this market.
+        priceUpdateEvents: EventHandle<PriceUpdateEvent>,
+    }
+
+    // Struct encapsulating price at a given timestamp for the market.
+    struct Quote has drop, store {
+        maxBid: FixedPoint64,
+        bidSize: FixedPoint64,
+        minAsk: FixedPoint64,
+        askSize: FixedPoint64,
+        timestampMicroSeconds: u64
     }
 
     //
@@ -140,6 +152,10 @@ module ferum::market {
         orderMetadata: OrderMetadata,
     }
 
+    struct PriceUpdateEvent has drop, store {
+        data: Quote,
+    }
+
     //
     // Entry functions.
     //
@@ -169,6 +185,7 @@ module ferum::market {
         let finalizeEvents = new_event_handle<FinalizeEvent>(owner);
         let createOrderEvents = new_event_handle<CreateEvent>(owner);
         let executionEvents = new_event_handle<ExecutionEvent>(owner);
+        let priceUpdateEvents = new_event_handle<PriceUpdateEvent>(owner);
 
         let book = OrderBook<I, Q>{
             marketOrders: vector::empty(),
@@ -182,7 +199,7 @@ module ferum::market {
             finalizeEvents,
             createOrderEvents,
             executionEvents,
-
+            priceUpdateEvents,
         };
         move_to(owner, book);
 
@@ -416,6 +433,12 @@ module ferum::market {
         execute_limit_orders(book);
 
         clean_orders(book);
+
+        // Update the price.
+        let data = get_quote(book);
+        emit_event(&mut book.priceUpdateEvents, PriceUpdateEvent{
+            data,
+        });
     }
 
     fun get_order_from_list_mut<I, Q>(
@@ -726,6 +749,64 @@ module ferum::market {
         };
     }
 
+    fun get_quote<I, Q>(book: &OrderBook<I, Q>): Quote {
+        let buyCount = vector::length(&book.buys);
+        let sellCount = vector::length(&book.sells);
+        let timestamp = timestamp::now_microseconds();
+        let zero = fixed_point_64::zero();
+
+        let bidSize = zero;
+        let askSize = zero;
+        let minAsk = zero;
+        let maxBid = zero;
+
+        if (buyCount != 0) {
+            let maxBidID = *vector::borrow(&book.buys, buyCount - 1);
+            let maxBidOrder = table::borrow(&book.orderMap, maxBidID);
+            maxBid = maxBidOrder.metadata.price;
+            bidSize = get_size(&book.orderMap, &book.buys, maxBidOrder.metadata.price);
+
+        };
+
+        if (sellCount != 0) {
+            let minAskID = *vector::borrow(&book.sells, sellCount - 1);
+            let minAskOrder = table::borrow(&book.orderMap, minAskID);
+            minAsk = minAskOrder.metadata.price;
+            askSize = get_size(&book.orderMap, &book.sells, minAskOrder.metadata.price);
+        };
+
+        Quote {
+            minAsk,
+            askSize,
+            maxBid,
+            bidSize,
+            timestampMicroSeconds: timestamp,
+        }
+    }
+
+    fun get_size<I, Q>(
+        orderMap: &table::Table<u128, Order<I, Q>>,
+        orderList: &vector<u128>,
+        price: FixedPoint64,
+    ): FixedPoint64 {
+        let i = vector::length(orderList) - 1;
+        let sum = fixed_point_64::zero();
+        loop {
+            let orderID = *vector::borrow(orderList, i);
+            let order = table::borrow(orderMap, orderID);
+            if (!fixed_point_64::eq(order.metadata.price, price)) {
+                break
+            };
+
+            sum = fixed_point_64::add(sum, order.metadata.remainingQty);
+            if (i == 0) {
+                break
+            };
+            i = i - 1;
+        };
+        sum
+    }
+
     //
     // Validation functions.
     //
@@ -935,67 +1016,67 @@ module ferum::market {
         add_market_order_entry<FMA, FMB>(owner, SIDE_SELL, 1, 1, empty_clordid());
     }
 
-    #[test(owner = @ferum, user = @0x2)]
+    #[test(owner = @ferum, aptos = @0x1, user = @0x2)]
     #[expected_failure]
-    fun test_add_buy_order_exceed_balance(owner: &signer, user: &signer) acquires OrderBook {
+    fun test_add_buy_order_exceed_balance(owner: &signer, aptos: &signer, user: &signer) acquires OrderBook {
         // Tests that a buy order that requires more collateral than the user has fails.
 
         account::create_account_for_test(address_of(owner));
         account::create_account_for_test(address_of(user));
         setup_fake_coins(owner, user, 10000000000, 8); // Users have 100 FMA and FMB.
-        setup_market_for_test<FMA, FMB>(owner);
+        setup_market_for_test<FMA, FMB>(owner, aptos);
 
         add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 10000, 1200000, empty_clordid()); // BUY 120 FMA @ 1 FMB
     }
 
-    #[test(owner = @ferum, user = @0x2)]
+    #[test(owner = @ferum, aptos = @0x1, user = @0x2)]
     #[expected_failure]
-    fun test_add_buy_order_exceed_balance_price(owner: &signer, user: &signer) acquires OrderBook {
+    fun test_add_buy_order_exceed_balance_price(owner: &signer, aptos: &signer, user: &signer) acquires OrderBook {
         // Tests that a buy order that requires more collateral than the user has fails.
 
         account::create_account_for_test(address_of(owner));
         account::create_account_for_test(address_of(user));
         setup_fake_coins(owner, user, 10000000000, 8); // Users have 100 FMA and FMB.
-        setup_market_for_test<FMA, FMB>(owner);
+        setup_market_for_test<FMA, FMB>(owner, aptos);
 
         add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 1200000, 10000, empty_clordid()); // BUY 1 FMA @ 120 FMB
     }
 
-    #[test(owner = @ferum, user = @0x2)]
+    #[test(owner = @ferum, aptos = @0x1, user = @0x2)]
     #[expected_failure]
-    fun test_add_sell_order_exceed_balance(owner: &signer, user: &signer) acquires OrderBook {
+    fun test_add_sell_order_exceed_balance(owner: &signer, aptos: &signer, user: &signer) acquires OrderBook {
         // Tests that a sell order that requires more collateral than the user has fails.
 
         account::create_account_for_test(address_of(owner));
         account::create_account_for_test(address_of(user));
         setup_fake_coins(owner, user, 10000000000, 8); // Users have 100 FMA and FMB.
-        setup_market_for_test<FMA, FMB>(owner);
+        setup_market_for_test<FMA, FMB>(owner, aptos);
 
         add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 10000, 1200000, empty_clordid()); // SELL 120 FMA @ 1 FMB
     }
 
-    #[test(owner = @ferum, user = @0x2)]
-    fun test_add_sell_order_no_precision_loss(owner: &signer, user: &signer) acquires OrderBook {
+    #[test(owner = @ferum, aptos = @0x1, user = @0x2)]
+    fun test_add_sell_order_no_precision_loss(owner: &signer, aptos: &signer, user: &signer) acquires OrderBook {
         // Tests that a sell order placed with the minimum qty doesn't fail.
 
         account::create_account_for_test(address_of(owner));
         account::create_account_for_test(address_of(user));
         setup_fake_coins(owner, user, 10000000000, 8); // Users have 100 FMA and FMB.
-        setup_market_for_test<FMA, FMB>(owner);
+        setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // SELL 0.00000001 FMA @ 0.00000001 FMB
         // Requires obtaining 0.00000001 FMA of collateral, which is possible.
         add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 1, 1, empty_clordid());
     }
 
-    #[test(owner = @ferum, user = @0x2)]
-    fun test_add_orders_to_empty_book(owner: &signer, user: &signer) acquires OrderBook {
+    #[test(owner = @ferum, aptos = @0x1, user = @0x2)]
+    fun test_add_orders_to_empty_book(owner: &signer, aptos: &signer, user: &signer) acquires OrderBook {
         // Tests that orders can be added to empty book and none of them trigger.
 
         account::create_account_for_test(address_of(owner));
         account::create_account_for_test(address_of(user));
         setup_fake_coins(owner, user, 10000000000, 8);
-        setup_market_for_test<FMA, FMB>(owner);
+        setup_market_for_test<FMA, FMB>(owner, aptos);
 
         add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_clordid()); // BUY 10 FMA @ 1 FMB
         add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 20000, 10000, empty_clordid()); // BUY 1 FMA @ 2 FMB
@@ -1009,14 +1090,14 @@ module ferum::market {
         assert!(coin::balance<FMB>(address_of(owner)) == 7800000000, 0);
     }
 
-    #[test(owner = @ferum, user = @0x2)]
-    fun test_add_market_orders_cancelled(owner: &signer, user: &signer) acquires OrderBook {
+    #[test(owner = @ferum, aptos = @0x1, user = @0x2)]
+    fun test_add_market_orders_cancelled(owner: &signer, aptos: &signer, user: &signer) acquires OrderBook {
         // Tests that market orders should get cancelled because there is nothing to execute them against.
 
         account::create_account_for_test(address_of(owner));
         account::create_account_for_test(address_of(user));
         setup_fake_coins(owner, user, 10000000000, 8);
-        setup_market_for_test<FMA, FMB>(owner);
+        setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // BUY 1 FMA spending at most 10 FMB
         {
@@ -1051,8 +1132,8 @@ module ferum::market {
         };
     }
 
-    #[test(owner = @ferum, user1 = @0x2, user2 = @0x3)]
-    fun test_market_buy_execute_against_limit(owner: &signer, user1: &signer, user2: &signer) acquires OrderBook {
+    #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x3)]
+    fun test_market_buy_execute_against_limit(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook {
         // Tests that market buy order execute against limit orders.
 
         account::create_account_for_test(address_of(owner));
@@ -1061,7 +1142,7 @@ module ferum::market {
         setup_fake_coins(owner, user1, 10000000000, 8);
         register_fma(owner, user2, 10000000000);
         register_fmb(owner, user2, 10000000000);
-        setup_market_for_test<FMA, FMB>(owner);
+        setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
         add_limit_order<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_clordid()); // BUY 10 FMA @ 1 FMB
@@ -1104,8 +1185,8 @@ module ferum::market {
         };
     }
 
-    #[test(owner = @ferum, user1 = @0x2, user2 = @0x3)]
-    fun test_market_sell_execute_against_limit(owner: &signer, user1: &signer, user2: &signer) acquires OrderBook {
+    #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x3)]
+    fun test_market_sell_execute_against_limit(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook {
         // Tests that market sell order execute against limit orders.
 
         account::create_account_for_test(address_of(owner));
@@ -1114,7 +1195,7 @@ module ferum::market {
         setup_fake_coins(owner, user1, 10000000000, 8);
         register_fma(owner, user2, 10000000000);
         register_fmb(owner, user2, 10000000000);
-        setup_market_for_test<FMA, FMB>(owner);
+        setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
         add_limit_order<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_clordid()); // BUY 10 FMA @ 1 FMB
@@ -1158,8 +1239,8 @@ module ferum::market {
         };
     }
 
-    #[test(owner = @ferum, user1 = @0x2, user2 = @0x3)]
-    fun test_market_sell_execute_against_multiple_limits(owner: &signer, user1: &signer, user2: &signer) acquires OrderBook {
+    #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x3)]
+    fun test_market_sell_execute_against_multiple_limits(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook {
         // Tests that market sell order execute against multiple limit orders.
 
         account::create_account_for_test(address_of(owner));
@@ -1168,7 +1249,7 @@ module ferum::market {
         setup_fake_coins(owner, user1, 10000000000, 8);
         register_fma(owner, user2, 10000000000);
         register_fmb(owner, user2, 10000000000);
-        setup_market_for_test<FMA, FMB>(owner);
+        setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
         let targetBuyIDC = add_limit_order<FMA, FMB>(user2, SIDE_BUY, 10000, 100000, empty_clordid()); // BUY 10 FMA @ 1 FMB
@@ -1224,8 +1305,8 @@ module ferum::market {
         };
     }
 
-    #[test(owner = @ferum, user1 = @0x2, user2 = @0x3)]
-    fun test_market_buy_execute_against_multiple_limits(owner: &signer, user1: &signer, user2: &signer) acquires OrderBook {
+    #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x3)]
+    fun test_market_buy_execute_against_multiple_limits(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook {
         // Tests that market buy order execute against multiple limit orders.
 
         account::create_account_for_test(address_of(owner));
@@ -1234,7 +1315,7 @@ module ferum::market {
         setup_fake_coins(owner, user1, 50000000000, 8);
         register_fma(owner, user2, 50000000000);
         register_fmb(owner, user2, 50000000000);
-        setup_market_for_test<FMA, FMB>(owner);
+        setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
         add_limit_order<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_clordid()); // BUY 10 FMA @ 1 FMB
@@ -1290,8 +1371,8 @@ module ferum::market {
         };
     }
 
-    #[test(owner = @ferum, user1 = @0x2, user2 = @0x3)]
-    fun test_market_sell_eat_book_not_filled(owner: &signer, user1: &signer, user2: &signer) acquires OrderBook {
+    #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x3)]
+    fun test_market_sell_eat_book_not_filled(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook {
         // Tests that market sell order that eats through the book is cancelled.
 
         account::create_account_for_test(address_of(owner));
@@ -1300,7 +1381,7 @@ module ferum::market {
         setup_fake_coins(owner, user1, 50000000000, 8);
         register_fma(owner, user2, 50000000000);
         register_fmb(owner, user2, 50000000000);
-        setup_market_for_test<FMA, FMB>(owner);
+        setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
         let targetBuyIDA = add_limit_order<FMA, FMB>(user2, SIDE_BUY, 100000, 10000, empty_clordid()); // BUY 1 FMA @ 10 FMB
@@ -1344,8 +1425,8 @@ module ferum::market {
         };
     }
 
-    #[test(owner = @ferum, user1 = @0x2, user2 = @0x3)]
-    fun test_market_buy_eat_book_not_filled(owner: &signer, user1: &signer, user2: &signer) acquires OrderBook {
+    #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x3)]
+    fun test_market_buy_eat_book_not_filled(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook {
         // Tests that market buy order that eats through the book is cancelled.
 
         account::create_account_for_test(address_of(owner));
@@ -1354,7 +1435,7 @@ module ferum::market {
         setup_fake_coins(owner, user1, 50000000000, 8);
         register_fma(owner, user2, 50000000000);
         register_fmb(owner, user2, 50000000000);
-        setup_market_for_test<FMA, FMB>(owner);
+        setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
         add_limit_order<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_clordid()); // BUY 10 FMA @ 1 FMB
@@ -1398,8 +1479,8 @@ module ferum::market {
         };
     }
 
-    #[test(owner = @ferum, user1 = @0x2, user2 = @0x3)]
-    fun test_limit_buy_execute(owner: &signer, user1: &signer, user2: &signer) acquires OrderBook {
+    #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x3)]
+    fun test_limit_buy_execute(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook {
         // Tests that limit buy order executes against other limit orders.
 
         account::create_account_for_test(address_of(owner));
@@ -1408,7 +1489,7 @@ module ferum::market {
         setup_fake_coins(owner, user1, 10000000000, 8);
         register_fma(owner, user2, 10000000000);
         register_fmb(owner, user2, 10000000000);
-        setup_market_for_test<FMA, FMB>(owner);
+        setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
         add_limit_order<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_clordid()); // BUY 10 FMA @ 1 FMB
@@ -1451,8 +1532,8 @@ module ferum::market {
         };
     }
 
-    #[test(owner = @ferum, user1 = @0x2, user2 = @0x3)]
-    fun test_limit_sell_execute(owner: &signer, user1: &signer, user2: &signer) acquires OrderBook {
+    #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x3)]
+    fun test_limit_sell_execute(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook {
         // Tests that limit sell order executes against other limit orders.
 
         account::create_account_for_test(address_of(owner));
@@ -1461,7 +1542,7 @@ module ferum::market {
         setup_fake_coins(owner, user1, 10000000000, 8);
         register_fma(owner, user2, 10000000000);
         register_fmb(owner, user2, 10000000000);
-        setup_market_for_test<FMA, FMB>(owner);
+        setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
         add_limit_order<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_clordid()); // BUY 10 FMA @ 1 FMB
@@ -1504,8 +1585,8 @@ module ferum::market {
         };
     }
 
-    #[test(owner = @ferum, user1 = @0x2, user2 = @0x3)]
-    fun test_limit_buy_execute_multiple(owner: &signer, user1: &signer, user2: &signer) acquires OrderBook {
+    #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x3)]
+    fun test_limit_buy_execute_multiple(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook {
         // Tests that limit buy order executes against multiple other limit orders.
 
         account::create_account_for_test(address_of(owner));
@@ -1514,7 +1595,7 @@ module ferum::market {
         setup_fake_coins(owner, user1, 50000000000, 8);
         register_fma(owner, user2, 50000000000);
         register_fmb(owner, user2, 50000000000);
-        setup_market_for_test<FMA, FMB>(owner);
+        setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
         add_limit_order<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_clordid()); // BUY 10 FMA @ 1 FMB
@@ -1569,8 +1650,8 @@ module ferum::market {
         };
     }
 
-    #[test(owner = @ferum, user1 = @0x2, user2 = @0x3)]
-    fun test_limit_sell_execute_multiple(owner: &signer, user1: &signer, user2: &signer) acquires OrderBook {
+    #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x3)]
+    fun test_limit_sell_execute_multiple(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook {
         // Tests that limit sell order executes against multiple other limit orders.
 
         account::create_account_for_test(address_of(owner));
@@ -1579,7 +1660,7 @@ module ferum::market {
         setup_fake_coins(owner, user1, 50000000000, 8);
         register_fma(owner, user2, 50000000000);
         register_fmb(owner, user2, 50000000000);
-        setup_market_for_test<FMA, FMB>(owner);
+        setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
         let targetBuyIDC = add_limit_order<FMA, FMB>(user2, SIDE_BUY, 10000, 100000, empty_clordid()); // BUY 10 FMA @ 1 FMB
@@ -1634,8 +1715,8 @@ module ferum::market {
         };
     }
 
-    #[test(owner = @ferum, user1 = @0x2, user2 = @0x3)]
-    fun test_limit_orders_precision(owner: &signer, user1: &signer, user2: &signer) acquires OrderBook {
+    #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x3)]
+    fun test_limit_orders_precision(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook {
         // Tests that limit order executions that require more precision than the market's instrumentDecimals or
         // quoteDecimals don't fail (because both parameters are set so that they can be multiplied without exceeding
         // the underlying coin's decimals).
@@ -1646,7 +1727,7 @@ module ferum::market {
         setup_fake_coins(owner, user1, 50000000000, 8);
         register_fma(owner, user2, 50000000000);
         register_fmb(owner, user2, 50000000000);
-        setup_market_for_test<FMA, FMB>(owner);
+        setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
         let buyID = add_limit_order<FMA, FMB>(user2, SIDE_BUY, 2, 2, empty_clordid()); // BUY 0.0002 FMA @ 0.0002 FMB
@@ -1682,8 +1763,128 @@ module ferum::market {
         };
     }
 
+    #[test(owner = @ferum, aptos = @0x1)]
+    fun test_quote(owner: &signer, aptos: &signer) acquires OrderBook {
+        // Tests quote is set correctly given an orderbook state.
+
+        account::create_account_for_test(address_of(owner));
+        create_fake_coins(owner, 8);
+        register_fma(owner, owner, 50000000000);
+        register_fmb(owner, owner, 50000000000);
+        setup_market_for_test<FMA, FMB>(owner, aptos);
+
+        // Book setup.
+        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 1, 2, empty_clordid()); // BUY 0.0002 FMA @ 0.0001 FMB
+        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 2, 2, empty_clordid()); // BUY 0.0002 FMA @ 0.0002 FMB
+        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 2, 2, empty_clordid()); // BUY 0.0002 FMA @ 0.0002 FMB
+        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 3, 1, empty_clordid()); // SELL 0.0001 FMA @ 0.0003 FMB
+        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 3, 1, empty_clordid()); // SELL 0.0001 FMA @ 0.0003 FMB
+        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 4, 1, empty_clordid()); // SELL 0.0001 FMA @ 0.0004 FMB
+
+        // Validate quote.
+        let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
+        let price = get_quote(book);
+        let expectedPrice = Quote {
+            maxBid: fixed_point_64::from_u128(2, 4),
+            bidSize: fixed_point_64::from_u128(4, 4),
+            minAsk: fixed_point_64::from_u128(3, 4),
+            askSize: fixed_point_64::from_u128(2, 4),
+            timestampMicroSeconds: 10,
+        };
+        assert_quote_eq(price, expectedPrice);
+    }
+
+    #[test(owner = @ferum, aptos = @0x1)]
+    fun test_quote_empty_book(owner: &signer, aptos: &signer) acquires OrderBook {
+        // Tests quote is set correctly given an empty orderbook.
+
+        account::create_account_for_test(address_of(owner));
+        create_fake_coins(owner, 8);
+        register_fma(owner, owner, 50000000000);
+        register_fmb(owner, owner, 50000000000);
+        setup_market_for_test<FMA, FMB>(owner, aptos);
+
+        // Validate quote.
+        let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
+        let price = get_quote(book);
+        let expectedPrice = Quote {
+            maxBid: fixed_point_64::zero(),
+            bidSize: fixed_point_64::zero(),
+            minAsk: fixed_point_64::zero(),
+            askSize: fixed_point_64::zero(),
+            timestampMicroSeconds: 10,
+        };
+        assert_quote_eq(price, expectedPrice);
+    }
+
+    #[test(owner = @ferum, aptos = @0x1)]
+    fun test_quote_empty_sell_book(owner: &signer, aptos: &signer) acquires OrderBook {
+        // Tests quote is set correctly given an empty sell orderbook.
+
+        account::create_account_for_test(address_of(owner));
+        create_fake_coins(owner, 8);
+        register_fma(owner, owner, 50000000000);
+        register_fmb(owner, owner, 50000000000);
+        setup_market_for_test<FMA, FMB>(owner, aptos);
+
+        // Book setup.
+        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 1, 2, empty_clordid()); // BUY 0.0002 FMA @ 0.0001 FMB
+        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 2, 2, empty_clordid()); // BUY 0.0002 FMA @ 0.0002 FMB
+        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 2, 2, empty_clordid()); // BUY 0.0002 FMA @ 0.0002 FMB
+
+        // Validate quote.
+        let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
+        let price = get_quote(book);
+        let expectedPrice = Quote {
+            maxBid: fixed_point_64::from_u128(2, 4),
+            bidSize: fixed_point_64::from_u128(4, 4),
+            minAsk: fixed_point_64::zero(),
+            askSize: fixed_point_64::zero(),
+            timestampMicroSeconds: 10,
+        };
+        assert_quote_eq(price, expectedPrice);
+    }
+
+    #[test(owner = @ferum, aptos = @0x1)]
+    fun test_quote_empty_buy_book(owner: &signer, aptos: &signer) acquires OrderBook {
+        // Tests quote is set correctly given an empty sell orderbook.
+
+        account::create_account_for_test(address_of(owner));
+        create_fake_coins(owner, 8);
+        register_fma(owner, owner, 50000000000);
+        register_fmb(owner, owner, 50000000000);
+        setup_market_for_test<FMA, FMB>(owner, aptos);
+
+        // Book setup.
+        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 3, 1, empty_clordid()); // SELL 0.0001 FMA @ 0.0003 FMB
+        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 3, 1, empty_clordid()); // SELL 0.0001 FMA @ 0.0003 FMB
+        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 4, 1, empty_clordid()); // SELL 0.0001 FMA @ 0.0004 FMB
+
+        // Validate quote.
+        let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
+        let price = get_quote(book);
+        let expectedPrice = Quote {
+            maxBid: fixed_point_64::zero(),
+            bidSize: fixed_point_64::zero(),
+            minAsk: fixed_point_64::from_u128(3, 4),
+            askSize: fixed_point_64::from_u128(2, 4),
+            timestampMicroSeconds: 10,
+        };
+        assert_quote_eq(price, expectedPrice);
+    }
+
     #[test_only]
-    fun setup_market_for_test<I, Q>(owner: &signer) {
+    // Ignores timestamp.
+    fun assert_quote_eq(quote: Quote, expected: Quote) {
+        assert!(fixed_point_64::eq(quote.maxBid, expected.maxBid), 0);
+        assert!(fixed_point_64::eq(quote.bidSize, expected.bidSize), 0);
+        assert!(fixed_point_64::eq(quote.minAsk, expected.minAsk), 0);
+        assert!(fixed_point_64::eq(quote.askSize, expected.askSize), 0);
+    }
+
+    #[test_only]
+    fun setup_market_for_test<I, Q>(owner: &signer, aptos: &signer) {
+        timestamp::set_time_has_started_for_testing(aptos);
         init_ferum(owner);
         init_market_entry<I, Q>(owner, 4, 4);
     }
