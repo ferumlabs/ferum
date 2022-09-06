@@ -67,6 +67,11 @@ module ferum::market {
     // Structs.
     //
 
+    struct OrderID has copy, drop, store {
+        owner: address,
+        counter: u128,
+    }
+
     struct OrderMetadata has drop, store, copy {
         side: u8,
         remainingQty: FixedPoint64,
@@ -78,8 +83,7 @@ module ferum::market {
     }
 
     struct Order<phantom I, phantom Q> has store {
-        id: u128,
-        owner: address,
+        id: OrderID,
         metadata: OrderMetadata,
         buyCollateral: coin::Coin<Q>,
         sellCollateral: coin::Coin<I>,
@@ -87,15 +91,15 @@ module ferum::market {
 
     struct OrderBook<phantom I, phantom Q> has key, store {
         // Order IDs of marker orders.
-        marketOrders: vector<u128>,
+        marketOrders: vector<OrderID>,
         // Order IDs stored in order of decreasing price.
-        sells: vector<u128>,
+        sells: vector<OrderID>,
         // Order IDs stored in order of increasing price.
-        buys: vector<u128>,
+        buys: vector<OrderID>,
         // Map of all non finalized orders.
-        orderMap: table::Table<u128, Order<I, Q>>,
+        orderMap: table::Table<OrderID, Order<I, Q>>,
         // Map of all finalized orders.
-        finalizedOrderMap: table::Table<u128, Order<I, Q>>,
+        finalizedOrderMap: table::Table<OrderID, Order<I, Q>>,
         // Counter to generate order ID.
         idCounter: u128,
         // Number of decimals for the instrument coin.
@@ -127,12 +131,10 @@ module ferum::market {
     //
 
     struct ExecutionEvent has drop, store {
-        orderID: u128,
-        owner: address,
+        orderID: OrderID,
         orderMetadata: OrderMetadata,
 
-        oppositeOrderID: u128,
-        oppositeOwner: address,
+        oppositeOrderID: OrderID,
         oppositeOrderMetadata: OrderMetadata,
 
         price: FixedPoint64,
@@ -140,15 +142,13 @@ module ferum::market {
     }
 
     struct FinalizeEvent has drop, store {
-        orderID: u128,
-        owner: address,
+        orderID: OrderID,
         orderMetadata: OrderMetadata,
         cancelAgent: u8,
     }
 
     struct CreateEvent has drop, store {
-        orderID: u128,
-        owner: address,
+        orderID: OrderID,
         orderMetadata: OrderMetadata,
     }
 
@@ -191,8 +191,8 @@ module ferum::market {
             marketOrders: vector::empty(),
             sells: vector::empty(),
             buys: vector::empty(),
-            orderMap: table::new<u128, Order<I, Q>>(),
-            finalizedOrderMap: table::new<u128, Order<I, Q>>(),
+            orderMap: table::new<OrderID, Order<I, Q>>(),
+            finalizedOrderMap: table::new<OrderID, Order<I, Q>>(),
             idCounter: 0,
             iDecimals: instrumentDecimals,
             qDecimals: quoteDecimals,
@@ -240,18 +240,23 @@ module ferum::market {
         add_market_order<I, Q>(owner, side, qty, maxCollateralAmt, clientOrderID);
     }
 
-    public entry fun cancel_order_entry<I, Q>(owner: &signer, orderID: u128) acquires OrderBook {
+    public entry fun cancel_order_entry<I, Q>(owner: &signer, orderIDCounter: u128) acquires OrderBook {
         let bookAddr = get_market_addr<I, Q>();
         assert!(exists<OrderBook<I, Q>>(bookAddr), ERR_BOOK_NOT_EXISTS);
 
-        let book = borrow_global_mut<OrderBook<I, Q>>(bookAddr);
-        assert!(table::contains(&book.orderMap, orderID), ERR_UNKNOWN_ORDER);
-        let order = table::borrow_mut(&mut book.orderMap, orderID);
         let ownerAddr = address_of(owner);
-        assert!(ownerAddr == order.owner, ERR_NOT_OWNER);
+        let book = borrow_global_mut<OrderBook<I, Q>>(bookAddr);
+        let id = OrderID {
+            owner: ownerAddr,
+            counter: orderIDCounter,
+        };
+        assert!(table::contains(&book.orderMap, id), ERR_UNKNOWN_ORDER);
+        let order = table::borrow_mut(&mut book.orderMap, id);
+
+        let orderOwner = order.id.owner;
+        assert!(ownerAddr == orderOwner, ERR_NOT_OWNER);
         mark_cancelled_order(
             &mut book.finalizeEvents,
-            ownerAddr,
             order,
             CANCEL_AGENT_USER,
         );
@@ -268,7 +273,7 @@ module ferum::market {
         price: u64,
         qty: u64,
         clientOrderID: String,
-    ): u128 acquires OrderBook {
+    ): OrderID acquires OrderBook {
         let bookAddr = get_market_addr<I, Q>();
         assert!(exists<OrderBook<I, Q>>(bookAddr), ERR_BOOK_NOT_EXISTS);
         validate_coins<I, Q>();
@@ -285,10 +290,9 @@ module ferum::market {
             priceFixedPoint,
             qtyFixedPoint,
         );
-        let orderID = gen_order_id(book);
+        let orderID = gen_order_id(ownerAddr, book);
         let order = Order<I, Q>{
             id: orderID,
-            owner: ownerAddr,
             buyCollateral,
             sellCollateral,
             metadata: OrderMetadata{
@@ -302,7 +306,7 @@ module ferum::market {
             },
         };
 
-        add_order<I, Q>(owner, book, order);
+        add_order<I, Q>(book, order);
 
         orderID
     }
@@ -313,7 +317,7 @@ module ferum::market {
         qty: u64,
         maxCollateralAmt: u64,
         clientOrderID: String,
-    ): u128 acquires OrderBook {
+    ): OrderID acquires OrderBook {
         let bookAddr = get_market_addr<I, Q>();
         assert!(exists<OrderBook<I, Q>>(bookAddr), ERR_BOOK_NOT_EXISTS);
         validate_coins<I, Q>();
@@ -331,10 +335,9 @@ module ferum::market {
             maxCollateralAmt,
         );
 
-        let orderID = gen_order_id(book);
+        let orderID = gen_order_id(ownerAddr, book);
         let order = Order<I, Q>{
             id: orderID,
-            owner: ownerAddr,
             buyCollateral,
             sellCollateral,
             metadata: OrderMetadata{
@@ -348,7 +351,7 @@ module ferum::market {
             },
         };
 
-        add_order(owner, book, order);
+        add_order(book, order);
 
         orderID
     }
@@ -357,16 +360,19 @@ module ferum::market {
     // Private functions.
     //
 
-    fun gen_order_id<I, Q>(book: &mut OrderBook<I, Q>): u128 {
-        let id = book.idCounter;
+    fun gen_order_id<I, Q>(owner: address, book: &mut OrderBook<I, Q>): OrderID {
+        let counter = book.idCounter;
         book.idCounter = book.idCounter + 1;
-        id
+        OrderID {
+            owner,
+            counter,
+        }
     }
 
-    fun add_order<I, Q>(owner: &signer, book: &mut OrderBook<I, Q>, order: Order<I, Q>) {
+    fun add_order<I, Q>(book: &mut OrderBook<I, Q>, order: Order<I, Q>) {
         validate_order(&order);
 
-        emit_order_created_event(owner, book, &order);
+        emit_order_created_event(book, &order);
 
         if (order.metadata.type == TYPE_MARKET) {
             vector::push_back(&mut book.marketOrders, order.id);
@@ -442,8 +448,8 @@ module ferum::market {
     }
 
     fun get_order_from_list_mut<I, Q>(
-        orderMap: &mut table::Table<u128, Order<I, Q>>,
-        list: &vector<u128>,
+        orderMap: &mut table::Table<OrderID, Order<I, Q>>,
+        list: &vector<OrderID>,
         i: u64,
     ): &mut Order<I, Q> {
         let orderID = *vector::borrow(list, i);
@@ -451,8 +457,8 @@ module ferum::market {
     }
 
     fun get_order_from_list<I, Q>(
-        orderMap: &table::Table<u128, Order<I, Q>>,
-        list: &vector<u128>,
+        orderMap: &table::Table<OrderID, Order<I, Q>>,
+        list: &vector<OrderID>,
         i: u64,
     ): &Order<I, Q> {
         let orderID = *vector::borrow(list, i);
@@ -461,8 +467,8 @@ module ferum::market {
 
     fun add_order_to_list<I, Q>(
         order: &Order<I, Q>,
-        orderList: &mut vector<u128>,
-        orderMap: &table::Table<u128, Order<I, Q>>,
+        orderList: &mut vector<OrderID>,
+        orderMap: &table::Table<OrderID, Order<I, Q>>,
     ) {
         if (vector::length(orderList) == 0) {
             vector::push_back(orderList, order.id);
@@ -520,12 +526,10 @@ module ferum::market {
             let maxBidMut = get_order_from_list_mut(orderMap, buys, maxBidIdx);
             maxBidMut.metadata.remainingQty = fixed_point_64::sub(maxBidMut.metadata.remainingQty, executedQty);
             let maxBidMetadata = maxBidMut.metadata;
-            let maxBidOwner = maxBidMut.owner;
 
             let minAskMut = get_order_from_list_mut(orderMap, sells, minAskIdx);
             minAskMut.metadata.remainingQty = fixed_point_64::sub(minAskMut.metadata.remainingQty, executedQty);
             let minAskMetadata = minAskMut.metadata;
-            let minAskOwner = minAskMut.owner;
 
             // Give the midpoint for the price.
             // TODO: add fee.
@@ -541,11 +545,9 @@ module ferum::market {
 
             emit_event(&mut book.executionEvents, ExecutionEvent {
                 orderID: maxBidID,
-                owner: maxBidOwner,
                 orderMetadata: maxBidMetadata,
 
                 oppositeOrderID: minAskID,
-                oppositeOwner: minAskOwner,
                 oppositeOrderMetadata: minAskMetadata,
 
                 price,
@@ -554,11 +556,9 @@ module ferum::market {
 
             emit_event(&mut book.executionEvents, ExecutionEvent {
                 orderID: minAskID,
-                owner: minAskOwner,
                 orderMetadata: minAskMetadata,
 
                 oppositeOrderID: maxBidID,
-                oppositeOwner: maxBidOwner,
                 oppositeOrderMetadata: maxBidMetadata,
 
                 price,
@@ -592,14 +592,14 @@ module ferum::market {
     fun execute_market_order<I, Q>(
         execution_event_handle: &mut EventHandle<ExecutionEvent >,
         finalize_event_handle: &mut EventHandle<FinalizeEvent>,
-        orderMap: &mut table::Table<u128, Order<I, Q>>,
-        orderList: &vector<u128>,
-        orderID: u128,
+        orderMap: &mut table::Table<OrderID, Order<I, Q>>,
+        orderList: &vector<OrderID>,
+        orderID: OrderID,
     ) {
         if (vector::length(orderList) == 0) {
             let order =  table::borrow_mut(orderMap, orderID);
             assert!(order.metadata.status == STATUS_PENDING, ERR_MARKET_ORDER_NOT_PENDING);
-            mark_cancelled_order(finalize_event_handle, order.owner, order, CANCEL_AGENT_IOC);
+            mark_cancelled_order(finalize_event_handle, order, CANCEL_AGENT_IOC);
             return
         };
 
@@ -632,13 +632,11 @@ module ferum::market {
             let bookOrder = table::borrow_mut(orderMap, bookOrderID);
             bookOrder.metadata.remainingQty = fixed_point_64::sub(bookOrder.metadata.remainingQty, executedQty);
             let bookOrderID = bookOrder.id;
-            let bookOrderOwner = bookOrder.owner;
             let bookOrderMetadata = bookOrder.metadata;
 
             let order = table::borrow_mut(orderMap, orderID);
             order.metadata.remainingQty = fixed_point_64::sub(order.metadata.remainingQty, executedQty);
             let orderID = order.id;
-            let orderOwner = order.owner;
             let orderMetadata = order.metadata;
 
             if (order.metadata.side == SIDE_BUY) {
@@ -661,11 +659,9 @@ module ferum::market {
 
             emit_event(execution_event_handle, ExecutionEvent {
                 orderID,
-                owner: orderOwner,
                 orderMetadata,
 
                 oppositeOrderID: bookOrderID,
-                oppositeOwner: bookOrderOwner,
                 oppositeOrderMetadata: bookOrderMetadata,
 
                 price: bookOrderMetadata.price,
@@ -674,11 +670,9 @@ module ferum::market {
 
             emit_event(execution_event_handle, ExecutionEvent {
                 orderID: bookOrderID,
-                owner: bookOrderOwner,
                 orderMetadata: bookOrderMetadata,
 
                 oppositeOrderID: orderID,
-                oppositeOwner: orderOwner,
                 oppositeOrderMetadata: orderMetadata,
 
                 price: bookOrderMetadata.price,
@@ -700,7 +694,7 @@ module ferum::market {
 
         let order =  table::borrow_mut(orderMap, orderID);
         if (order.metadata.status != STATUS_FILLED && order.metadata.status != STATUS_PARTIALLY_FILLED) {
-            mark_cancelled_order(finalize_event_handle, order.owner, order, CANCEL_AGENT_IOC);
+            mark_cancelled_order(finalize_event_handle, order, CANCEL_AGENT_IOC);
         }
     }
 
@@ -711,9 +705,9 @@ module ferum::market {
     }
 
     fun clean_orders_internal<I, Q>(
-        orderMap: &mut table::Table<u128, Order<I, Q>>,
-        finalizedOrderMap: &mut table::Table<u128, Order<I, Q>>,
-        orderList: &mut vector<u128>,
+        orderMap: &mut table::Table<OrderID, Order<I, Q>>,
+        finalizedOrderMap: &mut table::Table<OrderID, Order<I, Q>>,
+        orderList: &mut vector<OrderID>,
     ) {
         let count = vector::length(orderList);
         if (count == 0) {
@@ -730,7 +724,7 @@ module ferum::market {
             );
             if (isFinalized) {
                 vector::remove(orderList, i);
-                let orderOwner = order.owner;
+                let orderOwner = order.id.owner;
                 let order = table::remove(orderMap, orderID);
 
                 let buyCollateral = coin::extract_all(&mut order.buyCollateral);
@@ -785,8 +779,8 @@ module ferum::market {
     }
 
     fun get_size<I, Q>(
-        orderMap: &table::Table<u128, Order<I, Q>>,
-        orderList: &vector<u128>,
+        orderMap: &table::Table<OrderID, Order<I, Q>>,
+        orderList: &vector<OrderID>,
         price: FixedPoint64,
     ): FixedPoint64 {
         let i = vector::length(orderList) - 1;
@@ -847,7 +841,6 @@ module ferum::market {
         if (!hasCollateral || !hasQty) {
             order.metadata.status = if (hasQty) STATUS_PARTIALLY_FILLED else STATUS_FILLED;
             emit_event(finalize_event_handle, FinalizeEvent{
-                owner: order.owner,
                 orderID: order.id,
                 orderMetadata: order.metadata,
                 cancelAgent: CANCEL_AGENT_NONE,
@@ -857,10 +850,9 @@ module ferum::market {
         false
     }
 
-    fun emit_order_created_event<I, Q>(owner: &signer, book: &mut OrderBook<I, Q>, order: &Order<I, Q>) {
+    fun emit_order_created_event<I, Q>(book: &mut OrderBook<I, Q>, order: &Order<I, Q>) {
         emit_event(&mut book.createOrderEvents, CreateEvent{
             orderID: order.id,
-            owner: address_of(owner),
             orderMetadata: order.metadata,
         });
     }
@@ -885,21 +877,19 @@ module ferum::market {
 
     public fun mark_cancelled_order<I, Q>(
         finalize_event_handle: &mut EventHandle<FinalizeEvent>,
-        owner: address,
         order: &mut Order<I, Q>,
         cancelAgent: u8,
     ) {
         order.metadata.status = STATUS_CANCELLED;
         emit_event(finalize_event_handle, FinalizeEvent{
             orderID: order.id,
-            owner,
             orderMetadata: order.metadata,
             cancelAgent,
         })
     }
 
     fun drop_order<I, Q>(order: Order<I, Q>): (coin::Coin<Q>, coin::Coin<I>) {
-        let Order<I, Q>{id: _, metadata: _, owner: _, buyCollateral, sellCollateral} = order;
+        let Order<I, Q>{id: _, metadata: _, buyCollateral, sellCollateral} = order;
         (buyCollateral, sellCollateral)
     }
 
@@ -948,23 +938,21 @@ module ferum::market {
 
     // Moves collateral from orders to owners based on the execution details.
     fun swap_collateral<I, Q>(
-        orderMap: &mut table::Table<u128, Order<I, Q>>,
-        buyID: u128,
-        sellID: u128,
+        orderMap: &mut table::Table<OrderID, Order<I, Q>>,
+        buyID: OrderID,
+        sellID: OrderID,
         price: FixedPoint64,
         qty: FixedPoint64,
     ) {
         {
-            let sell = table::borrow(orderMap, sellID);
-            let sellOwner = sell.owner;
+            let sellOwner = sellID.owner;
             let buy = table::borrow_mut(orderMap, buyID);
             let buyCollateral = extract_buy_collateral(buy, price, qty);
             coin::deposit(sellOwner, buyCollateral);
         };
 
         {
-            let buy = table::borrow(orderMap, buyID);
-            let buyOwner = buy.owner;
+            let buyOwner = buyID.owner;
             let sell = table::borrow_mut(orderMap, sellID);
             let sellCollateral = extract_sell_collateral(sell, qty);
             coin::deposit(buyOwner, sellCollateral);
@@ -1890,7 +1878,7 @@ module ferum::market {
     }
 
     #[test_only]
-    fun get_order<I, Q>(book: &OrderBook<I, Q>, orderID: u128): &Order<I, Q> {
+    fun get_order<I, Q>(book: &OrderBook<I, Q>, orderID: OrderID): &Order<I, Q> {
         let orderMap = &book.orderMap;
         let contains = table::contains(orderMap, orderID);
 
