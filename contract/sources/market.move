@@ -7,10 +7,11 @@ module ferum::market {
     use std::signer::address_of;
     use std::string::{Self, String};
 
-    use ferum::ferum::{init_ferum, register_market, get_market_addr};
+    use ferum::ferum::{register_market, get_market_addr};
+    #[test_only]
+    use ferum::ferum::{init_ferum};
     use ferum_std::fixed_point_64::{Self, FixedPoint64};
     use ferum::list;
-
     #[test_only]
     use ferum::coin_test_helpers::{FMA, FMB, setup_fake_coins, register_fmb, register_fma, create_fake_coins};
     use ferum::utils::min_u8;
