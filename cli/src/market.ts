@@ -43,7 +43,7 @@ export async function initializeMarket(
     new TxnBuilderTypes.TransactionPayloadEntryFunction(
       TxnBuilderTypes.EntryFunction.natural(
         `${signerAccount.address()}::market`,
-        "init_market",
+        "init_market_entry",
         coinTypeTags(instrumentCoin, quoteCoin),
         [
           BCS.bcsSerializeU8(instrumentDecimals),
@@ -64,7 +64,7 @@ export async function cancelOrder(
     new TxnBuilderTypes.TransactionPayloadEntryFunction(
       TxnBuilderTypes.EntryFunction.natural(
         `${signerAccount.address()}::market`,
-        "cancel_order",
+        "cancel_order_entry",
         coinTypeTags(instrumentCoinType, quoteCoinType),
         [
           BCS.bcsSerializeU128(orderID),
@@ -86,12 +86,13 @@ export async function addLimitOrder(
     new TxnBuilderTypes.TransactionPayloadEntryFunction(
       TxnBuilderTypes.EntryFunction.natural(
         `${signerAccount.address()}::market`,
-        "add_limit_order",
+        "add_limit_order_entry",
         coinTypeTags(instrumentCoin, quoteCoin),
         [
           BCS.bcsSerializeU8(side === 'buy' ? 1 : 0),
           BCS.bcsSerializeUint64(price),
           BCS.bcsSerializeUint64(quantity),
+          BCS.bcsSerializeStr(""),
         ]
       )
     );
@@ -110,12 +111,13 @@ export async function addMarketOrder(
     new TxnBuilderTypes.TransactionPayloadEntryFunction(
       TxnBuilderTypes.EntryFunction.natural(
         `${signerAccount.address()}::market`,
-        "add_market_order",
+        "add_market_order_entry",
         coinTypeTags(instrumentCoin, quoteCoin),
         [
           BCS.bcsSerializeU8(side === 'buy' ? 1 : 0),
           BCS.bcsSerializeUint64(quantity),
           BCS.bcsSerializeUint64(maxCollateral),
+          BCS.bcsSerializeStr(""),
         ]
       )
     );
