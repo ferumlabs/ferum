@@ -2,7 +2,9 @@ module ferum::market {
     use aptos_framework::coin;
     use aptos_std::event::{EventHandle, emit_event};
     use aptos_framework::account::{new_event_handle};
+    use aptos_framework::timestamp;
     use aptos_std::table;
+    use aptos_std::type_info;
     use std::vector;
     use std::signer::address_of;
     use std::string::{Self, String};
@@ -17,46 +19,45 @@ module ferum::market {
     use ferum::utils::min_u8;
     #[test_only]
     use aptos_framework::account;
-    use aptos_framework::timestamp;
 
     //
     // Errors
     //
 
-    const ERR_NOT_ALLOWED: u64 = 0;
-    const ERR_NOT_ADMIN: u64 = 1;
-    const ERR_BOOK_EXISTS: u64 = 2;
-    const ERR_BOOK_NOT_EXISTS: u64 = 3;
-    const ERR_COIN_UNINITIALIZED: u64 = 4;
-    const ERR_UNKNOWN_ORDER: u64 = 5;
-    const ERR_INVALID_PRICE: u64 = 6;
-    const ERR_NOT_OWNER: u64 = 7;
-    const ERR_COIN_EXCEEDS_MAX_SUPPORTED_DECIMALS: u64 = 8;
-    const ERR_INVALID_TYPE: u64 = 9;
-    const ERR_NO_PROGRESS: u64 = 10;
-    const ERR_MARKET_ORDER_NOT_PENDING: u64 = 11;
-    const ERR_INVALID_DECIMAL_CONFIG: u64 = 12;
-    const ERR_INVALID_SIDE: u64 = 13;
-    const ERR_CLORDID_TOO_LARGE: u64 = 14;
+    const ERR_NOT_ALLOWED: u64 = 1;
+    const ERR_NOT_ADMIN: u64 = 2;
+    const ERR_BOOK_EXISTS: u64 = 3;
+    const ERR_BOOK_NOT_EXISTS: u64 = 4;
+    const ERR_COIN_UNINITIALIZED: u64 = 5;
+    const ERR_UNKNOWN_ORDER: u64 = 6;
+    const ERR_INVALID_PRICE: u64 = 7;
+    const ERR_NOT_OWNER: u64 = 8;
+    const ERR_COIN_EXCEEDS_MAX_SUPPORTED_DECIMALS: u64 = 9;
+    const ERR_INVALID_TYPE: u64 = 10;
+    const ERR_NO_PROGRESS: u64 = 11;
+    const ERR_MARKET_ORDER_NOT_PENDING: u64 = 12;
+    const ERR_INVALID_DECIMAL_CONFIG: u64 = 13;
+    const ERR_INVALID_SIDE: u64 = 14;
+    const ERR_CLORDID_TOO_LARGE: u64 = 15;
 
     //
     // Enums.
     //
 
-    const SIDE_SELL: u8 = 0;
-    const SIDE_BUY: u8 = 1;
+    const SIDE_SELL: u8 = 1;
+    const SIDE_BUY: u8 = 2;
 
-    const TYPE_MARKET: u8 = 0;
-    const TYPE_LIMIT: u8 = 1;
+    const TYPE_MARKET: u8 = 1;
+    const TYPE_LIMIT: u8 = 2;
 
-    const STATUS_PENDING: u8 = 0; // Order not finalized.
-    const STATUS_CANCELLED: u8 = 1; // Order finalized.
-    const STATUS_PARTIALLY_FILLED: u8 = 2; // Order finalized.
-    const STATUS_FILLED: u8 = 3; // Order finalized.
+    const STATUS_PENDING: u8 = 1;
+    const STATUS_CANCELLED: u8 = 2;
+    const STATUS_PARTIALLY_FILLED: u8 = 2;
+    const STATUS_FILLED: u8 = 3;
 
-    const CANCEL_AGENT_NONE: u8 = 0;
-    const CANCEL_AGENT_IOC: u8 = 1;
-    const CANCEL_AGENT_USER: u8 = 2;
+    const CANCEL_AGENT_NONE: u8 = 1;
+    const CANCEL_AGENT_IOC: u8 = 2;
+    const CANCEL_AGENT_USER: u8 = 3;
 
     //
     // Constants.
@@ -80,6 +81,9 @@ module ferum::market {
     }
 
     struct OrderMetadata has drop, store, copy {
+        instrumentType: type_info::TypeInfo,
+        quoteType: type_info::TypeInfo,
+
         side: u8,
         remainingQty: FixedPoint64,
         originalQty: FixedPoint64,
@@ -127,6 +131,9 @@ module ferum::market {
 
     // Struct encapsulating price at a given timestamp for the market.
     struct Quote has drop, store {
+        instrumentType: type_info::TypeInfo,
+        quoteType: type_info::TypeInfo,
+
         maxBid: FixedPoint64,
         bidSize: FixedPoint64,
         minAsk: FixedPoint64,
@@ -147,17 +154,23 @@ module ferum::market {
 
         price: FixedPoint64,
         qty: FixedPoint64,
+
+        timestampMicroSeconds: u64
     }
 
     struct FinalizeEvent has drop, store {
         orderID: OrderID,
         orderMetadata: OrderMetadata,
         cancelAgent: u8,
+
+        timestampMicroSeconds: u64
     }
 
     struct CreateEvent has drop, store {
         orderID: OrderID,
         orderMetadata: OrderMetadata,
+
+        timestampMicroSeconds: u64
     }
 
     struct PriceUpdateEvent has drop, store {
@@ -305,6 +318,9 @@ module ferum::market {
             buyCollateral,
             sellCollateral,
             metadata: OrderMetadata{
+                instrumentType: type_info::type_of<I>(),
+                quoteType: type_info::type_of<Q>(),
+
                 side,
                 price: priceFixedPoint,
                 remainingQty: qtyFixedPoint,
@@ -351,6 +367,9 @@ module ferum::market {
             buyCollateral,
             sellCollateral,
             metadata: OrderMetadata{
+                instrumentType: type_info::type_of<I>(),
+                quoteType: type_info::type_of<Q>(),
+
                 side,
                 price: fixed_point_64::zero(),
                 remainingQty: qtyFixedPoint,
@@ -554,6 +573,8 @@ module ferum::market {
 
             swap_collateral(orderMap, maxBidID, minAskID, price, executedQty);
 
+            let timestampMicroSeconds = timestamp::now_microseconds();
+
             emit_event(&mut book.executionEvents, ExecutionEvent {
                 orderID: maxBidID,
                 orderMetadata: maxBidMetadata,
@@ -563,6 +584,8 @@ module ferum::market {
 
                 price,
                 qty: executedQty,
+
+                timestampMicroSeconds,
             });
 
             emit_event(&mut book.executionEvents, ExecutionEvent {
@@ -574,6 +597,8 @@ module ferum::market {
 
                 price,
                 qty: executedQty,
+
+                timestampMicroSeconds,
             });
 
             // Update order status.
@@ -668,6 +693,8 @@ module ferum::market {
                 );
             };
 
+            let timestampMicroSeconds = timestamp::now_microseconds();
+
             emit_event(execution_event_handle, ExecutionEvent {
                 orderID,
                 orderMetadata,
@@ -677,6 +704,8 @@ module ferum::market {
 
                 price: bookOrderMetadata.price,
                 qty: executedQty,
+
+                timestampMicroSeconds,
             });
 
             emit_event(execution_event_handle, ExecutionEvent {
@@ -688,6 +717,8 @@ module ferum::market {
 
                 price: bookOrderMetadata.price,
                 qty: executedQty,
+
+                timestampMicroSeconds,
             });
 
             bookOrder = table::borrow_mut(orderMap, bookOrderID); // Re-borrow.
@@ -781,6 +812,8 @@ module ferum::market {
         };
 
         Quote {
+            instrumentType: type_info::type_of<I>(),
+            quoteType: type_info::type_of<Q>(),
             minAsk,
             askSize,
             maxBid,
@@ -855,6 +888,8 @@ module ferum::market {
                 orderID: order.id,
                 orderMetadata: order.metadata,
                 cancelAgent: CANCEL_AGENT_NONE,
+
+                timestampMicroSeconds: timestamp::now_microseconds(),
             });
             return true
         };
@@ -865,6 +900,7 @@ module ferum::market {
         emit_event(&mut book.createOrderEvents, CreateEvent{
             orderID: order.id,
             orderMetadata: order.metadata,
+            timestampMicroSeconds: timestamp::now_microseconds(),
         });
     }
 
@@ -896,6 +932,7 @@ module ferum::market {
             orderID: order.id,
             orderMetadata: order.metadata,
             cancelAgent,
+            timestampMicroSeconds: timestamp::now_microseconds(),
         })
     }
 
@@ -1793,6 +1830,9 @@ module ferum::market {
         let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
         let price = get_quote(book);
         let expectedPrice = Quote {
+            instrumentType: type_info::type_of<Quote>(),
+            quoteType: type_info::type_of<Quote>(),
+
             maxBid: fixed_point_64::from_u128(2, 4),
             bidSize: fixed_point_64::from_u128(4, 4),
             minAsk: fixed_point_64::from_u128(3, 4),
@@ -1816,6 +1856,9 @@ module ferum::market {
         let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
         let price = get_quote(book);
         let expectedPrice = Quote {
+            instrumentType: type_info::type_of<Quote>(),
+            quoteType: type_info::type_of<Quote>(),
+
             maxBid: fixed_point_64::zero(),
             bidSize: fixed_point_64::zero(),
             minAsk: fixed_point_64::zero(),
@@ -1844,6 +1887,9 @@ module ferum::market {
         let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
         let price = get_quote(book);
         let expectedPrice = Quote {
+            instrumentType: type_info::type_of<Quote>(),
+            quoteType: type_info::type_of<Quote>(),
+
             maxBid: fixed_point_64::from_u128(2, 4),
             bidSize: fixed_point_64::from_u128(4, 4),
             minAsk: fixed_point_64::zero(),
@@ -1872,6 +1918,9 @@ module ferum::market {
         let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
         let price = get_quote(book);
         let expectedPrice = Quote {
+            instrumentType: type_info::type_of<Quote>(),
+            quoteType: type_info::type_of<Quote>(),
+
             maxBid: fixed_point_64::zero(),
             bidSize: fixed_point_64::zero(),
             minAsk: fixed_point_64::from_u128(3, 4),
