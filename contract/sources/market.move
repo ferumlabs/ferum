@@ -91,6 +91,7 @@ module ferum::market {
         type: u8,
         status: u8,
         clientOrderID: String,
+        executionCounter: u128,
     }
 
     struct Order<phantom I, phantom Q> has store {
@@ -328,6 +329,7 @@ module ferum::market {
                 originalQty: qtyFixedPoint,
                 status: STATUS_PENDING,
                 clientOrderID,
+                executionCounter: 0,
             },
         };
 
@@ -377,6 +379,7 @@ module ferum::market {
                 originalQty: qtyFixedPoint,
                 status: STATUS_PENDING,
                 clientOrderID,
+                executionCounter: 0,
             },
         };
 
@@ -554,10 +557,12 @@ module ferum::market {
             let executedQty = fixed_point_64::min(maxBid.metadata.remainingQty, minAsk.metadata.remainingQty);
 
             let maxBidMut = get_order_from_list_mut(orderMap, buys, maxBidIdx);
+            maxBidMut.metadata.executionCounter = maxBidMut.metadata.executionCounter + 1;
             maxBidMut.metadata.remainingQty = fixed_point_64::sub(maxBidMut.metadata.remainingQty, executedQty);
             let maxBidMetadata = maxBidMut.metadata;
 
             let minAskMut = get_order_from_list_mut(orderMap, sells, minAskIdx);
+            minAskMut.metadata.executionCounter = minAskMut.metadata.executionCounter + 1;
             minAskMut.metadata.remainingQty = fixed_point_64::sub(minAskMut.metadata.remainingQty, executedQty);
             let minAskMetadata = minAskMut.metadata;
 
@@ -639,6 +644,8 @@ module ferum::market {
             return
         };
 
+        let timestampMicroSeconds = timestamp::now_microseconds();
+
         let i = vector::length(orderList) - 1;
         loop {
             let bookOrderID = *vector::borrow(orderList, i);
@@ -666,11 +673,13 @@ module ferum::market {
             };
 
             let bookOrder = table::borrow_mut(orderMap, bookOrderID);
+            bookOrder.metadata.executionCounter = bookOrder.metadata.executionCounter + 1;
             bookOrder.metadata.remainingQty = fixed_point_64::sub(bookOrder.metadata.remainingQty, executedQty);
             let bookOrderID = bookOrder.id;
             let bookOrderMetadata = bookOrder.metadata;
 
             let order = table::borrow_mut(orderMap, orderID);
+            order.metadata.executionCounter = order.metadata.executionCounter + 1;
             order.metadata.remainingQty = fixed_point_64::sub(order.metadata.remainingQty, executedQty);
             let orderID = order.id;
             let orderMetadata = order.metadata;
@@ -692,8 +701,6 @@ module ferum::market {
                     executedQty,
                 );
             };
-
-            let timestampMicroSeconds = timestamp::now_microseconds();
 
             emit_event(execution_event_handle, ExecutionEvent {
                 orderID,

@@ -89,7 +89,7 @@ export async function addLimitOrder(
         "add_limit_order_entry",
         coinTypeTags(instrumentCoin, quoteCoin),
         [
-          BCS.bcsSerializeU8(side === 'buy' ? 1 : 0),
+          BCS.bcsSerializeU8(side === 'buy' ? 2 : 1),
           BCS.bcsSerializeUint64(price),
           BCS.bcsSerializeUint64(quantity),
           BCS.bcsSerializeStr(""),
@@ -114,7 +114,7 @@ export async function addMarketOrder(
         "add_market_order_entry",
         coinTypeTags(instrumentCoin, quoteCoin),
         [
-          BCS.bcsSerializeU8(side === 'buy' ? 1 : 0),
+          BCS.bcsSerializeU8(side === 'buy' ? 2 : 1),
           BCS.bcsSerializeUint64(quantity),
           BCS.bcsSerializeUint64(maxCollateral),
           BCS.bcsSerializeStr(""),
