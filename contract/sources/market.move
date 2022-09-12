@@ -92,6 +92,7 @@ module ferum::market {
         status: u8,
         clientOrderID: String,
         executionCounter: u128,
+        updateCounter: u128,
     }
 
     struct Order<phantom I, phantom Q> has store {
@@ -330,6 +331,7 @@ module ferum::market {
                 status: STATUS_PENDING,
                 clientOrderID,
                 executionCounter: 0,
+                updateCounter: 0,
             },
         };
 
@@ -380,6 +382,7 @@ module ferum::market {
                 status: STATUS_PENDING,
                 clientOrderID,
                 executionCounter: 0,
+                updateCounter: 0,
             },
         };
 
@@ -557,11 +560,13 @@ module ferum::market {
             let executedQty = fixed_point_64::min(maxBid.metadata.remainingQty, minAsk.metadata.remainingQty);
 
             let maxBidMut = get_order_from_list_mut(orderMap, buys, maxBidIdx);
+            maxBidMut.metadata.updateCounter = maxBidMut.metadata.updateCounter + 1;
             maxBidMut.metadata.executionCounter = maxBidMut.metadata.executionCounter + 1;
             maxBidMut.metadata.remainingQty = fixed_point_64::sub(maxBidMut.metadata.remainingQty, executedQty);
             let maxBidMetadata = maxBidMut.metadata;
 
             let minAskMut = get_order_from_list_mut(orderMap, sells, minAskIdx);
+            minAskMut.metadata.updateCounter = minAskMut.metadata.updateCounter + 1;
             minAskMut.metadata.executionCounter = minAskMut.metadata.executionCounter + 1;
             minAskMut.metadata.remainingQty = fixed_point_64::sub(minAskMut.metadata.remainingQty, executedQty);
             let minAskMetadata = minAskMut.metadata;
@@ -673,12 +678,14 @@ module ferum::market {
             };
 
             let bookOrder = table::borrow_mut(orderMap, bookOrderID);
+            bookOrder.metadata.updateCounter = bookOrder.metadata.updateCounter + 1;
             bookOrder.metadata.executionCounter = bookOrder.metadata.executionCounter + 1;
             bookOrder.metadata.remainingQty = fixed_point_64::sub(bookOrder.metadata.remainingQty, executedQty);
             let bookOrderID = bookOrder.id;
             let bookOrderMetadata = bookOrder.metadata;
 
             let order = table::borrow_mut(orderMap, orderID);
+            order.metadata.updateCounter = order.metadata.updateCounter + 1;
             order.metadata.executionCounter = order.metadata.executionCounter + 1;
             order.metadata.remainingQty = fixed_point_64::sub(order.metadata.remainingQty, executedQty);
             let orderID = order.id;
@@ -891,6 +898,7 @@ module ferum::market {
         let hasQty = has_remaining_qty(order);
         if (!hasCollateral || !hasQty) {
             order.metadata.status = if (hasQty) STATUS_PARTIALLY_FILLED else STATUS_FILLED;
+            order.metadata.updateCounter = order.metadata.updateCounter + 1;
             emit_event(finalize_event_handle, FinalizeEvent{
                 orderID: order.id,
                 orderMetadata: order.metadata,
@@ -935,6 +943,7 @@ module ferum::market {
         cancelAgent: u8,
     ) {
         order.metadata.status = STATUS_CANCELLED;
+        order.metadata.updateCounter = order.metadata.updateCounter + 1;
         emit_event(finalize_event_handle, FinalizeEvent{
             orderID: order.id,
             orderMetadata: order.metadata,
