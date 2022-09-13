@@ -550,6 +550,8 @@ module ferum::market {
         let minAskIdx = vector::length(sells) - 1;
         let minAskPrice = get_order_from_list(orderMap, sells, minAskIdx).metadata.price;
 
+        let timestampMicroSeconds = timestamp::now_microseconds();
+
         while (fixed_point_64::gte(maxBidPrice, minAskPrice) && maxBidIdx >= 0 && minAskIdx >= 0) {
             let maxBid = get_order_from_list(orderMap, buys, maxBidIdx);
             let maxBidID = maxBid.id;
@@ -563,13 +565,11 @@ module ferum::market {
             maxBidMut.metadata.updateCounter = maxBidMut.metadata.updateCounter + 1;
             maxBidMut.metadata.executionCounter = maxBidMut.metadata.executionCounter + 1;
             maxBidMut.metadata.remainingQty = fixed_point_64::sub(maxBidMut.metadata.remainingQty, executedQty);
-            let maxBidMetadata = maxBidMut.metadata;
 
             let minAskMut = get_order_from_list_mut(orderMap, sells, minAskIdx);
             minAskMut.metadata.updateCounter = minAskMut.metadata.updateCounter + 1;
             minAskMut.metadata.executionCounter = minAskMut.metadata.executionCounter + 1;
             minAskMut.metadata.remainingQty = fixed_point_64::sub(minAskMut.metadata.remainingQty, executedQty);
-            let minAskMetadata = minAskMut.metadata;
 
             // Give the midpoint for the price.
             // TODO: add fee.
@@ -583,8 +583,15 @@ module ferum::market {
 
             swap_collateral(orderMap, maxBidID, minAskID, price, executedQty);
 
-            let timestampMicroSeconds = timestamp::now_microseconds();
+            // Update status of orders.
+            let maxBidMut = get_order_from_list_mut(orderMap, buys, maxBidIdx);
+            let maxBidFinalized = finalize_order_if_needed(&mut book.finalizeEvents, maxBidMut);
+            let maxBidMetadata = maxBidMut.metadata;
+            let minAskMut = get_order_from_list_mut(orderMap, sells, minAskIdx);
+            let minAskFinalized = finalize_order_if_needed(&mut book.finalizeEvents, minAskMut);
+            let minAskMetadata = minAskMut.metadata;
 
+            // Emit execution events after having modified what we need to.
             emit_event(&mut book.executionEvents, ExecutionEvent {
                 orderID: maxBidID,
                 orderMetadata: maxBidMetadata,
@@ -597,7 +604,6 @@ module ferum::market {
 
                 timestampMicroSeconds,
             });
-
             emit_event(&mut book.executionEvents, ExecutionEvent {
                 orderID: minAskID,
                 orderMetadata: minAskMetadata,
@@ -611,10 +617,9 @@ module ferum::market {
                 timestampMicroSeconds,
             });
 
-            // Update order status.
+            // Update loop variables.
             {
-                let maxBidMut = get_order_from_list_mut(orderMap, buys, maxBidIdx);
-                if (finalize_order_if_needed(&mut book.finalizeEvents, maxBidMut)) {
+                if (maxBidFinalized) {
                     if (maxBidIdx == 0) {
                         break
                     };
@@ -623,8 +628,7 @@ module ferum::market {
                 }
             };
             {
-                let minAskMut = get_order_from_list_mut(orderMap, sells, minAskIdx);
-                if (finalize_order_if_needed(&mut book.finalizeEvents, minAskMut)) {
+                if (minAskFinalized) {
                     if (minAskIdx == 0) {
                         break
                     };
@@ -682,21 +686,20 @@ module ferum::market {
             bookOrder.metadata.executionCounter = bookOrder.metadata.executionCounter + 1;
             bookOrder.metadata.remainingQty = fixed_point_64::sub(bookOrder.metadata.remainingQty, executedQty);
             let bookOrderID = bookOrder.id;
-            let bookOrderMetadata = bookOrder.metadata;
+            let bookOrderPrice = bookOrder.metadata.price;
 
             let order = table::borrow_mut(orderMap, orderID);
             order.metadata.updateCounter = order.metadata.updateCounter + 1;
             order.metadata.executionCounter = order.metadata.executionCounter + 1;
             order.metadata.remainingQty = fixed_point_64::sub(order.metadata.remainingQty, executedQty);
             let orderID = order.id;
-            let orderMetadata = order.metadata;
 
             if (order.metadata.side == SIDE_BUY) {
                 swap_collateral(
                     orderMap,
                     orderID,
                     bookOrderID,
-                    bookOrderMetadata.price,
+                    bookOrderPrice,
                     executedQty,
                 );
             } else {
@@ -704,11 +707,20 @@ module ferum::market {
                     orderMap,
                     bookOrderID,
                     orderID,
-                    bookOrderMetadata.price,
+                    bookOrderPrice,
                     executedQty,
                 );
             };
 
+            // Update status of orders.
+            let bookOrder = table::borrow_mut(orderMap, bookOrderID);
+            finalize_order_if_needed(finalize_event_handle, bookOrder);
+            let bookOrderMetadata = bookOrder.metadata;
+            let order = table::borrow_mut(orderMap, orderID);
+            let orderFinalized = finalize_order_if_needed(finalize_event_handle, order);
+            let orderMetadata = order.metadata;
+
+            // Emit execution events.
             emit_event(execution_event_handle, ExecutionEvent {
                 orderID,
                 orderMetadata,
@@ -721,7 +733,6 @@ module ferum::market {
 
                 timestampMicroSeconds,
             });
-
             emit_event(execution_event_handle, ExecutionEvent {
                 orderID: bookOrderID,
                 orderMetadata: bookOrderMetadata,
@@ -735,11 +746,7 @@ module ferum::market {
                 timestampMicroSeconds,
             });
 
-            bookOrder = table::borrow_mut(orderMap, bookOrderID); // Re-borrow.
-            finalize_order_if_needed(finalize_event_handle, bookOrder);
-
-            order = table::borrow_mut(orderMap, orderID); // Re-borrow.
-            if (finalize_order_if_needed(finalize_event_handle, order)) {
+            if (orderFinalized) {
                 break
             };
             if (i == 0) {
