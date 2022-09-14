@@ -113,8 +113,6 @@ module ferum::market {
         orderMap: table::Table<OrderID, Order<I, Q>>,
         // Map of all finalized orders.
         finalizedOrderMap: table::Table<OrderID, Order<I, Q>>,
-        // Counter to generate order ID.
-        idCounter: u128,
         // Number of decimals for the instrument coin.
         iDecimals: u8,
         // Number of decimals for the quote coin.
@@ -216,7 +214,6 @@ module ferum::market {
             buys: vector::empty(),
             orderMap: table::new<OrderID, Order<I, Q>>(),
             finalizedOrderMap: table::new<OrderID, Order<I, Q>>(),
-            idCounter: 0,
             iDecimals: instrumentDecimals,
             qDecimals: quoteDecimals,
             finalizeEvents,
