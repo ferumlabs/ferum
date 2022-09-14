@@ -391,7 +391,7 @@ module ferum::market {
         orderID
     }
 
-    public fun add_market_order_internal<I, Q>(
+    fun add_market_order_internal<I, Q>(
         owner: &signer,
         side: u8,
         qty: u64,
