@@ -9,9 +9,9 @@ module ferum::market {
     use std::signer::address_of;
     use std::string::{Self, String};
 
-    use ferum::ferum::{register_market, get_market_addr};
+    use ferum::ferum::{register_market, get_market_addr, CustodianCapability, get_custodian_address, is_custodian_address_valid};
     #[test_only]
-    use ferum::ferum::{init_ferum};
+    use ferum::ferum::{init_ferum, register_custodian, drop_custodian_capability};
     use ferum_std::fixed_point_64::{Self, FixedPoint64};
     use ferum::list;
     #[test_only]
@@ -39,6 +39,8 @@ module ferum::market {
     const ERR_INVALID_DECIMAL_CONFIG: u64 = 13;
     const ERR_INVALID_SIDE: u64 = 14;
     const ERR_CLORDID_TOO_LARGE: u64 = 15;
+    const ERR_NOT_CUSTODIAN: u64 = 16;
+    const ERR_INVALID_CUSTODIAN_ADDRESS: u64 = 17;
 
     //
     // Enums.
@@ -100,6 +102,7 @@ module ferum::market {
         metadata: OrderMetadata,
         buyCollateral: coin::Coin<Q>,
         sellCollateral: coin::Coin<I>,
+        custodianAddress: address,
     }
 
     struct OrderBook<phantom I, phantom Q> has key, store {
@@ -261,26 +264,11 @@ module ferum::market {
     }
 
     public entry fun cancel_order_entry<I, Q>(owner: &signer, orderIDCounter: u128) acquires OrderBook {
-        let bookAddr = get_market_addr<I, Q>();
-        assert!(exists<OrderBook<I, Q>>(bookAddr), ERR_BOOK_NOT_EXISTS);
-
-        let ownerAddr = address_of(owner);
-        let book = borrow_global_mut<OrderBook<I, Q>>(bookAddr);
         let id = OrderID {
-            owner: ownerAddr,
+            owner: address_of(owner),
             counter: orderIDCounter,
         };
-        assert!(table::contains(&book.orderMap, id), ERR_UNKNOWN_ORDER);
-        let order = table::borrow_mut(&mut book.orderMap, id);
-
-        let orderOwner = order.id.owner;
-        assert!(ownerAddr == orderOwner, ERR_NOT_OWNER);
-        mark_cancelled_order(
-            &mut book.finalizeEvents,
-            order,
-            CANCEL_AGENT_USER,
-        );
-        clean_orders(book);
+        cancel_order_internal<I, Q>(owner, id, @0x0);
     }
 
     //
@@ -293,6 +281,71 @@ module ferum::market {
         price: u64,
         qty: u64,
         clientOrderID: String,
+    ): OrderID acquires OrderBook, UserMarketInfo {
+        add_limit_order_internal<I, Q>(owner, side, price, qty, clientOrderID, @0x0)
+    }
+
+    public fun add_limit_order_as_custodian<I, Q>(
+        owner: &signer,
+        custodianCap: &CustodianCapability,
+        side: u8,
+        price: u64,
+        qty: u64,
+        clientOrderID: String,
+    ): OrderID acquires OrderBook, UserMarketInfo {
+        let custodianAddress = get_custodian_address(custodianCap);
+        assert!(is_custodian_address_valid(custodianAddress), ERR_INVALID_CUSTODIAN_ADDRESS);
+        add_limit_order_internal<I, Q>(owner, side, price, qty, clientOrderID, custodianAddress)
+    }
+
+    public fun add_market_order<I, Q>(
+        owner: &signer,
+        side: u8,
+        qty: u64,
+        maxCollateralAmt: u64,
+        clientOrderID: String,
+    ): OrderID acquires OrderBook, UserMarketInfo {
+        add_market_order_internal<I, Q>(owner, side, qty, maxCollateralAmt, clientOrderID, @0x0)
+    }
+
+    public fun add_market_order_as_custodian<I, Q>(
+        owner: &signer,
+        custodianCap: &CustodianCapability,
+        side: u8,
+        qty: u64,
+        maxCollateralAmt: u64,
+        clientOrderID: String,
+    ): OrderID acquires OrderBook, UserMarketInfo {
+        let custodianAddress = get_custodian_address(custodianCap);
+        assert!(is_custodian_address_valid(custodianAddress), ERR_INVALID_CUSTODIAN_ADDRESS);
+        add_market_order_internal<I, Q>(owner, side, qty, maxCollateralAmt, clientOrderID, custodianAddress)
+    }
+
+    public fun cancel_order_as_custodian<I, Q>(
+        signer: &signer,
+        custodianCap: &CustodianCapability,
+        orderOwner: address,
+        orderIDCounter: u128,
+    ) acquires OrderBook {
+        let custodianAddress = get_custodian_address(custodianCap);
+        let id = OrderID {
+            owner: orderOwner,
+            counter: orderIDCounter,
+        };
+        cancel_order_internal<I, Q>(signer, id, custodianAddress)
+    }
+
+    //
+    // Private functions.
+    //
+
+    fun add_limit_order_internal<I, Q>(
+        owner: &signer,
+        side: u8,
+        price: u64,
+        qty: u64,
+        clientOrderID: String,
+        custodianAddress: address,
     ): OrderID acquires OrderBook, UserMarketInfo {
         let bookAddr = get_market_addr<I, Q>();
         assert!(exists<OrderBook<I, Q>>(bookAddr), ERR_BOOK_NOT_EXISTS);
@@ -316,6 +369,7 @@ module ferum::market {
             id: orderID,
             buyCollateral,
             sellCollateral,
+            custodianAddress,
             metadata: OrderMetadata{
                 instrumentType: type_info::type_of<I>(),
                 quoteType: type_info::type_of<Q>(),
@@ -337,12 +391,13 @@ module ferum::market {
         orderID
     }
 
-    fun add_market_order<I, Q>(
+    public fun add_market_order_internal<I, Q>(
         owner: &signer,
         side: u8,
         qty: u64,
         maxCollateralAmt: u64,
         clientOrderID: String,
+        custodianAddress: address,
     ): OrderID acquires OrderBook, UserMarketInfo {
         let bookAddr = get_market_addr<I, Q>();
         assert!(exists<OrderBook<I, Q>>(bookAddr), ERR_BOOK_NOT_EXISTS);
@@ -367,6 +422,7 @@ module ferum::market {
             id: orderID,
             buyCollateral,
             sellCollateral,
+            custodianAddress,
             metadata: OrderMetadata{
                 instrumentType: type_info::type_of<I>(),
                 quoteType: type_info::type_of<Q>(),
@@ -388,9 +444,28 @@ module ferum::market {
         orderID
     }
 
-    //
-    // Private functions.
-    //
+    fun cancel_order_internal<I, Q>(owner: &signer, orderID: OrderID, custodianAddress: address) acquires OrderBook {
+        let bookAddr = get_market_addr<I, Q>();
+        assert!(exists<OrderBook<I, Q>>(bookAddr), ERR_BOOK_NOT_EXISTS);
+
+        let ownerAddr = address_of(owner);
+        let book = borrow_global_mut<OrderBook<I, Q>>(bookAddr);
+        assert!(table::contains(&book.orderMap, orderID), ERR_UNKNOWN_ORDER);
+        let order = table::borrow_mut(&mut book.orderMap, orderID);
+
+        if (is_custodian_address_valid(order.custodianAddress)) {
+            assert!(custodianAddress == order.custodianAddress, ERR_NOT_CUSTODIAN);
+        } else {
+            assert!(ownerAddr == order.id.owner, ERR_NOT_OWNER);
+        };
+
+        mark_cancelled_order(
+            &mut book.finalizeEvents,
+            order,
+            CANCEL_AGENT_USER,
+        );
+        clean_orders(book);
+    }
 
     fun gen_order_id<I, Q>(owner: address): OrderID acquires UserMarketInfo {
         let market_info = borrow_global_mut<UserMarketInfo<I, Q>>(owner);
@@ -961,11 +1036,6 @@ module ferum::market {
         })
     }
 
-    fun drop_order<I, Q>(order: Order<I, Q>): (coin::Coin<Q>, coin::Coin<I>) {
-        let Order<I, Q>{id: _, metadata: _, buyCollateral, sellCollateral} = order;
-        (buyCollateral, sellCollateral)
-    }
-
     //
     // Collateral functions.
     //
@@ -1158,6 +1228,122 @@ module ferum::market {
 
         assert!(coin::balance<FMA>(address_of(owner)) == 8800000000, 0);
         assert!(coin::balance<FMB>(address_of(owner)) == 7800000000, 0);
+    }
+
+    #[test(owner = @ferum, aptos = @0x1, user = @0x2)]
+    fun test_cancel_orders(owner: &signer, aptos: &signer, user: &signer) acquires OrderBook, UserMarketInfo {
+        // Tests that orders can be added a book and then cancelled.
+
+        account::create_account_for_test(address_of(owner));
+        account::create_account_for_test(address_of(user));
+        setup_fake_coins(owner, user, 10000000000, 8);
+        setup_market_for_test<FMA, FMB>(owner, aptos);
+
+        let buyID = add_limit_order<FMA, FMB>(user, SIDE_BUY, 10000, 100000, empty_clordid()); // BUY 10 FMA @ 1 FMB
+        let sellID = add_limit_order<FMA, FMB>(user, SIDE_SELL, 200000, 100000, empty_clordid()); // SELL 10 FMA @ 20 FMB
+
+        cancel_order_entry<FMA, FMB>(user, buyID.counter);
+        {
+            let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
+            let order = get_order<FMA, FMB>(book, buyID);
+            assert!(order.metadata.status == STATUS_CANCELLED, 0);
+            assert!(coin::value(&order.buyCollateral) == 0, 0);
+            assert!(coin::value(&order.sellCollateral) == 0, 0);
+        };
+
+        cancel_order_entry<FMA, FMB>(user, sellID.counter);
+        {
+            let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
+            let order = get_order<FMA, FMB>(book, sellID);
+            assert!(order.metadata.status == STATUS_CANCELLED, 0);
+            assert!(coin::value(&order.buyCollateral) == 0, 0);
+            assert!(coin::value(&order.sellCollateral) == 0, 0);
+        };
+
+        assert!(coin::balance<FMB>(address_of(user)) == 10000000000, 0);
+        assert!(coin::balance<FMA>(address_of(user)) == 10000000000, 0);
+    }
+
+    #[test(owner = @ferum, aptos = @0x1, user = @0x2, custodian = @0x4)]
+    fun test_cancel_orders_as_custodian(owner: &signer, aptos: &signer, user: &signer, custodian: &signer) acquires OrderBook, UserMarketInfo {
+        // Tests that custodial orders can be added a book and then cancelled.
+
+        account::create_account_for_test(address_of(owner));
+        account::create_account_for_test(address_of(user));
+        setup_fake_coins(owner, user, 10000000000, 8);
+        setup_market_for_test<FMA, FMB>(owner, aptos);
+
+        let cap = register_custodian(custodian);
+
+        let buyID = add_limit_order_as_custodian<FMA, FMB>(user, &cap, SIDE_BUY, 10000, 100000, empty_clordid()); // BUY 10 FMA @ 1 FMB
+
+        cancel_order_as_custodian<FMA, FMB>(custodian, &cap, address_of(user), buyID.counter);
+        {
+            let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
+            let order = get_order<FMA, FMB>(book, buyID);
+            assert!(order.metadata.status == STATUS_CANCELLED, 0);
+            assert!(coin::value(&order.buyCollateral) == 0, 0);
+            assert!(coin::value(&order.sellCollateral) == 0, 0);
+        };
+
+        assert!(coin::balance<FMB>(address_of(user)) == 10000000000, 0);
+        assert!(coin::balance<FMA>(address_of(user)) == 10000000000, 0);
+
+        drop_custodian_capability(cap);
+    }
+
+    #[test(owner = @ferum, aptos = @0x1, user = @0x2, custodian = @0x4)]
+    #[expected_failure]
+    fun test_cancel_custodial_order_without_capability(owner: &signer, aptos: &signer, user: &signer, custodian: &signer) acquires OrderBook, UserMarketInfo {
+        // Tests that custodial orders can't be cancelled by the user.
+
+        account::create_account_for_test(address_of(owner));
+        account::create_account_for_test(address_of(user));
+        setup_fake_coins(owner, user, 10000000000, 8);
+        setup_market_for_test<FMA, FMB>(owner, aptos);
+
+        let cap = register_custodian(custodian);
+
+        let buyID = add_limit_order_as_custodian<FMA, FMB>(user, &cap, SIDE_BUY, 10000, 100000, empty_clordid()); // BUY 10 FMA @ 1 FMB
+
+        cancel_order_entry<FMA, FMB>(user,  buyID.counter);
+
+        drop_custodian_capability(cap);
+    }
+
+    #[test(owner = @ferum, aptos = @0x1, user = @0x2, custodian = @0x4)]
+    #[expected_failure]
+    fun test_cancel_non_custodial_order_as_custodian(owner: &signer, aptos: &signer, user: &signer, custodian: &signer) acquires OrderBook, UserMarketInfo {
+        // Tests that non custodial orders can only be cancelled by the original user.
+
+        account::create_account_for_test(address_of(owner));
+        account::create_account_for_test(address_of(user));
+        setup_fake_coins(owner, user, 10000000000, 8);
+        setup_market_for_test<FMA, FMB>(owner, aptos);
+
+        let cap = register_custodian(custodian);
+
+        let buyID = add_limit_order<FMA, FMB>(user, SIDE_BUY, 10000, 100000, empty_clordid()); // BUY 10 FMA @ 1 FMB
+
+        cancel_order_as_custodian<FMA, FMB>(custodian, &cap, address_of(user), buyID.counter);
+
+        drop_custodian_capability(cap);
+    }
+
+    #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x4)]
+    #[expected_failure]
+    fun test_cancel_order_wrong_user(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook, UserMarketInfo {
+        // Tests that non custodial orders can only be cancelled by the original user.
+
+        account::create_account_for_test(address_of(owner));
+        account::create_account_for_test(address_of(user1));
+        setup_fake_coins(owner, user1, 10000000000, 8);
+        setup_market_for_test<FMA, FMB>(owner, aptos);
+
+        let buyID = add_limit_order<FMA, FMB>(user1, SIDE_BUY, 10000, 100000, empty_clordid()); // BUY 10 FMA @ 1 FMB
+
+        cancel_order_entry<FMA, FMB>(user2, buyID.counter);
+
     }
 
     #[test(owner = @ferum, aptos = @0x1, user = @0x2)]

@@ -15,6 +15,8 @@ module ferum::ferum {
     const ERR_NOT_ALLOWED: u64 = 0;
     const ERR_MARKET_NOT_EXISTS: u64 = 1;
     const ERR_MARKET_EXISTS: u64 = 2;
+    const ERR_CUSTODIAN_ALREADY_REGISTERED: u64 = 3;
+    const ERR_INVALID_CUSTODIAN_ADDRESS: u64 = 4;
 
     ///
     /// Structs.
@@ -28,6 +30,14 @@ module ferum::ferum {
 
     /// Key used to map to a market address. Is first converted to a string using TypeInfo.
     struct MarketKey<phantom I, phantom Q> has key {}
+
+    /// Capability used to assign custodianship to a third party.
+    struct CustodianCapability has store {
+        custodianAddress: address, // 0x0 is reserved as the sentinal value.
+    }
+
+    /// Struct used to store information about a custodian.
+    struct CustodianInfo has key {}
 
     ///
     /// Entry functions.
@@ -64,6 +74,30 @@ module ferum::ferum {
         let key = market_key<I, Q>();
         assert!(table::contains(&info.marketMap, key), ERR_MARKET_NOT_EXISTS);
         *table::borrow(&info.marketMap, key)
+    }
+
+    public fun register_custodian(owner: &signer): CustodianCapability {
+        let ownerAddr = address_of(owner);
+        assert!(!exists<CustodianInfo>(ownerAddr), ERR_CUSTODIAN_ALREADY_REGISTERED);
+        assert!(is_custodian_address_valid(ownerAddr), ERR_INVALID_CUSTODIAN_ADDRESS);
+        move_to(owner, CustodianInfo{});
+
+        CustodianCapability{
+            custodianAddress: ownerAddr,
+        }
+    }
+
+    public fun get_custodian_address(cap: &CustodianCapability): address {
+        return cap.custodianAddress
+    }
+
+    public fun is_custodian_address_valid(addr: address): bool {
+        return addr != @0x0
+    }
+
+    #[test_only]
+    public fun drop_custodian_capability(cap: CustodianCapability) {
+        let CustodianCapability {custodianAddress: _} = cap;
     }
 
     ///
