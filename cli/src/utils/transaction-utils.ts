@@ -3,7 +3,6 @@ import {
   AptosClient,
 } from "aptos";
 import { TransactionPayload } from "aptos/dist/transaction_builder/aptos_types";
-
 import { client } from '../aptos-client'
 
 export async function sendSignedTransactionWithPrivateKey(

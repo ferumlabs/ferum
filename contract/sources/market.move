@@ -19,6 +19,7 @@ module ferum::market {
     use ferum::utils::min_u8;
     #[test_only]
     use aptos_framework::account;
+    use ferum::test_coins;
 
     //
     // Errors
@@ -85,7 +86,6 @@ module ferum::market {
     struct OrderMetadata has drop, store, copy {
         instrumentType: type_info::TypeInfo,
         quoteType: type_info::TypeInfo,
-
         side: u8,
         remainingQty: FixedPoint64,
         originalQty: FixedPoint64,
@@ -120,7 +120,6 @@ module ferum::market {
         iDecimals: u8,
         // Number of decimals for the quote coin.
         qDecimals: u8,
-
         // Finalize order events for this market.
         finalizeEvents: EventHandle<FinalizeEvent>,
         // Execution events for this market.
@@ -129,14 +128,12 @@ module ferum::market {
         createOrderEvents: EventHandle<CreateEvent>,
         // Price update events for this market.
         priceUpdateEvents: EventHandle<PriceUpdateEvent>,
-
     }
 
     // Struct encapsulating price at a given timestamp for the market.
     struct Quote has drop, store {
         instrumentType: type_info::TypeInfo,
         quoteType: type_info::TypeInfo,
-
         maxBid: FixedPoint64,
         bidSize: FixedPoint64,
         minAsk: FixedPoint64,
@@ -151,13 +148,10 @@ module ferum::market {
     struct ExecutionEvent has drop, store {
         orderID: OrderID,
         orderMetadata: OrderMetadata,
-
         oppositeOrderID: OrderID,
         oppositeOrderMetadata: OrderMetadata,
-
         price: FixedPoint64,
         qty: FixedPoint64,
-
         timestampMicroSeconds: u64
     }
 
@@ -165,14 +159,12 @@ module ferum::market {
         orderID: OrderID,
         orderMetadata: OrderMetadata,
         cancelAgent: u8,
-
         timestampMicroSeconds: u64
     }
 
     struct CreateEvent has drop, store {
         orderID: OrderID,
         orderMetadata: OrderMetadata,
-
         timestampMicroSeconds: u64
     }
 
@@ -373,7 +365,6 @@ module ferum::market {
             metadata: OrderMetadata{
                 instrumentType: type_info::type_of<I>(),
                 quoteType: type_info::type_of<Q>(),
-
                 side,
                 price: priceFixedPoint,
                 remainingQty: qtyFixedPoint,
@@ -385,9 +376,7 @@ module ferum::market {
                 updateCounter: 0,
             },
         };
-
         add_order<I, Q>(book, order);
-
         orderID
     }
 
@@ -403,20 +392,15 @@ module ferum::market {
         assert!(exists<OrderBook<I, Q>>(bookAddr), ERR_BOOK_NOT_EXISTS);
         validate_coins<I, Q>();
         create_user_info_if_needed<I, Q>(owner);
-
         let book = borrow_global_mut<OrderBook<I, Q>>(bookAddr);
-
         let qtyFixedPoint = fixed_point_64::from_u64(qty, book.iDecimals);
-
         let ownerAddr = address_of(owner);
-
         let (buyCollateral, sellCollateral) = obtain_market_order_collateral<I, Q>(
             owner,
             side,
             qtyFixedPoint,
             maxCollateralAmt,
         );
-
         let orderID = gen_order_id<I, Q>(ownerAddr);
         let order = Order<I, Q>{
             id: orderID,
@@ -426,7 +410,6 @@ module ferum::market {
             metadata: OrderMetadata{
                 instrumentType: type_info::type_of<I>(),
                 quoteType: type_info::type_of<Q>(),
-
                 side,
                 price: fixed_point_64::zero(),
                 remainingQty: qtyFixedPoint,
@@ -438,9 +421,7 @@ module ferum::market {
                 updateCounter: 0,
             },
         };
-
         add_order(book, order);
-
         orderID
     }
 
@@ -717,7 +698,7 @@ module ferum::market {
     }
 
     fun execute_market_order<I, Q>(
-        execution_event_handle: &mut EventHandle<ExecutionEvent >,
+        execution_event_handle: &mut EventHandle<ExecutionEvent>,
         finalize_event_handle: &mut EventHandle<FinalizeEvent>,
         orderMap: &mut table::Table<OrderID, Order<I, Q>>,
         orderList: &vector<OrderID>,

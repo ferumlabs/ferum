@@ -5,7 +5,6 @@ import {
   MaybeHexString,
   HexString,
 } from "aptos";
-import { assert } from "console";
 import { client } from "./aptos-client";
 import Config, { CONFIG_PATH } from "./config";
 import { sendSignedTransactionWithAccount } from "./utils/transaction-utils";

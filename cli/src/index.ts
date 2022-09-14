@@ -11,6 +11,7 @@ import { publishModuleUsingCLI } from "./utils/module-publish-utils";
 import { client, NODE_URL } from './aptos-client';
 import Config, { CONFIG_PATH } from './config';
 import { testModuleUsingCLI } from "./utils/module-testing-utils";
+import { createUSDF } from "./usdf";
 
 const DEFAULT_CONTRACT_DIR = "../contract"
 
@@ -154,6 +155,14 @@ signedCmd("create-test-coins")
     await createTestCoin(account, "FMB");
   });
 
+signedCmd("create-usdf")
+  .description('Creates USDF coins for testing.')
+  .action(async (_, cmd) => {
+    const { account } = cmd.opts();
+    await createUSDF(account);
+  });
+
+
 signedCmd("test-coin-balances")
   .description('Get FakeMoneyA (FMA) and FakeMoneyB (FMB) balances for the signing account.')
   .action(async (_, cmd) => {
@@ -164,6 +173,7 @@ signedCmd("test-coin-balances")
     }
     prettyPrint("Coin Balances", balances);
   });
+
 
 signedCmd("init-ferum")
   .action(async (_, cmd) => {
