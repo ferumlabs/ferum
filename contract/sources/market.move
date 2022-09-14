@@ -1254,6 +1254,112 @@ module ferum::market {
     }
 
     #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x3)]
+    fun test_limit_buy_execute_fully_against_limit(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook, UserMarketInfo {
+        // Tests that limit buy order executes completely against limit sell order.
+
+        account::create_account_for_test(address_of(owner));
+        account::create_account_for_test(address_of(user1));
+        account::create_account_for_test(address_of(user2));
+        setup_fake_coins(owner, user1, 20000000000, 8);
+        register_fma(owner, user2, 20000000000);
+        register_fmb(owner, user2, 20000000000);
+        setup_market_for_test<FMA, FMB>(owner, aptos);
+
+        // Book setup.
+        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_clordid()); // BUY 10 FMA @ 1 FMB
+        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 20000, 10000, empty_clordid()); // BUY 1 FMA @ 2 FMB
+        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 100000, 10000, empty_clordid()); // BUY 1 FMA @ 10 FMB
+
+        let targetSellID = add_limit_order<FMA, FMB>(user2, SIDE_SELL, 200000, 100000, empty_clordid()); // SELL 10 FMA @ 20 FMB
+        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 210000, 10000, empty_clordid()); // SELL 1 FMA @ 21 FMB
+        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 250000, 10000, empty_clordid()); // SELL 1 FMA @ 25 FMB
+
+        // BUY 10 FMA at 20 FMB.
+        let orderID = add_limit_order<FMA, FMB>(
+            user1,
+            SIDE_BUY,
+            200000,
+            100000,
+            empty_clordid(),
+        );
+
+        // Verify user1.
+        {
+            let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
+            let order = get_order<FMA, FMB>(book, orderID);
+            assert!(order.metadata.status == STATUS_FILLED, 0);
+            assert!(coin::value(&order.buyCollateral) == 0, 0);
+            assert!(coin::value(&order.sellCollateral) == 0, 0);
+            assert!(coin::balance<FMB>(address_of(user1)) == 0, 0);
+            assert!(coin::balance<FMA>(address_of(user1)) == 21000000000, 0);
+        };
+
+        // Verify user2.
+        {
+            let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
+            let order = get_order<FMA, FMB>(book, targetSellID);
+            assert!(order.metadata.status == STATUS_FILLED, 0);
+            assert!(coin::value(&order.buyCollateral) == 0, 0);
+            assert!(coin::value(&order.sellCollateral) == 0, 0);
+            assert!(coin::balance<FMB>(address_of(user2)) == 40000000000, 0);
+            assert!(coin::balance<FMA>(address_of(user2)) == 19000000000, 0);
+        };
+    }
+
+    #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x3)]
+    fun test_market_buy_execute_fully_against_limit(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook, UserMarketInfo {
+        // Tests that market buy order executes completely against limit sell order.
+
+        account::create_account_for_test(address_of(owner));
+        account::create_account_for_test(address_of(user1));
+        account::create_account_for_test(address_of(user2));
+        setup_fake_coins(owner, user1, 20000000000, 8);
+        register_fma(owner, user2, 20000000000);
+        register_fmb(owner, user2, 20000000000);
+        setup_market_for_test<FMA, FMB>(owner, aptos);
+
+        // Book setup.
+        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_clordid()); // BUY 10 FMA @ 1 FMB
+        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 20000, 10000, empty_clordid()); // BUY 1 FMA @ 2 FMB
+        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 100000, 10000, empty_clordid()); // BUY 1 FMA @ 10 FMB
+
+        let targetSellID = add_limit_order<FMA, FMB>(user2, SIDE_SELL, 200000, 100000, empty_clordid()); // SELL 10 FMA @ 20 FMB
+        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 210000, 10000, empty_clordid()); // SELL 1 FMA @ 21 FMB
+        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 250000, 10000, empty_clordid()); // SELL 1 FMA @ 25 FMB
+
+        // BUY 10 FMA for at most 200 FMB.
+        let orderID = add_market_order<FMA, FMB>(
+            user1,
+            SIDE_BUY,
+            100000,
+            20000000000,
+            empty_clordid(),
+        );
+
+        // Verify market order user.
+        {
+            let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
+            let order = get_order<FMA, FMB>(book, orderID);
+            assert!(order.metadata.status == STATUS_FILLED, 0);
+            assert!(coin::value(&order.buyCollateral) == 0, 0);
+            assert!(coin::value(&order.sellCollateral) == 0, 0);
+            assert!(coin::balance<FMB>(address_of(user1)) == 0, 0);
+            assert!(coin::balance<FMA>(address_of(user1)) == 21000000000, 0);
+        };
+
+        // Verify limit order user.
+        {
+            let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
+            let order = get_order<FMA, FMB>(book, targetSellID);
+            assert!(order.metadata.status == STATUS_FILLED, 0);
+            assert!(coin::value(&order.buyCollateral) == 0, 0);
+            assert!(coin::value(&order.sellCollateral) == 0, 0);
+            assert!(coin::balance<FMB>(address_of(user2)) == 40000000000, 0);
+            assert!(coin::balance<FMA>(address_of(user2)) == 19000000000, 0);
+        };
+    }
+
+    #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x3)]
     fun test_market_sell_execute_against_limit(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook, UserMarketInfo {
         // Tests that market sell order execute against limit orders.
 
