@@ -469,6 +469,11 @@ module ferum::market {
 
         // If there are no orders in any one sides, we can return.
         if (vector::length(buys) == 0 || vector::length(sells) == 0) {
+            // Update the price before we do return.
+            let data = get_quote(book);
+            emit_event(&mut book.priceUpdateEvents, PriceUpdateEvent{
+                data,
+            });
             return
         };
 
@@ -476,7 +481,7 @@ module ferum::market {
 
         clean_orders(book);
 
-        // Update the price.
+        // Update the price before returning.
         let data = get_quote(book);
         emit_event(&mut book.priceUpdateEvents, PriceUpdateEvent{
             data,
