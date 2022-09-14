@@ -52,12 +52,12 @@ module ferum::market {
 
     const STATUS_PENDING: u8 = 1;
     const STATUS_CANCELLED: u8 = 2;
-    const STATUS_PARTIALLY_FILLED: u8 = 2;
-    const STATUS_FILLED: u8 = 3;
+    const STATUS_PARTIALLY_FILLED: u8 = 3;
+    const STATUS_FILLED: u8 = 4;
 
-    const CANCEL_AGENT_NONE: u8 = 1;
-    const CANCEL_AGENT_IOC: u8 = 2;
-    const CANCEL_AGENT_USER: u8 = 3;
+    const CANCEL_AGENT_NONE: u8 = 0;
+    const CANCEL_AGENT_IOC: u8 = 1;
+    const CANCEL_AGENT_USER: u8 = 2;
 
     //
     // Constants.
