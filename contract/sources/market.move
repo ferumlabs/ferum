@@ -122,6 +122,8 @@ module ferum::market {
         iDecimals: u8,
         // Number of decimals for the quote coin.
         qDecimals: u8,
+        // Structure describing the fees for this market.
+        fees: FeeStructure,
         // Finalize order events for this market.
         finalizeEvents: EventHandle<FinalizeEvent>,
         // Execution events for this market.
@@ -141,6 +143,19 @@ module ferum::market {
         minAsk: FixedPoint64,
         askSize: FixedPoint64,
         timestampMicroSeconds: u64
+    }
+
+    struct FeeStructure has store {
+        takerFeeBps: FixedPoint64,
+        makerFeeBps: FixedPoint64,
+        custodianFeeBps: FixedPoint64,
+        tiers: vector<FeeTier>,
+    }
+
+    struct FeeTier has store {
+        maxFerumTokens: u128,
+        makerFeeBps: FixedPoint64,
+        takerFeeBps: FixedPoint64,
     }
 
     //
@@ -204,6 +219,13 @@ module ferum::market {
         let createOrderEvents = new_event_handle<CreateEvent>(owner);
         let executionEvents = new_event_handle<ExecutionEvent>(owner);
         let priceUpdateEvents = new_event_handle<PriceUpdateEvent>(owner);
+        // TODO: add facility for setting fee structures for a market.
+        let fees = FeeStructure{
+            takerFeeBps: fixed_point_64::zero(),
+            makerFeeBps: fixed_point_64::zero(),
+            custodianFeeBps: fixed_point_64::zero(),
+            tiers: vector::empty(),
+        };
 
         let book = OrderBook<I, Q>{
             marketOrders: vector::empty(),
@@ -213,6 +235,7 @@ module ferum::market {
             finalizedOrderMap: table::new<OrderID, Order<I, Q>>(),
             iDecimals: instrumentDecimals,
             qDecimals: quoteDecimals,
+            fees,
             finalizeEvents,
             createOrderEvents,
             executionEvents,
@@ -581,7 +604,7 @@ module ferum::market {
             minAskMut.metadata.remainingQty = fixed_point_64::sub(minAskMut.metadata.remainingQty, executedQty);
 
             // Give the midpoint for the price.
-            // TODO: add fee.
+            // TODO: compute feed using market fee structure.
             let price = fixed_point_64::divide_round_up(
                 fixed_point_64::add(minAskPrice, maxBidPrice),
                 fixed_point_64::from_u64(2, 0),
