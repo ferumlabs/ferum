@@ -4,7 +4,7 @@ version = "0.0.0"
 
 [dependencies]
 AptosFramework = { git = "https://github.com/aptos-labs/aptos-core.git", subdir = "aptos-move/framework/aptos-framework/", rev = "devnet" }
-FerumSTD = { git = "https://github.com/ferum-dex/ferum-std.git", rev = "devnet" }
+FerumSTD = { git = "https://github.com/ferum-dex/ferum-std.git", rev = "main" }
 
 [addresses]
-# ferum needs to be defined when publishing the module.
+ferum="0xfdd47cab4c9a40815a908f253be6258ba56fc6508f4e330b09ba8d7290c0b3f0"
