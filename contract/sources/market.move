@@ -143,10 +143,10 @@ module ferum::market {
     struct OrderBook<phantom I, phantom Q> has key, store {
         // Order IDs of marker orders.
         marketOrders: vector<OrderID>,
-        // Order IDs stored in order of decreasing price.
-        sells_tree: red_black_tree::Tree<OrderID>,
-        // Order IDs stored in order of increasing price.
-        buys_tree: red_black_tree::Tree<OrderID>,
+        // Order IDs stored in an RB tree.
+        sells: red_black_tree::Tree<OrderID>,
+        // Order IDs stored in an RB tree.
+        buys: red_black_tree::Tree<OrderID>,
         // Map of all non finalized orders.
         orderMap: table::Table<OrderID, Order<I, Q>>,
         // Map of all finalized orders.
@@ -254,8 +254,8 @@ module ferum::market {
 
         let book = OrderBook<I, Q>{
             marketOrders: vector::empty(),
-            sells_tree: red_black_tree::new<OrderID>(),
-            buys_tree: red_black_tree::new<OrderID>(),
+            sells: red_black_tree::new<OrderID>(),
+            buys: red_black_tree::new<OrderID>(),
             orderMap: table::new<OrderID, Order<I, Q>>(),
             finalizedOrderMap: table::new<OrderID, Order<I, Q>>(),
             iDecimals: instrumentDecimals,
@@ -571,9 +571,9 @@ module ferum::market {
         if (order.metadata.type == TYPE_MARKET) {
             vector::push_back(&mut book.marketOrders, order.id);
         } else if (order.metadata.side == SIDE_BUY) {
-            red_black_tree::insert(&mut book.buys_tree, fixed_point_64::value(order.metadata.price), order.id);
+            red_black_tree::insert(&mut book.buys, fixed_point_64::value(order.metadata.price), order.id);
         } else {
-            red_black_tree::insert(&mut book.sells_tree, fixed_point_64::value(order.metadata.price), order.id);
+            red_black_tree::insert(&mut book.sells, fixed_point_64::value(order.metadata.price), order.id);
         };
 
         let orderMap = &mut book.orderMap;
@@ -583,8 +583,8 @@ module ferum::market {
     }
 
     fun process_orders<I, Q>(book: &mut OrderBook<I, Q>) {
-        let buysTree = &mut book.buys_tree;
-        let sellsTree = &mut book.sells_tree;
+        let buysTree = &mut book.buys;
+        let sellsTree = &mut book.sells;
         let marketOrders = &book.marketOrders;
         let orderMap = &mut book.orderMap;
         // Process market orders first.
@@ -616,7 +616,7 @@ module ferum::market {
         clean_market_orders(&mut book.orderMap, &mut book.finalizedOrderMap, &mut book.marketOrders);
 
         // If there are no orders in any one side, we can return.
-        if (is_empty(&book.buys_tree) || is_empty(&book.sells_tree)) {
+        if (is_empty(&book.buys) || is_empty(&book.sells)) {
             // Update the price before we do return.
             let data = get_quote(book);
             emit_event(&mut book.priceUpdateEvents, PriceUpdateEvent{
@@ -657,17 +657,17 @@ module ferum::market {
         let timestampMicroSeconds = timestamp::now_microseconds();
 
         // Iterate until either of the sides is empty or until the lowest ask is higher than the highest bid.
-        while (!(is_empty(&book.sells_tree) || is_empty(&book.buys_tree)) &&
-               max_key(&book.buys_tree) >= min_key(&book.sells_tree)) {
+        while (!(is_empty(&book.sells) || is_empty(&book.buys)) &&
+               max_key(&book.buys) >= min_key(&book.sells)) {
 
-            let maxBidKey = max_key(&book.buys_tree);
+            let maxBidKey = max_key(&book.buys);
             let maxBidPrice = fixed_point_64::new_u128(maxBidKey);
-            let maxBidID = *red_black_tree::first_value_at(&book.buys_tree, maxBidKey);
+            let maxBidID = *red_black_tree::first_value_at(&book.buys, maxBidKey);
             let maxBid = table::borrow(orderMap, maxBidID);
 
-            let minAskKey = min_key(&book.sells_tree);
+            let minAskKey = min_key(&book.sells);
             let minAskPrice = fixed_point_64::new_u128(minAskKey);
-            let minAskID = *red_black_tree::first_value_at(&book.sells_tree, minAskKey);
+            let minAskID = *red_black_tree::first_value_at(&book.sells, minAskKey);
             let minAsk = table::borrow(orderMap, minAskID);
 
             // Shouldn't need to worry about over executing collateral because the minAsk price is less than the
@@ -726,12 +726,12 @@ module ferum::market {
 
             if (maxBidFinalized) {
                 clean_order(maxBidID, orderMap, &mut book.finalizedOrderMap);
-                red_black_tree::delete_value(&mut book.buys_tree, maxBidKey, maxBidID);
+                red_black_tree::delete_value(&mut book.buys, maxBidKey, maxBidID);
             };
 
             if (minAskFinalized) {
                 clean_order(minAskID, orderMap, &mut book.finalizedOrderMap);
-                red_black_tree::delete_value(&mut book.sells_tree, minAskKey, minAskID);
+                red_black_tree::delete_value(&mut book.sells, minAskKey, minAskID);
             };
         };
     }
@@ -900,14 +900,14 @@ module ferum::market {
         let minAsk = zero;
         let maxBid = zero;
 
-        if (!is_empty(&book.buys_tree)) {
-            maxBid = fixed_point_64::new_u128(red_black_tree::max_key(&book.buys_tree));
-            bidSize = get_size(&book.orderMap, &book.buys_tree, maxBid);
+        if (!is_empty(&book.buys)) {
+            maxBid = fixed_point_64::new_u128(red_black_tree::max_key(&book.buys));
+            bidSize = get_size(&book.orderMap, &book.buys, maxBid);
         };
 
-        if (!is_empty(&book.sells_tree)) {
-            minAsk = fixed_point_64::new_u128(red_black_tree::min_key(&book.sells_tree));
-            askSize = get_size(&book.orderMap, &book.sells_tree, minAsk);
+        if (!is_empty(&book.sells)) {
+            minAsk = fixed_point_64::new_u128(red_black_tree::min_key(&book.sells));
+            askSize = get_size(&book.orderMap, &book.sells, minAsk);
         };
 
         Quote {
