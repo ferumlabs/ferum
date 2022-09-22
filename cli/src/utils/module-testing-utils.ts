@@ -7,7 +7,6 @@ export function testModuleUsingCLI(
   accountFrom: AptosAccount,
   moduleDir: string,
 ): Promise<number> {
-  const pkeyHex = accountFrom.toPrivateKeyObject().privateKeyHex;
   const dirFlag = `--package-dir ${moduleDir}`;
   const addrFlag = `--named-addresses ferum=${accountFrom.address()}`;
 
