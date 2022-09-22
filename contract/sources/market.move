@@ -13,10 +13,9 @@ module ferum::market {
     #[test_only]
     use ferum::ferum::{init_ferum, register_custodian, drop_custodian_capability};
     use ferum_std::fixed_point_64::{Self, FixedPoint64};
-    use ferum::list;
     #[test_only]
     use ferum::coin_test_helpers::{FMA, FMB, setup_fake_coins, register_fmb, register_fma, create_fake_coins};
-    use ferum::utils::min_u8;
+    use ferum_std::math::min_u8;
     use ferum_std::red_black_tree;
     use ferum_std::red_black_tree::{Tree, has_next_value, get_next_value, is_empty, max_key, min_key};
     #[test_only]
@@ -547,54 +546,6 @@ module ferum::market {
     ): &Order<I, Q> {
         let orderID = *vector::borrow(list, i);
         table::borrow(orderMap, orderID)
-    }
-
-    fun add_order_to_list<I, Q>(
-        order: &Order<I, Q>,
-        orderList: &mut vector<OrderID>,
-        orderMap: &table::Table<OrderID, Order<I, Q>>,
-    ) {
-        if (vector::length(orderList) == 0) {
-            vector::push_back(orderList, order.id);
-            return
-        };
-
-        let orderMetadata = &order.metadata;
-
-        // We're doing an insertion sort here! This is where we want to replace via a tree!
-        let i = vector::length(orderList) - 1;
-        loop {
-            let orderID = *vector::borrow(orderList, i);
-            let listOrder = table::borrow(orderMap, orderID);
-            let listOrderMetadata = &listOrder.metadata;
-
-            if (orderMetadata.side == SIDE_BUY) {
-                if (fixed_point_64::lte(listOrderMetadata.price, orderMetadata.price)) {
-                    list::insert(orderList, i+1, order.id);
-                    break
-                }
-            }
-            else {
-                if (fixed_point_64::gte(listOrderMetadata.price, orderMetadata.price)) {
-                    list::insert(orderList, i+1, order.id);
-                    break
-                }
-            };
-
-            if (i == 0) {
-                list::insert(orderList, 0, order.id);
-                break
-            };
-            i = i - 1;
-        };
-    }
-
-    fun min_ask_price<I, Q>(book: &OrderBook<I, Q>) : FixedPoint64 {
-        fixed_point_64::new_u128(min_key(&book.sells_tree))
-    }
-
-    fun max_bid_price<I, Q>(book: &OrderBook<I, Q>) : FixedPoint64 {
-        fixed_point_64::new_u128(max_key(&book.buys_tree))
     }
 
     fun execute_limit_orders<I, Q>(book: &mut OrderBook<I, Q>) {
