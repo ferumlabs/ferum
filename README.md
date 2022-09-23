@@ -1,8 +1,11 @@
-![github](https://user-images.githubusercontent.com/111548547/192033731-570e1c6f-894f-4620-8cfd-b87a14cfb3c7.png)
+![github](https://user-images.githubusercontent.com/111548547/192037827-733a5483-905a-4964-91d1-7e4cbf03fae9.png)
 
-# ferum
+[![Generic badge](https://img.shields.io/badge/ferum-docs-blue.svg)](https://ferum.gitbook.io/ferum-dex/) ![](https://img.shields.io/discord/1014040797487824896?label=discord) ![](https://img.shields.io/badge/liquidity-high-brightgreen)
 
-Ferum is an on-chain order book offering unprecedented control to liquidity providers on @AptosLabs ecosystem! 
+
+# Ferum
+
+Ferum is an on-chain order book offering unprecedented control to liquidity providers on [Aptos Ecosystem](https://twitter.com/AptosLabs)! 
 For documentation on getting-started, better understanding of the architecture, and partnerships, please refer 
 to [Ferum's Official Documentation](https://ferum.gitbook.io/ferum-dex/). 
 
@@ -12,7 +15,7 @@ Documentation below will mostly cover instructions for contributions & pull requ
 
 1. A good reference to the Move Language is the [Move Book](https://move-language.github.io/move/introduction.html).
 2. The easiest way to publish a module is through the [Aptos CLI](https://aptos.dev/cli-tools/aptos-cli-tool/install-aptos-cli).
-3. For developer support, join **🛠 #dev-discussions** group in http://discord.gg/ferum.
+3. For developer support, join **🛠 #dev-discussions** group in [discord](http://discord.gg/ferum.).
 4. A good read on [building super fast order books](https://gist.github.com/halfelf/db1ae032dc34278968f8bf31ee999a25?permalink_comment_id=3176518).
 
 ## Contributing
