@@ -431,13 +431,17 @@ module ferum::market {
         qty: FixedPoint64,
         maxCollateralAmt: u64,
     ): (coin::Coin<Q>, coin::Coin<I>) {
-
         if (side == SIDE_BUY) {
             (coin::extract<Q>(quoteBalance, maxCollateralAmt), coin::zero<I>())
         } else {
             let coinDecimals = coin::decimals<I>();
             (coin::zero<Q>(), coin::extract<I>(instrumentBalance,  fixed_point_64::to_u64(qty, coinDecimals)))
         }
+    }
+
+    public fun get_market_decimals<I, Q>(): (u8, u8) acquires OrderBook {
+        let book = borrow_global<OrderBook<I, Q>>(get_market_addr<I, Q>());
+        (book.iDecimals, book.qDecimals)
     }
 
     //
