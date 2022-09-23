@@ -12,7 +12,7 @@ module ferum::market {
     use ferum::ferum::{register_market, get_market_addr, CustodianCapability, get_custodian_address, is_custodian_address_valid};
     #[test_only]
     use ferum::ferum::{init_ferum, register_custodian, drop_custodian_capability};
-    use ferum_std::fixed_point_64::{Self, FixedPoint64};
+    use ferum_std::fixed_point_64::{Self, FixedPoint64, from_u64};
     #[test_only]
     use ferum::coin_test_helpers::{FMA, FMB, setup_fake_coins, register_fmb, register_fma, create_fake_coins};
     use ferum_std::math::min_u8;
@@ -274,7 +274,11 @@ module ferum::market {
         qty: u64,
         clientOrderID: String,
     ) acquires OrderBook, UserMarketInfo {
-        add_limit_order<I, Q>(owner, side, price, qty, clientOrderID);
+        let book = borrow_global<OrderBook<I, Q>>(get_market_addr<I, Q>());
+        let priceFixedPoint = from_u64(price, book.qDecimals);
+        let qtyFixedPoint = from_u64(qty, book.iDecimals);
+
+        add_limit_order<I, Q>(owner, side, priceFixedPoint, qtyFixedPoint, clientOrderID);
     }
 
     public entry fun add_market_order_entry<I, Q>(
@@ -302,8 +306,8 @@ module ferum::market {
     public fun add_limit_order<I, Q>(
         owner: &signer,
         side: u8,
-        price: u64,
-        qty: u64,
+        price: FixedPoint64,
+        qty: FixedPoint64,
         clientOrderID: String,
     ): OrderID acquires OrderBook, UserMarketInfo {
         add_limit_order_internal<I, Q>(owner, side, price, qty, clientOrderID, @0x0, coin::zero(), coin::zero())
@@ -315,13 +319,23 @@ module ferum::market {
         buyCollateral: coin::Coin<Q>,
         sellCollateral: coin::Coin<I>,
         side: u8,
-        price: u64,
-        qty: u64,
+        price: FixedPoint64,
+        qty: FixedPoint64,
         clientOrderID: String,
     ): OrderID acquires OrderBook, UserMarketInfo {
         let custodianAddress = get_custodian_address(custodianCap);
         assert!(is_custodian_address_valid(custodianAddress), ERR_INVALID_CUSTODIAN_ADDRESS);
-        add_limit_order_internal<I, Q>(owner, side, price, qty, clientOrderID, custodianAddress, buyCollateral, sellCollateral)
+
+        add_limit_order_internal<I, Q>(
+            owner,
+            side,
+            price,
+            qty,
+            clientOrderID,
+            custodianAddress,
+            buyCollateral,
+            sellCollateral,
+        )
     }
 
     public fun add_market_order<I, Q>(
@@ -430,8 +444,8 @@ module ferum::market {
     fun add_limit_order_internal<I, Q>(
         owner: &signer,
         side: u8,
-        price: u64,
-        qty: u64,
+        price: FixedPoint64,
+        qty: FixedPoint64,
         clientOrderID: String,
         custodianAddress: address,
         buyCollateral: coin::Coin<Q>, // Provided if order is placed by a custodian. Zero otherwise.
@@ -445,17 +459,14 @@ module ferum::market {
         let ownerAddr = address_of(owner);
         let book = borrow_global_mut<OrderBook<I, Q>>(bookAddr);
 
-        let priceFixedPoint = fixed_point_64::from_u64(price, book.qDecimals);
-        let qtyFixedPoint = fixed_point_64::from_u64(qty, book.iDecimals);
-
         if (!is_custodian_address_valid(custodianAddress)) {
             coin::destroy_zero(buyCollateral);
             coin::destroy_zero(sellCollateral);
             (buyCollateral, sellCollateral) = obtain_limit_order_collateral_internal<I, Q>(
                 owner,
                 side,
-                priceFixedPoint,
-                qtyFixedPoint,
+                price,
+                qty,
             );
         };
 
@@ -469,10 +480,10 @@ module ferum::market {
                 instrumentType: type_info::type_of<I>(),
                 quoteType: type_info::type_of<Q>(),
                 side,
-                price: priceFixedPoint,
-                remainingQty: qtyFixedPoint,
+                price,
+                remainingQty: qty,
                 type: TYPE_LIMIT,
-                originalQty: qtyFixedPoint,
+                originalQty: qty,
                 status: STATUS_PENDING,
                 clientOrderID,
                 executionCounter: 0,
@@ -498,7 +509,7 @@ module ferum::market {
         validate_coins<I, Q>();
         create_user_info_if_needed<I, Q>(owner);
         let book = borrow_global_mut<OrderBook<I, Q>>(bookAddr);
-        let qtyFixedPoint = fixed_point_64::from_u64(qty, book.iDecimals);
+        let qtyFixedPoint = from_u64(qty, book.iDecimals);
         let ownerAddr = address_of(owner);
 
         if (!is_custodian_address_valid(custodianAddress)) {
@@ -694,7 +705,7 @@ module ferum::market {
             // TODO: compute feed using market fee structure.
             let price = fixed_point_64::divide_round_up(
                 fixed_point_64::add(minAskPrice, maxBidPrice),
-                fixed_point_64::from_u64(2, 0),
+                from_u64(2, 0),
             );
             // Its possible for the midpoint to have more decimal places than the market allows for quotes.
             // In this case, round up.
@@ -1014,10 +1025,10 @@ module ferum::market {
     fun get_remaining_collateral<I, Q>(order: &Order<I, Q>): FixedPoint64 {
         if (order.metadata.side == SIDE_BUY) {
             let coinDecimals = coin::decimals<Q>();
-            fixed_point_64::from_u64(coin::value(&order.buyCollateral), coinDecimals)
+            from_u64(coin::value(&order.buyCollateral), coinDecimals)
         } else {
             let coinDecimals = coin::decimals<I>();
-            fixed_point_64::from_u64(coin::value(&order.sellCollateral), coinDecimals)
+            from_u64(coin::value(&order.sellCollateral), coinDecimals)
         }
     }
 
@@ -1239,8 +1250,22 @@ module ferum::market {
         setup_fake_coins(owner, user, 10000000000, 8);
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
-        let buyID = add_limit_order<FMA, FMB>(user, SIDE_BUY, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
-        let sellID = add_limit_order<FMA, FMB>(user, SIDE_SELL, 200000, 100000, empty_client_order_id()); // SELL 10 FMA @ 20 FMB
+        // BUY 10 FMA @ 1 FMB
+        let buyID = add_limit_order<FMA, FMB>(
+            user,
+            SIDE_BUY,
+            from_u64(10000, 4),
+            from_u64(100000, 4),
+            empty_client_order_id(),
+        );
+        // SELL 10 FMA @ 20 FMB
+        let sellID = add_limit_order<FMA, FMB>(
+            user,
+            SIDE_SELL,
+            from_u64(200000, 4),
+            from_u64(100000, 4),
+            empty_client_order_id(),
+        );
 
         cancel_order_entry<FMA, FMB>(user, buyID.counter);
         {
@@ -1275,8 +1300,8 @@ module ferum::market {
 
         let cap = register_custodian(custodian);
         let side = SIDE_BUY;
-        let price = fixed_point_64::from_u64(1, 0);
-        let qty = fixed_point_64::from_u64(1, 0);
+        let price = from_u64(1, 0);
+        let qty = from_u64(1, 0);
 
         let instrumentBalance = coin::withdraw<FMA>(user, 10000000000);
         let quoteBalance = coin::withdraw<FMB>(user, 10000000000);
@@ -1298,8 +1323,8 @@ module ferum::market {
             buyCollateral,
             sellCollateral,
             SIDE_BUY,
-            10000,
-            100000,
+            from_u64(10000, 4),
+            from_u64(100000, 4),
             empty_client_order_id(),
         );
 
@@ -1330,8 +1355,8 @@ module ferum::market {
 
         let cap = register_custodian(custodian);
         let side = SIDE_BUY;
-        let price = fixed_point_64::from_u64(1, 0);
-        let qty = fixed_point_64::from_u64(1, 0);
+        let price = from_u64(1, 0);
+        let qty = from_u64(1, 0);
 
         let instrumentBalance = coin::withdraw<FMA>(user, 10000000000);
         let quoteBalance = coin::withdraw<FMB>(user, 10000000000);
@@ -1353,8 +1378,8 @@ module ferum::market {
             buyCollateral,
             sellCollateral,
             SIDE_BUY,
-            10000,
-            100000,
+            from_u64(10000, 4),
+            from_u64(100000, 4),
             empty_client_order_id(),
         );
 
@@ -1375,7 +1400,14 @@ module ferum::market {
 
         let cap = register_custodian(custodian);
 
-        let buyID = add_limit_order<FMA, FMB>(user, SIDE_BUY, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
+        // BUY 10 FMA @ 1 FMB
+        let buyID = add_limit_order<FMA, FMB>(
+            user,
+            SIDE_BUY,
+            from_u64(10000, 4),
+            from_u64(100000, 4),
+            empty_client_order_id(),
+        );
 
         cancel_order_as_custodian<FMA, FMB>(custodian, &cap, address_of(user), buyID.counter);
 
@@ -1392,7 +1424,14 @@ module ferum::market {
         setup_fake_coins(owner, user1, 10000000000, 8);
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
-        let buyID = add_limit_order<FMA, FMB>(user1, SIDE_BUY, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
+        // BUY 10 FMA @ 1 FMB
+        let buyID = add_limit_order<FMA, FMB>(
+            user1,
+            SIDE_BUY,
+            from_u64(10000, 4),
+            from_u64(100000, 4),
+            empty_client_order_id(),
+        );
 
         cancel_order_entry<FMA, FMB>(user2, buyID.counter);
 
@@ -1453,13 +1492,19 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
-        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 100000, 10000, empty_client_order_id()); // BUY 1 FMA @ 10 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_client_order_id(), ); // BUY 10 FMA @ 1 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 20000, 10000, empty_client_order_id(), ); // BUY 1 FMA @ 2 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 100000, 10000, empty_client_order_id(), ); // BUY 1 FMA @ 10 FMB
 
-        let targetSellID = add_limit_order<FMA, FMB>(user2, SIDE_SELL, 200000, 100000, empty_client_order_id()); // SELL 10 FMA @ 20 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
+        let targetSellID = add_limit_order<FMA, FMB>(  // SELL 10 FMA @ 20 FMB
+            user2,
+            SIDE_SELL,
+            from_u64(200000, 4),
+            from_u64(100000, 4),
+            empty_client_order_id(),
+        );
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 210000, 10000, empty_client_order_id(), ); // SELL 1 FMA @ 21 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 250000, 10000, empty_client_order_id(), );  // SELL 1 FMA @ 25 FMB
 
         // BUY 1 FMA spending at most 20 FMB.
         let orderID = add_market_order<FMA, FMB>(
@@ -1506,20 +1551,26 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
-        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 100000, 10000, empty_client_order_id()); // BUY 1 FMA @ 10 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 100000, 10000, empty_client_order_id()); // BUY 1 FMA @ 10 FMB
 
-        let targetSellID = add_limit_order<FMA, FMB>(user2, SIDE_SELL, 200000, 100000, empty_client_order_id()); // SELL 10 FMA @ 20 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
+        let targetSellID = add_limit_order<FMA, FMB>( // SELL 10 FMA @ 20 FMB
+            user2,
+            SIDE_SELL,
+            from_u64(200000, 4),
+            from_u64(100000, 4),
+            empty_client_order_id(),
+        );
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
 
         // BUY 10 FMA at 20 FMB.
         let orderID = add_limit_order<FMA, FMB>(
             user1,
             SIDE_BUY,
-            200000,
-            100000,
+            from_u64(200000, 4),
+            from_u64(100000, 4),
             empty_client_order_id(),
         );
 
@@ -1559,13 +1610,19 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
-        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 100000, 10000, empty_client_order_id()); // BUY 1 FMA @ 10 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 100000, 10000, empty_client_order_id()); // BUY 1 FMA @ 10 FMB
 
-        let targetSellID = add_limit_order<FMA, FMB>(user2, SIDE_SELL, 200000, 100000, empty_client_order_id()); // SELL 10 FMA @ 20 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
+        let targetSellID = add_limit_order<FMA, FMB>(  // SELL 10 FMA @ 20 FMB
+            user2,
+            SIDE_SELL,
+            from_u64(200000, 4),
+            from_u64(100000, 4),
+            empty_client_order_id(),
+        );
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
 
         // BUY 10 FMA for at most 200 FMB.
         let orderID = add_market_order<FMA, FMB>(
@@ -1612,13 +1669,19 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
-        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
-        let targetBuyID = add_limit_order<FMA, FMB>(user2, SIDE_BUY, 100000, 10000, empty_client_order_id()); // BUY 1 FMA @ 10 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
+        let targetBuyID = add_limit_order<FMA, FMB>( // BUY 1 FMA @ 10 FMB
+            user2,
+            SIDE_BUY,
+            from_u64(100000, 4),
+            from_u64(10000, 4),
+            empty_client_order_id(),
+        );
 
-        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 200000, 100000, empty_client_order_id());  // SELL 10 FMA @ 20 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
+        add_limit_order_entry<FMA, FMB>(owner,SIDE_SELL,200000,100000,empty_client_order_id());  // SELL 10 FMA @ 20 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
 
         // SELL 1 FMA.
         let orderID = add_market_order<FMA, FMB>(
@@ -1665,13 +1728,31 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
-        let targetBuyIDC = add_limit_order<FMA, FMB>(user2, SIDE_BUY, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
-        let targetBuyIDB = add_limit_order<FMA, FMB>(user2, SIDE_BUY, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
-        let targetBuyIDA = add_limit_order<FMA, FMB>(user2, SIDE_BUY, 100000, 10000, empty_client_order_id()); // BUY 1 FMA @ 10 FMB
+        let targetBuyIDC = add_limit_order<FMA, FMB>( // BUY 10 FMA @ 1 FMB
+            user2,
+            SIDE_BUY,
+            from_u64(10000, 4),
+            from_u64(100000, 4),
+            empty_client_order_id(),
+        );
+        let targetBuyIDB = add_limit_order<FMA, FMB>( // BUY 1 FMA @ 2 FMB
+            user2,
+            SIDE_BUY,
+            from_u64(20000, 4),
+            from_u64(10000, 4),
+            empty_client_order_id(),
+        );
+        let targetBuyIDA = add_limit_order<FMA, FMB>( // BUY 1 FMA @ 10 FMB
+            user2,
+            SIDE_BUY,
+            from_u64(100000, 4),
+            from_u64(10000, 4),
+            empty_client_order_id(),
+        );
 
-        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 200000, 100000, empty_client_order_id());  // SELL 10 FMA @ 20 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 200000, 100000, empty_client_order_id());  // SELL 10 FMA @ 20 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
 
         // SELL 5 FMA.
         let orderID = add_market_order<FMA, FMB>(
@@ -1731,13 +1812,31 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
-        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 100000, 10000, empty_client_order_id()); // BUY 1 FMA @ 10 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 100000, 10000, empty_client_order_id()); // BUY 1 FMA @ 10 FMB
 
-        let targetSellIDA = add_limit_order<FMA, FMB>(user2, SIDE_SELL, 200000, 100000, empty_client_order_id());  // SELL 10 FMA @ 20 FMB
-        let targetSellIDB = add_limit_order<FMA, FMB>(user2, SIDE_SELL, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
-        let targetSellIDC = add_limit_order<FMA, FMB>(user2, SIDE_SELL, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
+        let targetSellIDA = add_limit_order<FMA, FMB>(  // SELL 10 FMA @ 20 FMB
+            user2,
+            SIDE_SELL,
+            from_u64(200000, 4),
+            from_u64(100000, 4),
+            empty_client_order_id(),
+        );
+        let targetSellIDB = add_limit_order<FMA, FMB>( // SELL 1 FMA @ 21 FMB
+            user2,
+            SIDE_SELL,
+            from_u64(210000, 4),
+            from_u64(10000, 4),
+            empty_client_order_id(),
+        );
+        let targetSellIDC = add_limit_order<FMA, FMB>( // SELL 1 FMA @ 25 FMB
+            user2,
+            SIDE_SELL,
+            from_u64(250000, 4),
+            from_u64(10000, 4),
+            empty_client_order_id(),
+        );
 
         // BUY 12 FMA spending at most 360 FMB.
         let orderID = add_market_order<FMA, FMB>(
@@ -1797,11 +1896,17 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
-        let targetBuyIDA = add_limit_order<FMA, FMB>(user2, SIDE_BUY, 100000, 10000, empty_client_order_id()); // BUY 1 FMA @ 10 FMB
+        let targetBuyIDA = add_limit_order<FMA, FMB>( // BUY 1 FMA @ 10 FMB
+            user2,
+            SIDE_BUY,
+            from_u64(100000, 4),
+            from_u64(10000, 4),
+            empty_client_order_id(),
+        );
 
-        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 200000, 100000, empty_client_order_id());  // SELL 10 FMA @ 20 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 200000, 100000, empty_client_order_id());  // SELL 10 FMA @ 20 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
 
         // SELL 2 FMA.
         let orderID = add_market_order<FMA, FMB>(
@@ -1851,11 +1956,17 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
-        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 100000, 10000, empty_client_order_id()); // BUY 1 FMA @ 10 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 100000, 10000, empty_client_order_id()); // BUY 1 FMA @ 10 FMB
 
-        let targetSellIDA = add_limit_order<FMA, FMB>(user2, SIDE_SELL, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
+        let targetSellIDA = add_limit_order<FMA, FMB>( // SELL 1 FMA @ 25 FMB
+            user2,
+            SIDE_SELL,
+            from_u64(250000, 4),
+            from_u64(10000, 4),
+            empty_client_order_id(),
+        );
 
         // BUY 2 FMA spending at most 360 FMB.
         let orderID = add_market_order<FMA, FMB>(
@@ -1905,20 +2016,26 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
-        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 100000, 10000, empty_client_order_id()); // BUY 1 FMA @ 10 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 100000, 10000, empty_client_order_id()); // BUY 1 FMA @ 10 FMB
 
-        let targetSellID = add_limit_order<FMA, FMB>(user2, SIDE_SELL, 200000, 100000, empty_client_order_id()); // SELL 10 FMA @ 20 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
+        let targetSellID = add_limit_order<FMA, FMB>( // SELL 10 FMA @ 20 FMB
+            user2,
+            SIDE_SELL,
+            from_u64(200000, 4),
+            from_u64(100000, 4),
+            empty_client_order_id(),
+        );
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
 
         // BUY 1 FMA @ 20 FMB.
         let orderID = add_limit_order<FMA, FMB>(
             user1,
             SIDE_BUY,
-            200000,
-            10000,
+            from_u64(200000, 4),
+            from_u64(10000, 4),
             empty_client_order_id(),
         );
 
@@ -1958,20 +2075,26 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
-        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 95000, 10000, empty_client_order_id()); // BUY 1 FMA @ 9.5 FMB
-        let targetBuyID = add_limit_order<FMA, FMB>(user2, SIDE_BUY, 100000, 10000, empty_client_order_id()); // BUY 1 FMA @ 10 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 95000, 10000, empty_client_order_id()); // BUY 1 FMA @ 9.5 FMB
+        let targetBuyID = add_limit_order<FMA, FMB>( // BUY 1 FMA @ 10 FMB
+            user2,
+            SIDE_BUY,
+            from_u64(100000, 4),
+            from_u64(10000, 4),
+            empty_client_order_id(),
+        );
 
-        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 200000, 100000, empty_client_order_id()); // SELL 10 FMA @ 20 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 200000, 100000, empty_client_order_id()); // SELL 10 FMA @ 20 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
 
         // SELL 1 FMA @ 9 FMB.
         let orderID = add_limit_order<FMA, FMB>(
             user1,
             SIDE_SELL,
-            90000,
-            10000,
+            from_u64(90000, 4),
+            from_u64(10000, 4),
             empty_client_order_id(),
         );
 
@@ -2011,20 +2134,38 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
-        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 100000, 10000, empty_client_order_id()); // BUY 1 FMA @ 10 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 100000, 10000, empty_client_order_id()); // BUY 1 FMA @ 10 FMB
 
-        let targetSellIDA = add_limit_order<FMA, FMB>(user2, SIDE_SELL, 200000, 100000, empty_client_order_id()); // SELL 10 FMA @ 20 FMB
-        let targetSellIDB = add_limit_order<FMA, FMB>(user2, SIDE_SELL, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
-        let targetSellIDC = add_limit_order<FMA, FMB>(user2, SIDE_SELL, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
+        let targetSellIDA = add_limit_order<FMA, FMB>( // SELL 10 FMA @ 20 FMB
+            user2,
+            SIDE_SELL,
+            from_u64(200000, 4),
+            from_u64(100000, 4),
+            empty_client_order_id(),
+        );
+        let targetSellIDB = add_limit_order<FMA, FMB>( // SELL 1 FMA @ 21 FMB
+            user2,
+            SIDE_SELL,
+            from_u64(210000, 4),
+            from_u64(10000, 4),
+            empty_client_order_id(),
+        );
+        let targetSellIDC = add_limit_order<FMA, FMB>( // SELL 1 FMA @ 25 FMB
+            user2,
+            SIDE_SELL,
+            from_u64(250000, 4),
+            from_u64(10000, 4),
+            empty_client_order_id(),
+        );
 
         // BUY 11 FMA @ 22 FMB.
         let orderID = add_limit_order<FMA, FMB>(
             user1,
             SIDE_BUY,
-            220000,
-            110000,
+            from_u64(220000, 4),
+            from_u64(110000, 4),
             empty_client_order_id(),
         );
 
@@ -2076,20 +2217,38 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
-        let targetBuyIDC = add_limit_order<FMA, FMB>(user2, SIDE_BUY, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
-        let targetBuyIDB = add_limit_order<FMA, FMB>(user2, SIDE_BUY, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
-        let targetBuyIDA = add_limit_order<FMA, FMB>(user2, SIDE_BUY, 100000, 10000, empty_client_order_id()); // BUY 1 FMA @ 10 FMB
+        let targetBuyIDC = add_limit_order<FMA, FMB>( // BUY 10 FMA @ 1 FMB
+            user2,
+            SIDE_BUY,
+            from_u64(10000, 4),
+            from_u64(100000, 4),
+            empty_client_order_id(),
+        );
+        let targetBuyIDB = add_limit_order<FMA, FMB>( // BUY 1 FMA @ 2 FMB
+            user2,
+            SIDE_BUY,
+            from_u64(20000, 4),
+            from_u64(10000, 4),
+            empty_client_order_id(),
+        );
+        let targetBuyIDA = add_limit_order<FMA, FMB>( // BUY 1 FMA @ 10 FMB
+            user2,
+            SIDE_BUY,
+            from_u64(100000, 4),
+            from_u64(10000, 4),
+            empty_client_order_id(),
+        );
 
-        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 200000, 100000, empty_client_order_id()); // SELL 10 FMA @ 20 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 200000, 100000, empty_client_order_id()); // SELL 10 FMA @ 20 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
 
         // SELL 11 FMA @ 1.5 FMB.
         let orderID = add_limit_order<FMA, FMB>(
             user1,
             SIDE_SELL,
-            15000,
-            110000,
+            from_u64(15000, 4),
+            from_u64(110000, 4),
             empty_client_order_id(),
         );
 
@@ -2143,8 +2302,20 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
-        let buyID = add_limit_order<FMA, FMB>(user2, SIDE_BUY, 2, 2, empty_client_order_id()); // BUY 0.0002 FMA @ 0.0002 FMB
-        let sellID = add_limit_order<FMA, FMB>(user1, SIDE_SELL, 1, 1, empty_client_order_id()); // SELL 0.0001 FMA @ 0.0001 FMB
+        let buyID = add_limit_order<FMA, FMB>( // BUY 0.0002 FMA @ 0.0002 FMB
+            user2,
+            SIDE_BUY,
+            from_u64(2, 4),
+            from_u64(2, 4),
+            empty_client_order_id(),
+        );
+        let sellID = add_limit_order<FMA, FMB>( // SELL 0.0001 FMA @ 0.0001 FMB
+            user1,
+            SIDE_SELL,
+            from_u64(1, 4),
+            from_u64(1, 4),
+            empty_client_order_id(),
+        );
 
         // Note that the midpoint here does exceed the max allowed precision of the underlying quote coin but
         // we round up:
@@ -2187,12 +2358,12 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
-        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 1, 2, empty_client_order_id()); // BUY 0.0002 FMA @ 0.0001 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 2, 2, empty_client_order_id()); // BUY 0.0002 FMA @ 0.0002 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 2, 2, empty_client_order_id()); // BUY 0.0002 FMA @ 0.0002 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 3, 1, empty_client_order_id()); // SELL 0.0001 FMA @ 0.0003 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 3, 1, empty_client_order_id()); // SELL 0.0001 FMA @ 0.0003 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 4, 1, empty_client_order_id()); // SELL 0.0001 FMA @ 0.0004 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 1, 2, empty_client_order_id()); // BUY 0.0002 FMA @ 0.0001 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 2, 2, empty_client_order_id()); // BUY 0.0002 FMA @ 0.0002 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 2, 2, empty_client_order_id()); // BUY 0.0002 FMA @ 0.0002 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 3, 1, empty_client_order_id()); // SELL 0.0001 FMA @ 0.0003 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 3, 1, empty_client_order_id()); // SELL 0.0001 FMA @ 0.0003 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 4, 1, empty_client_order_id()); // SELL 0.0001 FMA @ 0.0004 FMB
 
         // Validate quote.
         let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
@@ -2246,9 +2417,9 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
-        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 1, 2, empty_client_order_id()); // BUY 0.0002 FMA @ 0.0001 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 2, 2, empty_client_order_id()); // BUY 0.0002 FMA @ 0.0002 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_BUY, 2, 2, empty_client_order_id()); // BUY 0.0002 FMA @ 0.0002 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 1, 2, empty_client_order_id()); // BUY 0.0002 FMA @ 0.0001 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 2, 2, empty_client_order_id()); // BUY 0.0002 FMA @ 0.0002 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 2, 2, empty_client_order_id()); // BUY 0.0002 FMA @ 0.0002 FMB
 
         // Validate quote.
         let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
@@ -2276,9 +2447,9 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
-        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 3, 1, empty_client_order_id()); // SELL 0.0001 FMA @ 0.0003 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 3, 1, empty_client_order_id()); // SELL 0.0001 FMA @ 0.0003 FMB
-        add_limit_order<FMA, FMB>(owner, SIDE_SELL, 4, 1, empty_client_order_id()); // SELL 0.0001 FMA @ 0.0004 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 3, 1, empty_client_order_id()); // SELL 0.0001 FMA @ 0.0003 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 3, 1, empty_client_order_id()); // SELL 0.0001 FMA @ 0.0003 FMB
+        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 4, 1, empty_client_order_id()); // SELL 0.0001 FMA @ 0.0004 FMB
 
         // Validate quote.
         let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
