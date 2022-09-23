@@ -42,7 +42,7 @@ module ferum::test_coins {
         });
     }
 
-    public entry fun mint_fusd(dest: &signer, amt: u64) acquires USDFCap {
+    public entry fun mint_usdf(dest: &signer, amt: u64) acquires USDFCap {
         let cap = borrow_global_mut<USDFCap>(@ferum);
         let minted = coin::mint(amt, &cap.mint);
         coin::deposit(address_of(dest), minted);
