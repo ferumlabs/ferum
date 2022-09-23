@@ -4,6 +4,9 @@ import {
   BCS,
   MaybeHexString,
   HexString,
+  TransactionBuilder,
+  CoinClient,
+  Types,
 } from "aptos";
 import { client } from "./aptos-client";
 import Config, { CONFIG_PATH } from "./config";
@@ -16,27 +19,9 @@ export const TEST_COINS: {[key in TestCoinSymbol]: string} = {
   'FMB': 'test_coins::FakeMoneyB',
 };
 
-// Resgiter type aliases for TEST coins.
+// Register type aliases for TEST coins.
 for (let symbol in TEST_COINS) {
   Config.setAliasForType(symbol, TEST_COINS[symbol as TestCoinSymbol]);
-}
-
-/** Publish a new module to the blockchain within the specified account */
-/** Currently broken until Aptos fixes their SDK */ 
-export async function publishModule_broken(
-  accountFrom: AptosAccount,
-  moduleHex: string
-): Promise<string> {
-  const moduleBundlePayload =
-    new TxnBuilderTypes.TransactionPayloadModuleBundle(
-      new TxnBuilderTypes.ModuleBundle([
-        new TxnBuilderTypes.Module(new HexString(moduleHex).toUint8Array()),
-      ])
-    );
-  return await sendSignedTransactionWithAccount(
-    accountFrom,
-    moduleBundlePayload
-  );
 }
 
 /** Initializes the new coin */
@@ -48,20 +33,19 @@ async function initializeCoin(
   const token = new TxnBuilderTypes.TypeTagStruct(
     TxnBuilderTypes.StructTag.fromString(coinName),
   );
-  const entryFunctionPayload =
-    new TxnBuilderTypes.TransactionPayloadEntryFunction(
-      TxnBuilderTypes.EntryFunction.natural(
-        "0x1::managed_coin",
-        "initialize",
-        [token],
-        [
-          BCS.bcsSerializeStr(coinName),
-          BCS.bcsSerializeStr(coinSymbol),
-          BCS.bcsSerializeU8(6),
-          BCS.bcsSerializeBool(false),
-        ]
-      )
-    );
+  const entryFunctionPayload = TxnBuilderTypes.EntryFunction.natural(
+      "0x1::managed_coin",
+      "initialize",
+      [token],
+      [
+        BCS.bcsSerializeStr(coinName),
+        BCS.bcsSerializeStr(coinSymbol),
+        BCS.bcsSerializeU8(6),
+        BCS.bcsSerializeBool(false),
+      ],
+  );
+
+
   return await sendSignedTransactionWithAccount(
     accountFrom,
     entryFunctionPayload
@@ -79,15 +63,12 @@ async function registerCoin(
     )
   );
 
-  const entryFunctionPayload =
-    new TxnBuilderTypes.TransactionPayloadEntryFunction(
-      TxnBuilderTypes.EntryFunction.natural(
-        "0x1::managed_coin",
-        "register",
-        [token],
-        []
-      )
-    );
+  const entryFunctionPayload = TxnBuilderTypes.EntryFunction.natural(
+      "0x1::managed_coin",
+      "register",
+      [token],
+      []
+  );
 
   return await sendSignedTransactionWithAccount(
     coinReceiver,
@@ -108,20 +89,17 @@ async function mintCoin(
     )
   );
 
-  const entryFunctionPayload =
-    new TxnBuilderTypes.TransactionPayloadEntryFunction(
-      TxnBuilderTypes.EntryFunction.natural(
-        "0x1::managed_coin",
-        "mint",
-        [token],
-        [
-          BCS.bcsToBytes(
+  const entryFunctionPayload = TxnBuilderTypes.EntryFunction.natural(
+      "0x1::managed_coin",
+      "mint",
+      [token],
+      [
+        BCS.bcsToBytes(
             TxnBuilderTypes.AccountAddress.fromHex(receiverAddress.hex())
-          ),
-          BCS.bcsSerializeUint64(amount),
-        ]
-      )
-    );
+        ),
+        BCS.bcsSerializeUint64(amount),
+      ]
+  );
 
     return await sendSignedTransactionWithAccount(
       coinOwner,

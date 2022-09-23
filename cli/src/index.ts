@@ -6,7 +6,7 @@ import util from "util";
 import { createTestCoin, getTestCoinBalance, TestCoinSymbol, TEST_COINS } from "./test-coins";
 import { initializeFerum, initializeMarket, addLimitOrder, addMarketOrder, cancelOrder } from "./market";
 import { AptosAccount } from "aptos";
-import { Transaction_UserTransaction } from "aptos/dist/generated";
+import { Types } from "aptos";
 import { publishModuleUsingCLI } from "./utils/module-publish-utils";
 import { client, NODE_URL } from './aptos-client';
 import Config, { CONFIG_PATH } from './config';
@@ -180,7 +180,7 @@ signedCmd("init-ferum")
     const { account } = cmd.opts();
     const txHash = await initializeFerum(account)
     log.info(`Started pending transaction: ${txHash}.`)
-    const txResult = await client.waitForTransactionWithResult(txHash) as Transaction_UserTransaction;
+    const txResult = await client.waitForTransactionWithResult(txHash) as Types.UserTransaction;
     prettyPrint(transactionStatusMessage(txResult), txResult)
   });
 
@@ -217,7 +217,7 @@ signedCmd("init-market")
 
     const txHash = await initializeMarket(account, instrumentCoinType, instrumentDecimalsNum, quoteCoinType, quoteDecimalsNum);
     log.info(`Started pending transaction: ${txHash}.`)
-    const txResult = await client.waitForTransactionWithResult(txHash) as Transaction_UserTransaction;
+    const txResult = await client.waitForTransactionWithResult(txHash) as Types.UserTransaction;
     prettyPrint(transactionStatusMessage(txResult), txResult)
   });
 
@@ -251,7 +251,7 @@ signedCmd("add-limit-order")
 
     const txHash = await addLimitOrder(account, instrumentCoinType, quoteCoinType, side, price, quantity)
     log.info(`Started pending transaction: ${txHash}.`)
-    const txResult = await client.waitForTransactionWithResult(txHash) as Transaction_UserTransaction;
+    const txResult = await client.waitForTransactionWithResult(txHash) as Types.UserTransaction;
     prettyPrint(transactionStatusMessage(txResult), txResult)
   });
 
@@ -285,7 +285,7 @@ signedCmd("add-market-order")
 
     const txHash = await addMarketOrder(account, instrumentCoinType, quoteCoinType, side, quantity, maxCollateral)
     log.info(`Started pending transaction: ${txHash}.`)
-    const txResult = await client.waitForTransactionWithResult(txHash) as Transaction_UserTransaction;
+    const txResult = await client.waitForTransactionWithResult(txHash) as Types.UserTransaction;
     prettyPrint(transactionStatusMessage(txResult), txResult)
   });
 
@@ -309,7 +309,7 @@ signedCmd("cancel-order")
 
     const txHash = await cancelOrder(account, instrumentCoinType, quoteCoinType, orderID)
     log.info(`Started pending transaction: ${txHash}.`)
-    const txResult = await client.waitForTransactionWithResult(txHash) as Transaction_UserTransaction;
+    const txResult = await client.waitForTransactionWithResult(txHash) as Types.UserTransaction;
     prettyPrint(transactionStatusMessage(txResult), txResult)
   });
 
@@ -365,7 +365,7 @@ function prettyPrint(description: string, obj: any) {
   log.info(util.inspect(obj, { colors: true, depth: 6, compact: false }));
 }
 
-function transactionStatusMessage(txResult: Transaction_UserTransaction) {
+function transactionStatusMessage(txResult: Types.UserTransaction) {
   return txResult.success ? (
     'Transaction Succeded'
   ) : (
