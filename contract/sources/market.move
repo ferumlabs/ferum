@@ -462,6 +462,10 @@ module ferum::market {
         let ownerAddr = address_of(owner);
         let book = borrow_global_mut<OrderBook<I, Q>>(bookAddr);
 
+        // Validates that the decimal places don't exceed the max decimal places allowed by the market.
+        fixed_point_64::to_u128(price, book.qDecimals);
+        fixed_point_64::to_u128(qty, book.iDecimals);
+
         if (!is_custodian_address_valid(custodianAddress)) {
             coin::destroy_zero(buyCollateral);
             coin::destroy_zero(sellCollateral);
@@ -513,6 +517,9 @@ module ferum::market {
         create_user_info_if_needed<I, Q>(owner);
         let book = borrow_global_mut<OrderBook<I, Q>>(bookAddr);
         let ownerAddr = address_of(owner);
+
+        // Validates that the decimal places don't exceed the max decimal places allowed by the market.
+        fixed_point_64::to_u128(qty, book.iDecimals);
 
         if (!is_custodian_address_valid(custodianAddress)) {
             coin::destroy_zero(buyCollateral);
