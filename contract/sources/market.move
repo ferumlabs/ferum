@@ -48,19 +48,30 @@ module ferum::market {
     // Enums.
     //
 
+    // Represents a sell order.
     const SIDE_SELL: u8 = 1;
+    // Represents a buy order.
     const SIDE_BUY: u8 = 2;
 
+    // Represents a market order.
     const TYPE_MARKET: u8 = 1;
+    // Represents a limit order.
     const TYPE_LIMIT: u8 = 2;
 
+    // Represents a pending order.
     const STATUS_PENDING: u8 = 1;
+    // Represents a cancelled order.
     const STATUS_CANCELLED: u8 = 2;
+    // Represents a partially filled order.
     const STATUS_PARTIALLY_FILLED: u8 = 3;
+    // Represents a filled order.
     const STATUS_FILLED: u8 = 4;
 
+    // Used as the default value, ie: the order was not cancelled.
     const CANCEL_AGENT_NONE: u8 = 0;
+    // Used when the order is cancelled because it was an IOC order.
     const CANCEL_AGENT_IOC: u8 = 1;
+    // Used when the order was cancelled by the user (or custodian).
     const CANCEL_AGENT_USER: u8 = 2;
 
     //
@@ -75,8 +86,8 @@ module ferum::market {
 
     // Struct representing id for an order.
     struct OrderID has copy, drop, store {
-        owner: address,
-        counter: u128,
+        owner: address, // Address for the owner of the order.
+        counter: u128, // Unique counter value for this owner's order.
     }
 
     // Market specific user information.
@@ -86,24 +97,43 @@ module ferum::market {
     }
 
     struct OrderMetadata has drop, store, copy {
+        // Type info for the instrument coin type for the order.
         instrumentType: type_info::TypeInfo,
+        // Type info for the quote coin type for the order.
         quoteType: type_info::TypeInfo,
+        // Side for this order. See the OrderSide enum.
         side: u8,
+        // Remaining quantity for this order.
         remainingQty: FixedPoint64,
+        // The original quantity for this order.
         originalQty: FixedPoint64,
+        // Limit price for this order.
         price: FixedPoint64,
+        // Type for this order. See the OrderType enum.
         type: u8,
+        // Status of this order. See the OrderStatus enum.
         status: u8,
+        // Optional metadata provided for this order.
         clientOrderID: String,
+        // Internal counter used to derive an execution id.
         executionCounter: u128,
+        // Internal counter used to make event parsing easier:
+        // an event with a higher update counter is more up to date
+        // than an event with a lower counter.
         updateCounter: u128,
     }
 
     struct Order<phantom I, phantom Q> has store {
+        // Unique identifier for this order.
         id: OrderID,
+        // The order's metadata.
         metadata: OrderMetadata,
+        // Remaining buy collateral for this order.
         buyCollateral: coin::Coin<Q>,
+        // Remaining sell collateral for this order.
         sellCollateral: coin::Coin<I>,
+        // Address of the custodian that placed this order.
+        // If not placed via a custodian, will be the sentinal value of @0x0.
         custodianAddress: address,
     }
 
@@ -136,12 +166,19 @@ module ferum::market {
 
     // Struct encapsulating price at a given timestamp for the market.
     struct Quote has drop, store {
+        // Type info for the instrument coin type for the order.
         instrumentType: type_info::TypeInfo,
+        // Type info for the quote coin type for the order.
         quoteType: type_info::TypeInfo,
+        // The most someone is willing to pay for the given instrument/quote pair.
         maxBid: FixedPoint64,
+        // How much quantity there is the the maxBid price point.
         bidSize: FixedPoint64,
+        // The least someone is willing to accept as payment for the given instrument/quote pair.
         minAsk: FixedPoint64,
+        // How much quantity there is the the minAsk price point.
         askSize: FixedPoint64,
+        // The chain timestamp this quote was issued at.
         timestampMicroSeconds: u64
     }
 
