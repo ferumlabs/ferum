@@ -230,21 +230,6 @@ module ferum::market {
     // Entry functions.
     //
 
-    /// Description: Initializes the market for the given instrument and quote coins.
-    ///
-    /// Types:
-    ///     - I: CoinType of the instrument coin of this market. For APT/USDC, APT is I.
-    ///     - Q: CoinType for the quote coin of this market. For APT/USDC, USDC is Q.
-    ///
-    /// Parameters:
-    ///     - `owner`:
-    ///        Wallet signing the transaction.
-    ///     - `instrumentDecimals`:
-    ///        Number of decimal places the instrument coin should support for this market.
-    ///        Must satisfy `instrumentDecimals < min(coin::decimals<I>(), coin::decimals<Q>())`
-    ///     - `quoteDecimals`:
-    ///        Number of decimal places the quote coin should support for this market.
-    ///        Must satisfy `instrumentDecimals < min(coin::decimals<I>(), coin::decimals<Q>())`
     public entry fun init_market_entry<I, Q>(owner: &signer, instrumentDecimals: u8, quoteDecimals: u8) {
         let ownerAddr = address_of(owner);
         assert!(!exists<OrderBook<I, Q>>(ownerAddr), ERR_BOOK_EXISTS);
@@ -282,20 +267,6 @@ module ferum::market {
         register_market<I, Q>(ownerAddr);
     }
 
-    /// Description: Adds a limit order to the market identified by I and Q.
-    ///
-    /// Types:
-    ///     - I: CoinType of the instrument coin of this market. For APT/USDC, APT is I.
-    ///     - Q: CoinType for the quote coin of this market. For APT/USDC, USDC is Q.
-    ///
-    /// Parameters:
-    ///     - `owner`:
-    ///        Wallet signing the transaction.
-    ///     - `side`:
-    ///        Side the order is taking. If the order is a buy, should be 0. If the order is a sell, should be 1.
-    ///     - `quoteDecimals`:
-    ///        Number of decimal places the quote coin should support for this market.
-    ///        Must satisfy `instrumentDecimals < min(coin::decimals<I>(), coin::decimals<Q>())`
     public entry fun add_limit_order_entry<I, Q>(
         owner: &signer,
         side: u8,
@@ -335,12 +306,14 @@ module ferum::market {
         qty: u64,
         clientOrderID: String,
     ): OrderID acquires OrderBook, UserMarketInfo {
-        add_limit_order_internal<I, Q>(owner, side, price, qty, clientOrderID, @0x0)
+        add_limit_order_internal<I, Q>(owner, side, price, qty, clientOrderID, @0x0, coin::zero(), coin::zero())
     }
 
     public fun add_limit_order_as_custodian<I, Q>(
         owner: &signer,
         custodianCap: &CustodianCapability,
+        buyCollateral: coin::Coin<Q>,
+        sellCollateral: coin::Coin<I>,
         side: u8,
         price: u64,
         qty: u64,
@@ -348,7 +321,7 @@ module ferum::market {
     ): OrderID acquires OrderBook, UserMarketInfo {
         let custodianAddress = get_custodian_address(custodianCap);
         assert!(is_custodian_address_valid(custodianAddress), ERR_INVALID_CUSTODIAN_ADDRESS);
-        add_limit_order_internal<I, Q>(owner, side, price, qty, clientOrderID, custodianAddress)
+        add_limit_order_internal<I, Q>(owner, side, price, qty, clientOrderID, custodianAddress, buyCollateral, sellCollateral)
     }
 
     public fun add_market_order<I, Q>(
@@ -358,12 +331,23 @@ module ferum::market {
         maxCollateralAmt: u64,
         clientOrderID: String,
     ): OrderID acquires OrderBook, UserMarketInfo {
-        add_market_order_internal<I, Q>(owner, side, qty, maxCollateralAmt, clientOrderID, @0x0)
+        add_market_order_internal<I, Q>(
+            owner,
+            side,
+            qty,
+            maxCollateralAmt,
+            clientOrderID,
+            @0x0,
+            coin::zero(),
+            coin::zero(),
+        )
     }
 
     public fun add_market_order_as_custodian<I, Q>(
         owner: &signer,
         custodianCap: &CustodianCapability,
+        buyCollateral: coin::Coin<Q>,
+        sellCollateral: coin::Coin<I>,
         side: u8,
         qty: u64,
         maxCollateralAmt: u64,
@@ -371,7 +355,16 @@ module ferum::market {
     ): OrderID acquires OrderBook, UserMarketInfo {
         let custodianAddress = get_custodian_address(custodianCap);
         assert!(is_custodian_address_valid(custodianAddress), ERR_INVALID_CUSTODIAN_ADDRESS);
-        add_market_order_internal<I, Q>(owner, side, qty, maxCollateralAmt, clientOrderID, custodianAddress)
+        add_market_order_internal<I, Q>(
+            owner,
+            side,
+            qty,
+            maxCollateralAmt,
+            clientOrderID,
+            custodianAddress,
+            buyCollateral,
+            sellCollateral,
+        )
     }
 
     public fun cancel_order_as_custodian<I, Q>(
@@ -388,6 +381,48 @@ module ferum::market {
         cancel_order_internal<I, Q>(signer, id, custodianAddress)
     }
 
+    public fun obtain_limit_order_collateral<I, Q>(
+        instrumentBalance: &mut coin::Coin<I>,
+        quoteBalance: &mut coin::Coin<Q>,
+        side: u8,
+        price: FixedPoint64,
+        qty: FixedPoint64,
+    ): (coin::Coin<Q>, coin::Coin<I>) {
+        if (side == SIDE_BUY) {
+            (
+                coin::extract<Q>(
+                    quoteBalance,
+                    fixed_point_64::to_u64(fixed_point_64::multiply_round_up(price, qty), coin::decimals<Q>()),
+                ),
+                coin::zero<I>(),
+            )
+        } else {
+            (
+                coin::zero<Q>(),
+                coin::extract<I>(
+                    instrumentBalance,
+                    fixed_point_64::to_u64(qty, coin::decimals<I>()),
+                ),
+            )
+        }
+    }
+
+    public fun obtain_market_order_collateral<I, Q>(
+        instrumentBalance: &mut coin::Coin<I>,
+        quoteBalance: &mut coin::Coin<Q>,
+        side: u8,
+        qty: FixedPoint64,
+        maxCollateralAmt: u64,
+    ): (coin::Coin<Q>, coin::Coin<I>) {
+
+        if (side == SIDE_BUY) {
+            (coin::extract<Q>(quoteBalance, maxCollateralAmt), coin::zero<I>())
+        } else {
+            let coinDecimals = coin::decimals<I>();
+            (coin::zero<Q>(), coin::extract<I>(instrumentBalance,  fixed_point_64::to_u64(qty, coinDecimals)))
+        }
+    }
+
     //
     // Private functions.
     //
@@ -399,6 +434,8 @@ module ferum::market {
         qty: u64,
         clientOrderID: String,
         custodianAddress: address,
+        buyCollateral: coin::Coin<Q>, // Provided if order is placed by a custodian. Zero otherwise.
+        sellCollateral: coin::Coin<I>, // Provided if order is placed by a custodian. Zero otherwise.
     ): OrderID acquires OrderBook, UserMarketInfo {
         let bookAddr = get_market_addr<I, Q>();
         assert!(exists<OrderBook<I, Q>>(bookAddr), ERR_BOOK_DOES_NOT_EXIST);
@@ -411,12 +448,17 @@ module ferum::market {
         let priceFixedPoint = fixed_point_64::from_u64(price, book.qDecimals);
         let qtyFixedPoint = fixed_point_64::from_u64(qty, book.iDecimals);
 
-        let (buyCollateral, sellCollateral) = obtain_limit_order_collateral<I, Q>(
-            owner,
-            side,
-            priceFixedPoint,
-            qtyFixedPoint,
-        );
+        if (!is_custodian_address_valid(custodianAddress)) {
+            coin::destroy_zero(buyCollateral);
+            coin::destroy_zero(sellCollateral);
+            (buyCollateral, sellCollateral) = obtain_limit_order_collateral_internal<I, Q>(
+                owner,
+                side,
+                priceFixedPoint,
+                qtyFixedPoint,
+            );
+        };
+
         let orderID = gen_order_id<I, Q>(ownerAddr);
         let order = Order<I, Q>{
             id: orderID,
@@ -448,6 +490,8 @@ module ferum::market {
         maxCollateralAmt: u64,
         clientOrderID: String,
         custodianAddress: address,
+        buyCollateral: coin::Coin<Q>, // Provided if order is placed by a custodian. Zero otherwise.
+        sellCollateral: coin::Coin<I>, // Provided if order is placed by a custodian. Zero otherwise.
     ): OrderID acquires OrderBook, UserMarketInfo {
         let bookAddr = get_market_addr<I, Q>();
         assert!(exists<OrderBook<I, Q>>(bookAddr), ERR_BOOK_DOES_NOT_EXIST);
@@ -456,12 +500,18 @@ module ferum::market {
         let book = borrow_global_mut<OrderBook<I, Q>>(bookAddr);
         let qtyFixedPoint = fixed_point_64::from_u64(qty, book.iDecimals);
         let ownerAddr = address_of(owner);
-        let (buyCollateral, sellCollateral) = obtain_market_order_collateral<I, Q>(
-            owner,
-            side,
-            qtyFixedPoint,
-            maxCollateralAmt,
-        );
+
+        if (!is_custodian_address_valid(custodianAddress)) {
+            coin::destroy_zero(buyCollateral);
+            coin::destroy_zero(sellCollateral);
+            (buyCollateral, sellCollateral) = obtain_market_order_collateral_internal<I, Q>(
+                owner,
+                side,
+                qtyFixedPoint,
+                maxCollateralAmt,
+            );
+        };
+
         let orderID = gen_order_id<I, Q>(ownerAddr);
         let order = Order<I, Q>{
             id: orderID,
@@ -990,7 +1040,7 @@ module ferum::market {
     // Collateral functions.
     //
 
-    fun obtain_limit_order_collateral<I, Q>(
+    fun obtain_limit_order_collateral_internal<I, Q>(
         owner: &signer,
         side: u8,
         price: FixedPoint64,
@@ -1015,7 +1065,7 @@ module ferum::market {
         }
     }
 
-    fun obtain_market_order_collateral<I, Q>(
+    fun obtain_market_order_collateral_internal<I, Q>(
         owner: &signer,
         side: u8,
         qty: FixedPoint64,
@@ -1224,8 +1274,34 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         let cap = register_custodian(custodian);
+        let side = SIDE_BUY;
+        let price = fixed_point_64::from_u64(1, 0);
+        let qty = fixed_point_64::from_u64(1, 0);
 
-        let buyID = add_limit_order_as_custodian<FMA, FMB>(user, &cap, SIDE_BUY, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
+        let instrumentBalance = coin::withdraw<FMA>(user, 10000000000);
+        let quoteBalance = coin::withdraw<FMB>(user, 10000000000);
+        let (buyCollateral, sellCollateral) = obtain_limit_order_collateral(
+            &mut instrumentBalance,
+            &mut quoteBalance,
+            side,
+            price,
+            qty,
+        );
+        // Return remaining coins.
+        coin::deposit(address_of(user), instrumentBalance);
+        coin::deposit(address_of(user), quoteBalance);
+
+        // BUY 10 FMA @ 1 FMB
+        let buyID = add_limit_order_as_custodian<FMA, FMB>(
+            user,
+            &cap,
+            buyCollateral,
+            sellCollateral,
+            SIDE_BUY,
+            10000,
+            100000,
+            empty_client_order_id(),
+        );
 
         cancel_order_as_custodian<FMA, FMB>(custodian, &cap, address_of(user), buyID.counter);
         {
@@ -1253,8 +1329,34 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         let cap = register_custodian(custodian);
+        let side = SIDE_BUY;
+        let price = fixed_point_64::from_u64(1, 0);
+        let qty = fixed_point_64::from_u64(1, 0);
 
-        let buyID = add_limit_order_as_custodian<FMA, FMB>(user, &cap, SIDE_BUY, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
+        let instrumentBalance = coin::withdraw<FMA>(user, 10000000000);
+        let quoteBalance = coin::withdraw<FMB>(user, 10000000000);
+        let (buyCollateral, sellCollateral) = obtain_limit_order_collateral(
+            &mut instrumentBalance,
+            &mut quoteBalance,
+            side,
+            price,
+            qty,
+        );
+        // Return remaining coins.
+        coin::deposit(address_of(user), instrumentBalance);
+        coin::deposit(address_of(user), quoteBalance);
+
+        // BUY 10 FMA @ 1 FMB
+        let buyID = add_limit_order_as_custodian<FMA, FMB>(
+            user,
+            &cap,
+            buyCollateral,
+            sellCollateral,
+            SIDE_BUY,
+            10000,
+            100000,
+            empty_client_order_id(),
+        );
 
         cancel_order_entry<FMA, FMB>(user,  buyID.counter);
 
