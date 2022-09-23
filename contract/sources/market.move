@@ -288,7 +288,10 @@ module ferum::market {
         maxCollateralAmt: u64,
         clientOrderID: String,
     ) acquires OrderBook, UserMarketInfo {
-        add_market_order<I, Q>(owner, side, qty, maxCollateralAmt, clientOrderID);
+        let book = borrow_global<OrderBook<I, Q>>(get_market_addr<I, Q>());
+        let qtyFixedPoint = from_u64(qty, book.iDecimals);
+
+        add_market_order<I, Q>(owner, side, qtyFixedPoint, maxCollateralAmt, clientOrderID);
     }
 
     public entry fun cancel_order_entry<I, Q>(owner: &signer, orderIDCounter: u128) acquires OrderBook {
@@ -341,7 +344,7 @@ module ferum::market {
     public fun add_market_order<I, Q>(
         owner: &signer,
         side: u8,
-        qty: u64,
+        qty: FixedPoint64,
         maxCollateralAmt: u64,
         clientOrderID: String,
     ): OrderID acquires OrderBook, UserMarketInfo {
@@ -363,7 +366,7 @@ module ferum::market {
         buyCollateral: coin::Coin<Q>,
         sellCollateral: coin::Coin<I>,
         side: u8,
-        qty: u64,
+        qty: FixedPoint64,
         maxCollateralAmt: u64,
         clientOrderID: String,
     ): OrderID acquires OrderBook, UserMarketInfo {
@@ -497,7 +500,7 @@ module ferum::market {
     fun add_market_order_internal<I, Q>(
         owner: &signer,
         side: u8,
-        qty: u64,
+        qty: FixedPoint64,
         maxCollateralAmt: u64,
         clientOrderID: String,
         custodianAddress: address,
@@ -509,7 +512,6 @@ module ferum::market {
         validate_coins<I, Q>();
         create_user_info_if_needed<I, Q>(owner);
         let book = borrow_global_mut<OrderBook<I, Q>>(bookAddr);
-        let qtyFixedPoint = from_u64(qty, book.iDecimals);
         let ownerAddr = address_of(owner);
 
         if (!is_custodian_address_valid(custodianAddress)) {
@@ -518,7 +520,7 @@ module ferum::market {
             (buyCollateral, sellCollateral) = obtain_market_order_collateral_internal<I, Q>(
                 owner,
                 side,
-                qtyFixedPoint,
+                qty,
                 maxCollateralAmt,
             );
         };
@@ -534,9 +536,9 @@ module ferum::market {
                 quoteType: type_info::type_of<Q>(),
                 side,
                 price: fixed_point_64::zero(),
-                remainingQty: qtyFixedPoint,
+                remainingQty: qty,
                 type: TYPE_MARKET,
-                originalQty: qtyFixedPoint,
+                originalQty: qty,
                 status: STATUS_PENDING,
                 clientOrderID,
                 executionCounter: 0,
@@ -1451,7 +1453,7 @@ module ferum::market {
             let orderID = add_market_order<FMA, FMB>(
                 owner,
                 SIDE_BUY,
-                10000,
+                from_u64(10000, 4),
                 100000,
                 empty_client_order_id(),
             );
@@ -1467,7 +1469,7 @@ module ferum::market {
             let orderID = add_market_order<FMA, FMB>(
                 owner,
                 SIDE_SELL,
-                10000,
+                from_u64(10000, 4),
                 0,
                 empty_client_order_id(),
             );
@@ -1510,7 +1512,7 @@ module ferum::market {
         let orderID = add_market_order<FMA, FMB>(
             user1,
             SIDE_BUY,
-            10000,
+            from_u64(10000, 4),
             2000000000,
             empty_client_order_id(),
         );
@@ -1628,7 +1630,7 @@ module ferum::market {
         let orderID = add_market_order<FMA, FMB>(
             user1,
             SIDE_BUY,
-            100000,
+            from_u64(100000, 4),
             20000000000,
             empty_client_order_id(),
         );
@@ -1687,7 +1689,7 @@ module ferum::market {
         let orderID = add_market_order<FMA, FMB>(
             user1,
             SIDE_SELL,
-            10000,
+            from_u64(10000, 4),
             0,
             empty_client_order_id(),
         );
@@ -1758,7 +1760,7 @@ module ferum::market {
         let orderID = add_market_order<FMA, FMB>(
             user1,
             SIDE_SELL,
-            50000,
+            from_u64(50000, 4),
             0,
             empty_client_order_id(),
         );
@@ -1842,7 +1844,7 @@ module ferum::market {
         let orderID = add_market_order<FMA, FMB>(
             user1,
             SIDE_BUY,
-            120000,
+            from_u64(120000, 4),
             36000000000,
             empty_client_order_id(),
         );
@@ -1912,7 +1914,7 @@ module ferum::market {
         let orderID = add_market_order<FMA, FMB>(
             user1,
             SIDE_SELL,
-            20000,
+            from_u64(20000, 4),
             0,
             empty_client_order_id(),
         );
@@ -1972,7 +1974,7 @@ module ferum::market {
         let orderID = add_market_order<FMA, FMB>(
             user1,
             SIDE_BUY,
-            20000,
+            from_u64(20000, 4),
             36000000000,
             empty_client_order_id(),
         );
