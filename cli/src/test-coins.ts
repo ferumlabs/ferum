@@ -4,9 +4,6 @@ import {
   BCS,
   MaybeHexString,
   HexString,
-  TransactionBuilder,
-  CoinClient,
-  Types,
 } from "aptos";
 import { client } from "./aptos-client";
 import Config, { CONFIG_PATH } from "./config";
@@ -34,15 +31,15 @@ async function initializeCoin(
     TxnBuilderTypes.StructTag.fromString(coinName),
   );
   const entryFunctionPayload = TxnBuilderTypes.EntryFunction.natural(
-      "0x1::managed_coin",
-      "initialize",
-      [token],
-      [
-        BCS.bcsSerializeStr(coinName),
-        BCS.bcsSerializeStr(coinSymbol),
-        BCS.bcsSerializeU8(6),
-        BCS.bcsSerializeBool(false),
-      ],
+    "0x1::managed_coin",
+    "initialize",
+    [token],
+    [
+      BCS.bcsSerializeStr(coinName),
+      BCS.bcsSerializeStr(coinSymbol),
+      BCS.bcsSerializeU8(6),
+      BCS.bcsSerializeBool(false),
+    ],
   );
 
 
@@ -64,10 +61,10 @@ async function registerCoin(
   );
 
   const entryFunctionPayload = TxnBuilderTypes.EntryFunction.natural(
-      "0x1::managed_coin",
-      "register",
-      [token],
-      []
+    "0x1::managed_coin",
+    "register",
+    [token],
+    []
   );
 
   return await sendSignedTransactionWithAccount(
@@ -90,15 +87,15 @@ async function mintCoin(
   );
 
   const entryFunctionPayload = TxnBuilderTypes.EntryFunction.natural(
-      "0x1::managed_coin",
-      "mint",
-      [token],
-      [
-        BCS.bcsToBytes(
-            TxnBuilderTypes.AccountAddress.fromHex(receiverAddress.hex())
-        ),
-        BCS.bcsSerializeUint64(amount),
-      ]
+    "0x1::managed_coin",
+    "mint",
+    [token],
+    [
+      BCS.bcsToBytes(
+        TxnBuilderTypes.AccountAddress.fromHex(receiverAddress.hex())
+      ),
+      BCS.bcsSerializeUint64(amount),
+    ]
   );
 
     return await sendSignedTransactionWithAccount(

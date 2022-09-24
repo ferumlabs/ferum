@@ -10,8 +10,8 @@ import { Types } from "aptos";
 import { publishModuleUsingCLI } from "./utils/module-publish-utils";
 import { client, NODE_URL } from './aptos-client';
 import Config, { CONFIG_PATH } from './config';
+import { initializeUSDF, registerUSDF, mintCoin } from './usdf';
 import { testModuleUsingCLI } from "./utils/module-testing-utils";
-import { createUSDF } from "./usdf";
 
 const DEFAULT_CONTRACT_DIR = "../contract"
 
@@ -94,9 +94,9 @@ program.command("set-type-alias")
   )
   .requiredOption("-a, --alias <string>", "Alias for the type.")
   .action(async (_, cmd) => {
-    const { type, symbol } = cmd.opts();
-    Config.setAliasForType(symbol, type);
-    log.info(`Set symbol for coin type ${type} to ${symbol}.`);
+    const { type, alias } = cmd.opts();
+    Config.setAliasForType(alias, type);
+    log.info(`Set symbol for coin type ${type} to ${alias}.`);
   });
 
 program.command("clear-type-alias")
@@ -159,7 +159,10 @@ signedCmd("create-usdf")
   .description('Creates USDF coins for testing.')
   .action(async (_, cmd) => {
     const { account } = cmd.opts();
-    await createUSDF(account);
+    const txHash = await initializeUSDF(account);
+    log.info(`Started pending transaction: ${txHash}.`)
+    const txResult = await client.waitForTransactionWithResult(txHash) as Types.UserTransaction;
+    prettyPrint(transactionStatusMessage(txResult), txResult)
   });
 
 

@@ -20,16 +20,13 @@ function coinTypeTags(instrumentCoin: string, quoteCoin: string) {
 export async function initializeFerum(
   signerAccount: AptosAccount,
 ) {
-  const entryFunctionPayload =
-    new TxnBuilderTypes.TransactionPayloadEntryFunction(
-      TxnBuilderTypes.EntryFunction.natural(
-        `${signerAccount.address()}::ferum`,
-        "init_ferum",
-        [],
-        []
-      )
-    );
-  return await sendSignedTransactionWithAccount(signerAccount, entryFunctionPayload)
+  const entryFunction = TxnBuilderTypes.EntryFunction.natural(
+    `${signerAccount.address()}::ferum`,
+    "init_ferum",
+    [],
+    []
+  );
+  return await sendSignedTransactionWithAccount(signerAccount, entryFunction)
 }
 
 export async function initializeMarket(
@@ -39,19 +36,16 @@ export async function initializeMarket(
   quoteCoin: string,
   quoteDecimals: number,
 ) {
-  const entryFunctionPayload =
-    new TxnBuilderTypes.TransactionPayloadEntryFunction(
-      TxnBuilderTypes.EntryFunction.natural(
-        `${signerAccount.address()}::market`,
-        "init_market_entry",
-        coinTypeTags(instrumentCoin, quoteCoin),
-        [
-          BCS.bcsSerializeU8(instrumentDecimals),
-          BCS.bcsSerializeU8(quoteDecimals),
-        ]
-      )
-    );
-    return await sendSignedTransactionWithAccount(signerAccount, entryFunctionPayload)
+  const entryFunction = TxnBuilderTypes.EntryFunction.natural(
+    `${signerAccount.address()}::market`,
+    "init_market_entry",
+    coinTypeTags(instrumentCoin, quoteCoin),
+    [
+      BCS.bcsSerializeU8(instrumentDecimals),
+      BCS.bcsSerializeU8(quoteDecimals),
+    ]
+  );
+  return await sendSignedTransactionWithAccount(signerAccount, entryFunction)
 }
 
 export async function cancelOrder(
@@ -60,18 +54,15 @@ export async function cancelOrder(
   instrumentCoinType: string,
   quoteCoinType: string,
 ) {
-  const entryFunctionPayload =
-    new TxnBuilderTypes.TransactionPayloadEntryFunction(
-      TxnBuilderTypes.EntryFunction.natural(
-        `${signerAccount.address()}::market`,
-        "cancel_order_entry",
-        coinTypeTags(instrumentCoinType, quoteCoinType),
-        [
-          BCS.bcsSerializeU128(orderID),
-        ]
-      )
-    );
-    return await sendSignedTransactionWithAccount(signerAccount, entryFunctionPayload)
+  const entryFunction = TxnBuilderTypes.EntryFunction.natural(
+    `${signerAccount.address()}::market`,
+    "cancel_order_entry",
+    coinTypeTags(instrumentCoinType, quoteCoinType),
+    [
+      BCS.bcsSerializeU128(orderID),
+    ]
+  );
+  return await sendSignedTransactionWithAccount(signerAccount, entryFunction)
 }
 
 export async function addLimitOrder(
@@ -82,21 +73,18 @@ export async function addLimitOrder(
   price: number,
   quantity: number,
 ) {
-  const entryFunctionPayload =
-    new TxnBuilderTypes.TransactionPayloadEntryFunction(
-      TxnBuilderTypes.EntryFunction.natural(
-        `${signerAccount.address()}::market`,
-        "add_limit_order_entry",
-        coinTypeTags(instrumentCoin, quoteCoin),
-        [
-          BCS.bcsSerializeU8(side === 'buy' ? 2 : 1),
-          BCS.bcsSerializeUint64(price),
-          BCS.bcsSerializeUint64(quantity),
-          BCS.bcsSerializeStr(""),
-        ]
-      )
-    );
-    return await sendSignedTransactionWithAccount(signerAccount, entryFunctionPayload)
+  const entryFunction = TxnBuilderTypes.EntryFunction.natural(
+    `${signerAccount.address()}::market`,
+    "add_limit_order_entry",
+    coinTypeTags(instrumentCoin, quoteCoin),
+    [
+      BCS.bcsSerializeU8(side === 'buy' ? 2 : 1),
+      BCS.bcsSerializeUint64(price),
+      BCS.bcsSerializeUint64(quantity),
+      BCS.bcsSerializeStr(""),
+    ]
+  );
+  return await sendSignedTransactionWithAccount(signerAccount, entryFunction)
 }
 
 export async function addMarketOrder(
@@ -107,19 +95,16 @@ export async function addMarketOrder(
   quantity: number,
   maxCollateral: number,
 ) {
-  const entryFunctionPayload =
-    new TxnBuilderTypes.TransactionPayloadEntryFunction(
-      TxnBuilderTypes.EntryFunction.natural(
-        `${signerAccount.address()}::market`,
-        "add_market_order_entry",
-        coinTypeTags(instrumentCoin, quoteCoin),
-        [
-          BCS.bcsSerializeU8(side === 'buy' ? 2 : 1),
-          BCS.bcsSerializeUint64(quantity),
-          BCS.bcsSerializeUint64(maxCollateral),
-          BCS.bcsSerializeStr(""),
-        ]
-      )
-    );
-    return await sendSignedTransactionWithAccount(signerAccount, entryFunctionPayload)
+  const entryFunction = TxnBuilderTypes.EntryFunction.natural(
+    `${signerAccount.address()}::market`,
+    "add_market_order_entry",
+    coinTypeTags(instrumentCoin, quoteCoin),
+    [
+      BCS.bcsSerializeU8(side === 'buy' ? 2 : 1),
+      BCS.bcsSerializeUint64(quantity),
+      BCS.bcsSerializeUint64(maxCollateral),
+      BCS.bcsSerializeStr(""),
+    ]
+  );
+  return await sendSignedTransactionWithAccount(signerAccount, entryFunction)
 }

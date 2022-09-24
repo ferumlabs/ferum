@@ -2,14 +2,14 @@ import { AptosAccount, TxnBuilderTypes, BCS } from "aptos";
 import Config from "./config";
 import { sendSignedTransactionWithAccount } from "./utils/transaction-utils";
 
-async function initializeUSDF(
+export async function initializeUSDF(
   signerAccount: AptosAccount,
 ): Promise<string> {
   const entryFunctionPayload = TxnBuilderTypes.EntryFunction.natural(
-      `${signerAccount.address()}::test_coins`,
-      "create_usdf",
-      [],
-      []
+    `${signerAccount.address()}::test_coins`,
+    "create_usdf",
+    [],
+    []
   );
 
   return await sendSignedTransactionWithAccount(
@@ -19,7 +19,7 @@ async function initializeUSDF(
 }
 
 /** Receiver needs to register the coin before they can receive it */
-async function registerUSDF(
+export async function registerUSDF(
   coinReceiver: AptosAccount,
 ): Promise<string> {
   const token = new TxnBuilderTypes.TypeTagStruct(
@@ -28,10 +28,10 @@ async function registerUSDF(
     )
   );
   const entryFunctionPayload = TxnBuilderTypes.EntryFunction.natural(
-      "0x1::managed_coin",
-      "register",
-      [token],
-      []
+    "0x1::managed_coin",
+    "register",
+    [token],
+    []
   );
   return await sendSignedTransactionWithAccount(
     coinReceiver,
@@ -39,7 +39,7 @@ async function registerUSDF(
   );
 }
 
-async function mintCoin(
+export async function mintCoin(
   signer: AptosAccount,
   amount: number,
 ): Promise<string> {
