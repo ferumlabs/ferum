@@ -5,8 +5,6 @@ module ferum::test_coins {
     use std::string;
     use std::signer::address_of;
     use std::signer;
-    use aptos_framework::managed_coin;
-    use aptos_framework::aptos_coin::AptosCoin;
 
     // Errors.
     const ERR_NOT_ADMIN: u64 = 1;
