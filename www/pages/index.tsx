@@ -10,12 +10,15 @@ const Home: NextPage = () => {
       <div className="relative max-w-[400px] w-[90%] h-[300px] md:h-[400px]">
         <Image layout="fill" src='/alchemy.svg' />
       </div>
-      <div className="flex flex-row gap-10">
+      <div className="flex flex-row gap-10 border-blue border-1">
+        <a target="_blank" rel="noopener noreferrer" href={NavigationLinks.discord}>
+          <Image className="transition duration-300 hover:opacity-40 cursor-pointer" src="/discord.svg" width={40} height={40} />
+        </a>
         <a target="_blank" rel="noopener noreferrer" href={NavigationLinks.twitter}>
           <Image className="transition duration-300 hover:opacity-40 cursor-pointer" src="/twitter.svg" width={40} height={40} />
         </a>
-        <a target="_blank" rel="noopener noreferrer" href={NavigationLinks.discord}>
-          <Image className="transition duration-300 hover:opacity-40 cursor-pointer" src="/discord.svg" width={40} height={40} />
+        <a target="_blank" rel="noopener noreferrer" href={NavigationLinks.docs}>
+          <Image className="transition duration-300 hover:opacity-40 cursor-pointer" src="/docs.svg" width={40} height={35} />
         </a>
       </div>
     </div>

@@ -7,6 +7,7 @@ export const NavigationLinks = {
   twitter: "https://twitter.com/ferumxyz",
   typeform: "https://survey.typeform.com/to/xVtSzJUI",
   discord: "https://discord.gg/ferum",
+  docs: "https://docs.ferum.xyz/",
 };
 
 const CompanyLogo = (props: any) => {
