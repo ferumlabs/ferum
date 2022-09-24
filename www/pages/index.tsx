@@ -12,13 +12,16 @@ const Home: NextPage = () => {
       </div>
       <div className="flex flex-row gap-10 border-blue border-1">
         <a target="_blank" rel="noopener noreferrer" href={NavigationLinks.discord}>
-          <Image className="transition duration-300 hover:opacity-40 cursor-pointer" src="/discord.svg" width={40} height={40} />
+          <Image alt="Discord" className="transition duration-300 hover:opacity-40 cursor-pointer" src="/discord.svg" width={40} height={40} />
         </a>
         <a target="_blank" rel="noopener noreferrer" href={NavigationLinks.twitter}>
-          <Image className="transition duration-300 hover:opacity-40 cursor-pointer" src="/twitter.svg" width={40} height={40} />
+          <Image alt="Twitter" className="transition duration-300 hover:opacity-40 cursor-pointer" src="/twitter.svg" width={40} height={40} />
         </a>
         <a target="_blank" rel="noopener noreferrer" href={NavigationLinks.docs}>
-          <Image className="transition duration-300 hover:opacity-40 cursor-pointer" src="/docs.svg" width={40} height={35} />
+          <Image alt="Documentation" className="transition duration-300 hover:opacity-40 cursor-pointer" src="/docs.svg" width={40} height={35} />
+        </a>
+        <a target="_blank" rel="noopener noreferrer" href={NavigationLinks.github}>
+          <Image alt="Github" className="transition duration-300 hover:opacity-40 cursor-pointer" src="/github.svg" width={35} height={35} />
         </a>
       </div>
     </div>
