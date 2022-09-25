@@ -21,7 +21,7 @@ export async function initializeFerum(
   signerAccount: AptosAccount,
 ) {
   const entryFunction = TxnBuilderTypes.EntryFunction.natural(
-    `${signerAccount.address()}::ferum`,
+    `${signerAccount.address()}::admin`,
     "init_ferum",
     [],
     []

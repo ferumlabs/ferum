@@ -1,4 +1,4 @@
-module ferum::ferum {
+module ferum::admin {
     use aptos_std::table;
     use std::signer::address_of;
     use std::string;
@@ -8,40 +8,30 @@ module ferum::ferum {
     #[test_only]
     use aptos_framework::account;
 
-    ///
-    /// Errors
-    ///
+    //
+    // Errors
+    //
 
     const ERR_NOT_ALLOWED: u64 = 0;
     const ERR_MARKET_NOT_EXISTS: u64 = 1;
     const ERR_MARKET_EXISTS: u64 = 2;
-    const ERR_CUSTODIAN_ALREADY_REGISTERED: u64 = 3;
-    const ERR_INVALID_CUSTODIAN_ADDRESS: u64 = 4;
 
-    ///
-    /// Structs.
-    ///
+    //
+    // Structs.
+    //
 
-    /// Global info object for ferum.
+    // Global info object for ferum.
     struct FerumInfo has key {
-        /// Map of all markets created, keyed by their instrument quote pairs.
+        // Map of all markets created, keyed by their instrument quote pairs.
         marketMap: table::Table<string::String, address>,
     }
 
-    /// Key used to map to a market address. Is first converted to a string using TypeInfo.
+    // Key used to map to a market address. Is first converted to a string using TypeInfo.
     struct MarketKey<phantom I, phantom Q> has key {}
 
-    /// Capability used to assign custodianship to a third party.
-    struct CustodianCapability has store {
-        custodianAddress: address, // 0x0 is reserved as the sentinal value.
-    }
-
-    /// Struct used to store information about a custodian.
-    struct CustodianInfo has key {}
-
-    ///
-    /// Entry functions.
-    ///
+    //
+    // Entry functions.
+    //
 
     public entry fun init_ferum(owner: &signer) {
         let ownerAddr = address_of(owner);
@@ -52,9 +42,9 @@ module ferum::ferum {
         });
     }
 
-    ///
-    /// Public functions.
-    ///
+    //
+    // Public functions.
+    //
 
     public fun assert_ferum_inited() {
         assert!(exists<FerumInfo>(@ferum), ERR_NOT_ALLOWED);
@@ -76,33 +66,9 @@ module ferum::ferum {
         *table::borrow(&info.marketMap, key)
     }
 
-    public fun register_custodian(owner: &signer): CustodianCapability {
-        let ownerAddr = address_of(owner);
-        assert!(!exists<CustodianInfo>(ownerAddr), ERR_CUSTODIAN_ALREADY_REGISTERED);
-        assert!(is_custodian_address_valid(ownerAddr), ERR_INVALID_CUSTODIAN_ADDRESS);
-        move_to(owner, CustodianInfo{});
-
-        CustodianCapability{
-            custodianAddress: ownerAddr,
-        }
-    }
-
-    public fun get_custodian_address(cap: &CustodianCapability): address {
-        return cap.custodianAddress
-    }
-
-    public fun is_custodian_address_valid(addr: address): bool {
-        return addr != @0x0
-    }
-
-    #[test_only]
-    public fun drop_custodian_capability(cap: CustodianCapability) {
-        let CustodianCapability {custodianAddress: _} = cap;
-    }
-
-    ///
-    /// Private functions.
-    ///
+    //
+    // Private functions.
+    //
 
     fun market_key<I, Q>(): string::String {
         type_info::type_name<MarketKey<I, Q>>()

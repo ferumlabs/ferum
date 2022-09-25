@@ -9,9 +9,12 @@ module ferum::market {
     use std::signer::address_of;
     use std::string::{Self, String};
 
-    use ferum::ferum::{register_market, get_market_addr, CustodianCapability, get_custodian_address, is_custodian_address_valid};
+    use ferum::admin::{register_market, get_market_addr};
+    use ferum::custodian::{CustodianCapability, get_custodian_address, is_custodian_address_valid};
     #[test_only]
-    use ferum::ferum::{init_ferum, register_custodian, drop_custodian_capability};
+    use ferum::admin::{init_ferum};
+    #[test_only]
+    use ferum::custodian::{register_custodian, drop_custodian_capability};
     use ferum_std::fixed_point_64::{Self, FixedPoint64, from_u64};
     #[test_only]
     use ferum::coin_test_helpers::{FMA, FMB, setup_fake_coins, register_fmb, register_fma, create_fake_coins};
