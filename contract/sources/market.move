@@ -1121,7 +1121,7 @@ module ferum::market {
     #[test(owner = @ferum)]
     #[expected_failure]
     fun test_init_market_with_duplicate_market<I, Q>(owner: &signer) {
-        init_ferum(owner);
+        init_ferum(owner, 0, 0, 0, 0);
         init_market_entry<I, Q>(owner, 4, 4);
         init_market_entry<I, Q>(owner, 4, 4);
     }
@@ -1133,7 +1133,7 @@ module ferum::market {
 
         account::create_account_for_test(address_of(owner));
         account::create_account_for_test(address_of(user));
-        init_ferum(owner);
+        init_ferum(owner, 0, 0, 0, 0);
         setup_fake_coins(owner, user, 100, 18);
         add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 1, 1, empty_client_order_id());
     }
@@ -1145,7 +1145,7 @@ module ferum::market {
 
         account::create_account_for_test(address_of(owner));
         account::create_account_for_test(address_of(user));
-        init_ferum(owner);
+        init_ferum(owner, 0, 0, 0, 0);
         setup_fake_coins(owner, user, 100, 18);
         add_market_order_entry<FMA, FMB>(owner, SIDE_SELL, 1, 1, empty_client_order_id());
     }
@@ -2426,7 +2426,7 @@ module ferum::market {
     #[test_only]
     fun setup_market_for_test<I, Q>(owner: &signer, aptos: &signer) {
         timestamp::set_time_has_started_for_testing(aptos);
-        init_ferum(owner);
+        init_ferum(owner, 0, 0, 0, 0);
         init_market_entry<I, Q>(owner, 4, 4);
     }
 
