@@ -87,7 +87,7 @@ module ferum::admin {
             ),
         };
 
-        move_to(owner, FerumInfo{
+        move_to(owner, FerumInfo {
             marketMap: table::new<string::String, address>(),
             fees,
         });

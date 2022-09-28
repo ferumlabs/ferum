@@ -857,7 +857,7 @@ module ferum::market {
 
     fun is_order_finalized<I, Q>(order: &Order<I, Q>): bool {
         order.metadata.status == STATUS_FILLED ||
-            order.metadata.status == STATUS_CANCELLED
+        order.metadata.status == STATUS_CANCELLED
     }
 
     //

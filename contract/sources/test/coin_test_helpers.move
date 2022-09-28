@@ -42,55 +42,44 @@ module ferum::coin_test_helpers {
 
     #[test_only]
     public fun create_fake_coins(owner: &signer, decimals: u8) {
-        {
-            let (
-                burn,
-                freeze,
-                mint
-            ) = coin::initialize<FMA>(
-                owner,
-                string::utf8(b"Fake Money A"),
-                string::utf8(b"FMA"),
-                decimals,
-                true
-            );
-            move_to(owner, FakeMoneyACapabilities {
-                burn,
-                freeze,
-                mint,
-            });
-        };
-        {
-            let (
-                burn,
-                freeze,
-                mint
-            ) = coin::initialize<FMB>(
-                owner,
-                string::utf8(b"Fake Money B"),
-                string::utf8(b"FMB"),
-                decimals,
-                true
-            );
-            move_to(owner, FakeMoneyBCapabilities {
-                burn,
-                freeze,
-                mint,
-            });
-        };
-    }
+        let (
+            burn,
+            freeze,
+            mint
+        ) = coin::initialize<FMA>(
+            owner,
+            string::utf8(b"Fake Money A"),
+            string::utf8(b"FMA"),
+            decimals,
+            true
+        );
+        move_to(owner, FakeMoneyACapabilities { burn,  freeze,  mint });
 
-    #[test_only]
-    public fun register_fmb(owner: &signer, user: &signer, amt: u64) acquires FakeMoneyBCapabilities {
-        coin::register<FMB>(user);
-        let cap = borrow_global<FakeMoneyBCapabilities>(address_of(owner));
-        coin::deposit(address_of(user), coin::mint(amt, &cap.mint));
+        let (
+            burn,
+            freeze,
+            mint
+        ) = coin::initialize<FMB>(
+            owner,
+            string::utf8(b"Fake Money B"),
+            string::utf8(b"FMB"),
+            decimals,
+            true
+        );
+        move_to(owner, FakeMoneyBCapabilities { burn, freeze, mint });
     }
 
     #[test_only]
     public fun register_fma(owner: &signer, user: &signer, amt: u64) acquires FakeMoneyACapabilities {
         coin::register<FMA>(user);
         let cap = borrow_global<FakeMoneyACapabilities>(address_of(owner));
+        coin::deposit(address_of(user), coin::mint(amt, &cap.mint));
+    }
+
+    #[test_only]
+    public fun register_fmb(owner: &signer, user: &signer, amt: u64) acquires FakeMoneyBCapabilities {
+        coin::register<FMB>(user);
+        let cap = borrow_global<FakeMoneyBCapabilities>(address_of(owner));
         coin::deposit(address_of(user), coin::mint(amt, &cap.mint));
     }
 }
