@@ -11,12 +11,22 @@ module ferum::admin {
     use ferum_std::fixed_point_64;
 
     //
+    // Enums
+    //
+
+    // Used to identify a market with the default fee type.
+    const FEE_TYPE_DEFAULT: u8 = 1;
+    // Used to identify a market with the stable swap fee type.
+    const FEE_TYPE_STABLE_SWAP: u8 = 2;
+
+    //
     // Errors
     //
 
     const ERR_NOT_ALLOWED: u64 = 0;
     const ERR_MARKET_NOT_EXISTS: u64 = 1;
     const ERR_MARKET_EXISTS: u64 = 2;
+    const ERR_INVALID_FEE_TYPE: u64 = 3;
 
     //
     // Structs.
@@ -26,8 +36,14 @@ module ferum::admin {
     struct FerumInfo has key {
         // Map of all markets created, keyed by their instrument quote pairs.
         marketMap: table::Table<string::String, address>,
-        // Default fee structure for all Ferum markets.
-        feeStructure: FeeStructure,
+        // Default fee structure for all Ferum market types.
+        fees: Fees,
+    }
+
+    // Essentially a map of all fee types to FeeStructures.
+    struct Fees has store {
+        stable: FeeStructure,
+        default: FeeStructure,
     }
 
     // Key used to map to a market address. Is first converted to a string using TypeInfo.
@@ -56,20 +72,31 @@ module ferum::admin {
         let defaultLPFee = fixed_point_64::from_u128(defaultLPFeeRaw, 4);
 
         // Create fee structure.
-        let feeStruct = fees::new_structure();
-        fees::set_default_user_fees(&mut feeStruct, defaultTakerFee, defaultMakerFee);
-        fees::set_default_protocol_fee(&mut feeStruct, defaultProtocolFee);
-        fees::set_default_lp_fee(&mut feeStruct, defaultLPFee);
+        let fees = Fees{
+            default: fees::new_structure_with_defaults(
+                defaultTakerFee,
+                defaultMakerFee,
+                defaultProtocolFee,
+                defaultLPFee,
+            ),
+            stable: fees::new_structure_with_defaults(
+                defaultTakerFee,
+                defaultMakerFee,
+                defaultProtocolFee,
+                defaultLPFee,
+            ),
+        };
 
         move_to(owner, FerumInfo{
             marketMap: table::new<string::String, address>(),
-            feeStructure: feeStruct,
+            fees,
         });
     }
 
     // Fee values are fixed points with 4 decimal places.
     public entry fun add_protocol_fee_tier(
         owner: &signer,
+        feeType: u8,
         minFerumTokenHoldings: u64,
         feeRaw: u128,
     ) acquires FerumInfo {
@@ -78,13 +105,21 @@ module ferum::admin {
         assert!(ownerAddr == @ferum, ERR_NOT_ALLOWED);
 
         let fee = fixed_point_64::from_u128(feeRaw, 4);
-        let feeStruct = &mut borrow_global_mut<FerumInfo>(@ferum).feeStructure;
-        fees::set_protocol_fee_tier(feeStruct, minFerumTokenHoldings, fee)
+        let info = borrow_global_mut<FerumInfo>(@ferum);
+
+        if (feeType == FEE_TYPE_DEFAULT) {
+            fees::set_protocol_fee_tier(&mut info.fees.default, minFerumTokenHoldings, fee)
+        } else if (feeType == FEE_TYPE_STABLE_SWAP) {
+            fees::set_protocol_fee_tier(&mut info.fees.stable, minFerumTokenHoldings, fee)
+        } else {
+            abort ERR_INVALID_FEE_TYPE
+        }
     }
 
     // Fee values are fixed points with 4 decimal places.
     public entry fun add_lp_fee_tier(
         owner: &signer,
+        feeType: u8,
         minFerumTokenHoldings: u64,
         feeRaw: u128,
     ) acquires FerumInfo {
@@ -93,13 +128,21 @@ module ferum::admin {
         assert!(ownerAddr == @ferum, ERR_NOT_ALLOWED);
 
         let fee = fixed_point_64::from_u128(feeRaw, 4);
-        let feeStruct = &mut borrow_global_mut<FerumInfo>(@ferum).feeStructure;
-        fees::set_lp_fee_tier(feeStruct, minFerumTokenHoldings, fee)
+        let info = borrow_global_mut<FerumInfo>(@ferum);
+
+        if (feeType == FEE_TYPE_DEFAULT) {
+            fees::set_lp_fee_tier(&mut info.fees.default, minFerumTokenHoldings, fee)
+        } else if (feeType == FEE_TYPE_STABLE_SWAP) {
+            fees::set_lp_fee_tier(&mut info.fees.stable, minFerumTokenHoldings, fee)
+        } else {
+            abort ERR_INVALID_FEE_TYPE
+        }
     }
 
     // Fee values are fixed points with 4 decimal places.
     public entry fun add_user_fee_tier(
         owner: &signer,
+        feeType: u8,
         minFerumTokenHoldings: u64,
         takerFeeRaw: u128,
         makerFeeRaw: u128,
@@ -110,44 +153,72 @@ module ferum::admin {
 
         let takerFee = fixed_point_64::from_u128(takerFeeRaw, 4);
         let makerFee = fixed_point_64::from_u128(makerFeeRaw, 4);
-        let feeStruct = &mut borrow_global_mut<FerumInfo>(@ferum).feeStructure;
-        fees::set_user_fee_tier(feeStruct, minFerumTokenHoldings, takerFee, makerFee)
+        let info = borrow_global_mut<FerumInfo>(@ferum);
+
+        if (feeType == FEE_TYPE_DEFAULT) {
+            fees::set_user_fee_tier(&mut info.fees.default, minFerumTokenHoldings, takerFee, makerFee)
+        } else if (feeType == FEE_TYPE_STABLE_SWAP) {
+            fees::set_user_fee_tier(&mut info.fees.stable, minFerumTokenHoldings, takerFee, makerFee)
+        } else {
+            abort ERR_INVALID_FEE_TYPE
+        }
     }
 
     public entry fun remove_protocol_fee_tier(
         owner: &signer,
+        feeType: u8,
         minFerumTokenHoldings: u64,
     ) acquires FerumInfo {
         let ownerAddr = address_of(owner);
         assert!(!exists<FerumInfo>(ownerAddr), ERR_NOT_ALLOWED);
         assert!(ownerAddr == @ferum, ERR_NOT_ALLOWED);
+        let info = borrow_global_mut<FerumInfo>(@ferum);
 
-        let feeStruct = &mut borrow_global_mut<FerumInfo>(@ferum).feeStructure;
-        fees::remove_protocol_fee_tier(feeStruct, minFerumTokenHoldings)
+        if (feeType == FEE_TYPE_DEFAULT) {
+            fees::remove_protocol_fee_tier(&mut info.fees.default, minFerumTokenHoldings)
+        } else if (feeType == FEE_TYPE_STABLE_SWAP) {
+            fees::remove_protocol_fee_tier(&mut info.fees.stable, minFerumTokenHoldings)
+        } else {
+            abort ERR_INVALID_FEE_TYPE
+        }
     }
 
     public entry fun remove_lp_fee_tier(
         owner: &signer,
+        feeType: u8,
         minFerumTokenHoldings: u64,
     ) acquires FerumInfo {
         let ownerAddr = address_of(owner);
         assert!(!exists<FerumInfo>(ownerAddr), ERR_NOT_ALLOWED);
         assert!(ownerAddr == @ferum, ERR_NOT_ALLOWED);
+        let info = borrow_global_mut<FerumInfo>(@ferum);
 
-        let feeStruct = &mut borrow_global_mut<FerumInfo>(@ferum).feeStructure;
-        fees::remove_lp_fee_tier(feeStruct, minFerumTokenHoldings)
+        if (feeType == FEE_TYPE_DEFAULT) {
+            fees::remove_lp_fee_tier(&mut info.fees.default, minFerumTokenHoldings)
+        } else if (feeType == FEE_TYPE_STABLE_SWAP) {
+            fees::remove_lp_fee_tier(&mut info.fees.stable, minFerumTokenHoldings)
+        } else {
+            abort ERR_INVALID_FEE_TYPE
+        }
     }
 
     public entry fun remove_user_fee_tier(
         owner: &signer,
+        feeType: u8,
         minFerumTokenHoldings: u64,
     ) acquires FerumInfo {
         let ownerAddr = address_of(owner);
         assert!(!exists<FerumInfo>(ownerAddr), ERR_NOT_ALLOWED);
         assert!(ownerAddr == @ferum, ERR_NOT_ALLOWED);
+        let info = borrow_global_mut<FerumInfo>(@ferum);
 
-        let feeStruct = &mut borrow_global_mut<FerumInfo>(@ferum).feeStructure;
-        fees::remove_user_fee_tier(feeStruct, minFerumTokenHoldings)
+        if (feeType == FEE_TYPE_DEFAULT) {
+            fees::remove_user_fee_tier(&mut info.fees.default, minFerumTokenHoldings)
+        } else if (feeType == FEE_TYPE_STABLE_SWAP) {
+            fees::remove_user_fee_tier(&mut info.fees.stable, minFerumTokenHoldings)
+        } else {
+            abort ERR_INVALID_FEE_TYPE
+        }
     }
 
     //

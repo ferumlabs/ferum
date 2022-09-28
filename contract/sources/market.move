@@ -77,6 +77,11 @@ module ferum::market {
     // Used when the order was cancelled by the user (or custodian).
     const CANCEL_AGENT_USER: u8 = 2;
 
+    // Used to identify a market with the default fee type.
+    const FEE_TYPE_DEFAULT: u8 = 1;
+    // Used to identify a market with the stable swap fee type.
+    const FEE_TYPE_STABLE_SWAP: u8 = 2;
+
     //
     // Constants.
     //
@@ -155,8 +160,8 @@ module ferum::market {
         iDecimals: u8,
         // Number of decimals for the quote coin.
         qDecimals: u8,
-        // Structure describing the fees for this market.
-        fees: FeeStructure,
+        // Fee type for this market.
+        feeType: u8,
         // Finalize order events for this market.
         finalizeEvents: EventHandle<FinalizeEvent>,
         // Execution events for this market.
@@ -183,19 +188,6 @@ module ferum::market {
         askSize: FixedPoint64,
         // The chain timestamp this quote was issued at.
         timestampMicroSeconds: u64
-    }
-
-    struct FeeStructure has store {
-        takerFeeBps: FixedPoint64,
-        makerFeeBps: FixedPoint64,
-        custodianFeeBps: FixedPoint64,
-        tiers: vector<FeeTier>,
-    }
-
-    struct FeeTier has store {
-        maxFerumTokens: u128,
-        makerFeeBps: FixedPoint64,
-        takerFeeBps: FixedPoint64,
     }
 
     //
@@ -244,13 +236,6 @@ module ferum::market {
         let createOrderEvents = new_event_handle<CreateEvent>(owner);
         let executionEvents = new_event_handle<ExecutionEvent>(owner);
         let priceUpdateEvents = new_event_handle<PriceUpdateEvent>(owner);
-        // TODO: add facility for setting fee structures for a market.
-        let fees = FeeStructure{
-            takerFeeBps: fixed_point_64::zero(),
-            makerFeeBps: fixed_point_64::zero(),
-            custodianFeeBps: fixed_point_64::zero(),
-            tiers: vector::empty(),
-        };
 
         let book = OrderBook<I, Q>{
             marketOrders: vector::empty(),
@@ -260,7 +245,7 @@ module ferum::market {
             finalizedOrderMap: table::new<OrderID, Order<I, Q>>(),
             iDecimals: instrumentDecimals,
             qDecimals: quoteDecimals,
-            fees,
+            feeType: FEE_TYPE_DEFAULT,
             finalizeEvents,
             createOrderEvents,
             executionEvents,

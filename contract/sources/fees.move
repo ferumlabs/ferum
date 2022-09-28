@@ -2,9 +2,15 @@ module ferum::fees {
     use ferum_std::fixed_point_64::{Self, FixedPoint64};
     use ferum::sorted_map::{Self, SortedMap};
 
+    //
+    // Errors.
+    //
+
     const ERR_NOT_ALLOWED: u64 = 1;
     const ERR_INVALID_MIN_FERUM_TOKEN_AMT: u64 = 2;
     const ERR_INVALID_FEE_STRUCTURE: u64 = 3;
+
+
 
     // Differing teirs users can qualify for.
     struct UserFeeTier has store, drop {
@@ -77,6 +83,22 @@ module ferum::fees {
             protocolFeeBps: fixed_point_64::zero(),
             lpFeeBps: fixed_point_64::zero(),
         };
+
+        structure
+    }
+
+    public fun new_structure_with_defaults(
+        takerFee: FixedPoint64,
+        makerFee: FixedPoint64,
+        protocolFee: FixedPoint64,
+        lpFee: FixedPoint64,
+    ): FeeStructure {
+        let structure = new_structure();
+
+        set_default_user_fees(&mut structure, takerFee, makerFee);
+        set_default_protocol_fee(&mut structure, protocolFee);
+        set_default_lp_fee(&mut structure, lpFee);
+
         validate_fees(&structure);
         structure
     }
