@@ -162,13 +162,11 @@ module ferum::order_tree {
 
     /// Returns the maximum key in the tree, if one exists.
     public fun max_key<V: store + drop + copy>(tree: &Tree<V>): u128 {
-        assert!(!is_empty(tree), TREE_IS_EMPTY);
         tree.maxKey
     }
 
     /// Returns the minimum key in the tree, if one exists.
     public fun min_key<V: store + drop + copy>(tree: &Tree<V>): u128 {
-        assert!(!is_empty(tree), TREE_IS_EMPTY);
         tree.minKey
     }
 
@@ -379,12 +377,12 @@ module ferum::order_tree {
     //
 
     // Returns list iterator for the values stored at the provided key.
-    fun values_iterator<V: store + drop + copy>(tree: &Tree<V>, key: u128) : ListPosition<V> {
+    fun values_iterator<V: store + drop + copy>(tree: &Tree<V>, key: u128): ListPosition<V> {
         let node = get_node(tree, key);
         linked_list::iterator(&node.values)
     }
 
-    public fun min_iterator<V: store + drop + copy>(tree: &Tree<V>) : TreePosition<V> {
+    public fun min_iterator<V: store + drop + copy>(tree: &Tree<V>): TreePosition<V> {
         assert!(!is_empty(tree), TREE_IS_EMPTY);
         let minKey = min_key(tree);
         TreePosition<V> {
@@ -395,7 +393,7 @@ module ferum::order_tree {
         }
     }
 
-    public fun max_iterator<V: store + drop + copy>(tree: &Tree<V>) : TreePosition<V> {
+    public fun max_iterator<V: store + drop + copy>(tree: &Tree<V>): TreePosition<V> {
         assert!(!is_empty(tree), TREE_IS_EMPTY);
         let maxKey = max_key(tree);
         TreePosition<V> {
@@ -406,15 +404,15 @@ module ferum::order_tree {
         }
     }
 
-    public fun has_next_value<V: store + drop + copy>(position: &TreePosition<V>) : bool {
+    public fun has_next_value<V: store + drop + copy>(position: &TreePosition<V>): bool {
         linked_list::has_next(&position.valuePosition)
     }
 
-    public fun has_next_key<V: store + drop + copy>(position: &TreePosition<V>) : bool {
+    public fun has_next_key<V: store + drop + copy>(position: &TreePosition<V>): bool {
         !position.completed
     }
 
-    public fun get_next_value<V: store + drop + copy>(tree: &Tree<V>, position: &mut TreePosition<V>) : V {
+    public fun get_next_value<V: store + drop + copy>(tree: &Tree<V>, position: &mut TreePosition<V>): V {
         assert!(has_next_value(position), INVALID_NEXT_OPERATION);
         let node = get_node(tree, position.currentKey);
         let value = linked_list::get_next(&node.values, &mut position.valuePosition);
@@ -425,49 +423,52 @@ module ferum::order_tree {
         value
     }
 
-    /// Returns the next key and updates position.
-    public fun get_next_key<V: store + drop + copy>(tree: &Tree<V>, position: &mut TreePosition<V>) : u128 {
+    public fun peek_next_key<V: store + drop + copy>(tree: &Tree<V>, position: &TreePosition<V>): u128 {
         assert!(has_next_key(position), INVALID_NEXT_OPERATION);
         let node = get_node(tree, position.currentKey);
-        if (position.direction == ITERATION_DIRECTION_MIN && node.key == tree.maxKey ||
-            position.direction == ITERATION_DIRECTION_MAX && node.key == tree.minKey) {
-            position.completed = true;
-            return node.key
-        };
-        let nextNodeKey = {
-            if (position.direction == ITERATION_DIRECTION_MIN) {
-                if (node.rightChildNodeKeyIsSet) {
-                    get_min_node_starting_at_node(tree, node.rightChildNodeKey).key
-                } else {
-                    assert!(node.parentNodeKeyIsSet, EXPECTING_KEY_TO_BE_SET);
-                    let childNode = node;
-                    let parentNode = get_node(tree, childNode.parentNodeKey);
-                    while (!is_left_child(childNode, parentNode)) {
-                        childNode = parentNode;
-                        assert!(childNode.parentNodeKeyIsSet, EXPECTING_KEY_TO_BE_SET);
-                        parentNode = get_node(tree, childNode.parentNodeKey);
-                    };
-                    childNode.parentNodeKey
-                }
+        if (position.direction == ITERATION_DIRECTION_MIN) {
+            if (node.rightChildNodeKeyIsSet) {
+                get_min_node_starting_at_node(tree, node.rightChildNodeKey).key
             } else {
-                if (node.leftChildNodeKeyIsSet) {
-                    get_max_node_starting_at_node(tree, node.leftChildNodeKey).key
-                } else {
-                    assert!(node.parentNodeKeyIsSet, EXPECTING_KEY_TO_BE_SET);
-                    let childNode = node;
-                    let parentNode = get_node(tree, childNode.parentNodeKey);
-                    while (!is_right_child(childNode, parentNode)) {
-                        childNode = parentNode;
-                        assert!(node.parentNodeKeyIsSet, EXPECTING_KEY_TO_BE_SET);
-                        parentNode = get_node(tree, childNode.parentNodeKey);
-                    };
-                    childNode.parentNodeKey
-                }
+                assert!(node.parentNodeKeyIsSet, EXPECTING_KEY_TO_BE_SET);
+                let childNode = node;
+                let parentNode = get_node(tree, childNode.parentNodeKey);
+                while (!is_left_child(childNode, parentNode)) {
+                    childNode = parentNode;
+                    assert!(childNode.parentNodeKeyIsSet, EXPECTING_KEY_TO_BE_SET);
+                    parentNode = get_node(tree, childNode.parentNodeKey);
+                };
+                childNode.parentNodeKey
             }
+        } else {
+            if (node.leftChildNodeKeyIsSet) {
+                get_max_node_starting_at_node(tree, node.leftChildNodeKey).key
+            } else {
+                assert!(node.parentNodeKeyIsSet, EXPECTING_KEY_TO_BE_SET);
+                let childNode = node;
+                let parentNode = get_node(tree, childNode.parentNodeKey);
+                while (!is_right_child(childNode, parentNode)) {
+                    childNode = parentNode;
+                    assert!(node.parentNodeKeyIsSet, EXPECTING_KEY_TO_BE_SET);
+                    parentNode = get_node(tree, childNode.parentNodeKey);
+                };
+                childNode.parentNodeKey
+            }
+        }
+    }
+
+    public fun get_next_key<V: store + drop + copy>(tree: &Tree<V>, position: &mut TreePosition<V>): u128 {
+        if (position.direction == ITERATION_DIRECTION_MIN && position.currentKey == tree.maxKey ||
+            position.direction == ITERATION_DIRECTION_MAX && position.currentKey == tree.minKey) {
+            position.completed = true;
+            return position.currentKey
         };
+
+        let nextNodeKey = peek_next_key(tree, position);
+        let out = position.currentKey;
         position.currentKey = nextNodeKey;
         position.valuePosition = values_iterator(tree, nextNodeKey);
-        node.key
+        out
     }
 
     //
@@ -2374,14 +2375,6 @@ module ferum::order_tree {
     //
 
     #[test(signer = @0x345)]
-    #[expected_failure(abort_code = 0)]
-    fun test_max_key_with_empty_tree(signer: signer) {
-        let tree = new<u128>();
-        max_key(&tree);
-        move_to(&signer, tree)
-    }
-
-    #[test(signer = @0x345)]
     fun test_max_key_after_insertion(signer: signer) {
         let tree = new<u128>();
         insert(&mut tree, 10, 1);
@@ -2420,14 +2413,6 @@ module ferum::order_tree {
     //
     // TEST MIN KEY COUNT
     //
-
-    #[test(signer = @0x345)]
-    #[expected_failure(abort_code = 0)]
-    fun test_min_key_with_empty_tree(signer: signer) {
-        let tree = new<u128>();
-        max_key(&tree);
-        move_to(&signer, tree)
-    }
 
     #[test(signer = @0x345)]
     fun test_min_key_after_insertion(signer: signer) {
@@ -2618,7 +2603,7 @@ module ferum::order_tree {
     }
 
     #[test_only]
-    fun test_tree(nodeKeys: vector<u128>) : Tree<u128> {
+    fun test_tree(nodeKeys: vector<u128>): Tree<u128> {
         let tree = new<u128>();
         let i = 0;
         while (i < vector::length(&nodeKeys)) {
@@ -2906,7 +2891,7 @@ module ferum::order_tree {
     }
 
     #[test_only]
-    fun assert_black_node_depth_starting_node<V: store + drop + copy>(tree: &Tree<V>, currentNodeKey: u128) : u128 {
+    fun assert_black_node_depth_starting_node<V: store + drop + copy>(tree: &Tree<V>, currentNodeKey: u128): u128 {
         let currentNodeCount = if (is_red(tree, currentNodeKey)) { 0 } else { 1 };
         if (has_left_child(tree, currentNodeKey) && has_right_child(tree, currentNodeKey)) {
             let leftChildDepth = assert_black_node_depth_starting_node(tree, left_child_key(tree, currentNodeKey));

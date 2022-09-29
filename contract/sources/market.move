@@ -5,25 +5,24 @@ module ferum::market {
     use aptos_framework::timestamp;
     use aptos_std::table;
     use aptos_std::type_info;
-    use std::vector;
     use std::signer::address_of;
     use std::string::{Self, String};
 
     use ferum::admin::{register_market, get_market_addr};
     use ferum::custodian::{CustodianCapability, get_custodian_address, is_custodian_address_valid};
+    use ferum_std::math::min_u8;
+    use ferum::order_tree::{Self, Tree, is_empty, max_key, min_key, first_value_at};
+    use ferum_std::fixed_point_64::{Self, FixedPoint64, from_u64};
+    use ferum_std::linked_list;
+
     #[test_only]
     use ferum::admin::{init_ferum};
     #[test_only]
     use ferum::custodian::{register_custodian, drop_custodian_capability};
-    use ferum_std::fixed_point_64::{Self, FixedPoint64, from_u64};
     #[test_only]
     use ferum::coin_test_helpers::{FMA, FMB, setup_fake_coins, register_fmb, register_fma, create_fake_coins};
-    use ferum_std::math::min_u8;
-    use ferum_std::red_black_tree;
-    use ferum_std::red_black_tree::{Tree, has_next_value, get_next_value, is_empty, max_key, min_key};
     #[test_only]
     use aptos_framework::account;
-    use ferum_std::linked_list;
 
     //
     // Errors
@@ -40,7 +39,7 @@ module ferum::market {
     const ERR_COIN_EXCEEDS_MAX_SUPPORTED_DECIMALS: u64 = 9;
     const ERR_INVALID_TYPE: u64 = 10;
     const ERR_NO_PROGRESS: u64 = 11;
-    const ERR_MARKET_ORDER_NOT_PENDING: u64 = 12;
+    const ERR_TAKER_ONLY_ORDER_NOT_PENDING: u64 = 12;
     const ERR_INVALID_DECIMAL_CONFIG: u64 = 13;
     const ERR_INVALID_SIDE: u64 = 14;
     const ERR_CLORDID_TOO_LARGE: u64 = 15;
@@ -56,10 +55,16 @@ module ferum::market {
     // Represents a buy order.
     const SIDE_BUY: u8 = 2;
 
-    // Represents a market order.
-    const TYPE_MARKET: u8 = 1;
-    // Represents a limit order.
-    const TYPE_LIMIT: u8 = 2;
+    // Represents a resting order. Can be a taker or a maker order.
+    const TYPE_RESTING: u8 = 1;
+    // Represents a POST order. Will always be the maker order.
+    const TYPE_POST: u8 = 2;
+    // Represents a IOC order. Fills as much as possible and the rest is cancelled.
+    // IOC orders are always takers.
+    const TYPE_IOC: u8 = 3;
+    // Represents a FOK order. Either fills in its entirety or is cancelled.
+    // FOK orders are always takers.
+    const TYPE_FOK: u8 = 4;
 
     // Represents a pending order.
     const STATUS_PENDING: u8 = 1;
@@ -74,8 +79,13 @@ module ferum::market {
     const CANCEL_AGENT_NONE: u8 = 0;
     // Used when the order is cancelled because it was an IOC order.
     const CANCEL_AGENT_IOC: u8 = 1;
+    // Used when the order is cancelled because it was an FOK order.
+    const CANCEL_AGENT_FOK: u8 = 2;
     // Used when the order was cancelled by the user (or custodian).
-    const CANCEL_AGENT_USER: u8 = 2;
+    const CANCEL_AGENT_USER: u8 = 3;
+    // Used when the order was cancelled because it was a POST order that crossed the
+    // spread.
+    const CANCEL_AGENT_POST: u8 = 4;
 
     // Used to identify a market with the default fee type.
     const FEE_TYPE_DEFAULT: u8 = 1;
@@ -111,7 +121,8 @@ module ferum::market {
         quoteType: type_info::TypeInfo,
         // Side for this order. See the OrderSide enum.
         side: u8,
-        // Remaining quantity for this order.
+        // Remaining quantity for this order. An order can be in a finalized state
+        // but still have remaining qty. this indicates the order was unable to be fully filled.
         remainingQty: FixedPoint64,
         // The original quantity for this order.
         originalQty: FixedPoint64,
@@ -146,12 +157,10 @@ module ferum::market {
     }
 
     struct OrderBook<phantom I, phantom Q> has key, store {
-        // Order IDs of marker orders.
-        marketOrders: vector<OrderID>,
-        // Order IDs stored in an RB tree.
-        sells: red_black_tree::Tree<OrderID>,
-        // Order IDs stored in an RB tree.
-        buys: red_black_tree::Tree<OrderID>,
+        // Order IDs of resting orders stored in an RB tree.
+        sells: Tree<OrderID>,
+        // Order IDs of resting orders stored in an RB tree.
+        buys: Tree<OrderID>,
         // Map of all non finalized orders.
         orderMap: table::Table<OrderID, Order<I, Q>>,
         // Map of all finalized orders.
@@ -238,9 +247,8 @@ module ferum::market {
         let priceUpdateEvents = new_event_handle<PriceUpdateEvent>(owner);
 
         let book = OrderBook<I, Q>{
-            marketOrders: vector::empty(),
-            sells: red_black_tree::new<OrderID>(),
-            buys: red_black_tree::new<OrderID>(),
+            sells: order_tree::new<OrderID>(),
+            buys: order_tree::new<OrderID>(),
             orderMap: table::new<OrderID, Order<I, Q>>(),
             finalizedOrderMap: table::new<OrderID, Order<I, Q>>(),
             iDecimals: instrumentDecimals,
@@ -255,9 +263,10 @@ module ferum::market {
         register_market<I, Q>(ownerAddr);
     }
 
-    public entry fun add_limit_order_entry<I, Q>(
+    public entry fun add_order_entry<I, Q>(
         owner: &signer,
         side: u8,
+        type: u8,
         price: u64,
         qty: u64,
         clientOrderID: String,
@@ -266,20 +275,7 @@ module ferum::market {
         let priceFixedPoint = from_u64(price, book.qDecimals);
         let qtyFixedPoint = from_u64(qty, book.iDecimals);
 
-        add_limit_order<I, Q>(owner, side, priceFixedPoint, qtyFixedPoint, clientOrderID);
-    }
-
-    public entry fun add_market_order_entry<I, Q>(
-        owner: &signer,
-        side: u8,
-        qty: u64,
-        maxCollateralAmt: u64,
-        clientOrderID: String,
-    ) acquires OrderBook, UserMarketInfo {
-        let book = borrow_global<OrderBook<I, Q>>(get_market_addr<I, Q>());
-        let qtyFixedPoint = from_u64(qty, book.iDecimals);
-
-        add_market_order<I, Q>(owner, side, qtyFixedPoint, maxCollateralAmt, clientOrderID);
+        add_order<I, Q>(owner, side, type, priceFixedPoint, qtyFixedPoint, clientOrderID);
     }
 
     public entry fun cancel_order_entry<I, Q>(owner: &signer, orderIDCounter: u128) acquires OrderBook {
@@ -294,20 +290,22 @@ module ferum::market {
     // Public functions.
     //
 
-    public fun add_limit_order<I, Q>(
+    public fun add_order<I, Q>(
         owner: &signer,
         side: u8,
+        type: u8,
         price: FixedPoint64,
         qty: FixedPoint64,
         clientOrderID: String,
     ): OrderID acquires OrderBook, UserMarketInfo {
-        add_limit_order_internal<I, Q>(owner, side, price, qty, clientOrderID, @0x0)
+        add_order_internal<I, Q>(owner, side, type, price, qty, clientOrderID, @0x0)
     }
 
-    public fun add_limit_order_as_custodian<I, Q>(
+    public fun add_order_as_custodian<I, Q>(
         owner: &signer,
         custodianCap: &CustodianCapability,
         side: u8,
+        type: u8,
         price: FixedPoint64,
         qty: FixedPoint64,
         clientOrderID: String,
@@ -315,48 +313,12 @@ module ferum::market {
         let custodianAddress = get_custodian_address(custodianCap);
         assert!(is_custodian_address_valid(custodianAddress), ERR_INVALID_CUSTODIAN_ADDRESS);
 
-        add_limit_order_internal<I, Q>(
+        add_order_internal<I, Q>(
             owner,
             side,
+            type,
             price,
             qty,
-            clientOrderID,
-            custodianAddress,
-        )
-    }
-
-    public fun add_market_order<I, Q>(
-        owner: &signer,
-        side: u8,
-        qty: FixedPoint64,
-        maxCollateralAmt: u64,
-        clientOrderID: String,
-    ): OrderID acquires OrderBook, UserMarketInfo {
-        add_market_order_internal<I, Q>(
-            owner,
-            side,
-            qty,
-            maxCollateralAmt,
-            clientOrderID,
-            @0x0,
-        )
-    }
-
-    public fun add_market_order_as_custodian<I, Q>(
-        owner: &signer,
-        custodianCap: &CustodianCapability,
-        side: u8,
-        qty: FixedPoint64,
-        maxCollateralAmt: u64,
-        clientOrderID: String,
-    ): OrderID acquires OrderBook, UserMarketInfo {
-        let custodianAddress = get_custodian_address(custodianCap);
-        assert!(is_custodian_address_valid(custodianAddress), ERR_INVALID_CUSTODIAN_ADDRESS);
-        add_market_order_internal<I, Q>(
-            owner,
-            side,
-            qty,
-            maxCollateralAmt,
             clientOrderID,
             custodianAddress,
         )
@@ -376,7 +338,7 @@ module ferum::market {
         cancel_order_internal<I, Q>(signer, id, custodianAddress)
     }
 
-    public fun get_limit_order_collateral_amount<I, Q>(
+    public fun get_order_collateral_amount<I, Q>(
         side: u8,
         price: FixedPoint64,
         qty: FixedPoint64,
@@ -394,18 +356,6 @@ module ferum::market {
         }
     }
 
-    public fun get_market_order_collateral_amount<I, Q>(
-        side: u8,
-        qty: FixedPoint64,
-        maxCollateralAmt: u64,
-    ): (FixedPoint64, FixedPoint64) {
-        if (side == SIDE_BUY) {
-            (from_u64(maxCollateralAmt, coin::decimals<Q>()), fixed_point_64::zero())
-        } else {
-            (fixed_point_64::zero(), qty)
-        }
-    }
-
     public fun get_market_decimals<I, Q>(): (u8, u8) acquires OrderBook {
         let book = borrow_global<OrderBook<I, Q>>(get_market_addr<I, Q>());
         (book.iDecimals, book.qDecimals)
@@ -415,9 +365,10 @@ module ferum::market {
     // Private functions.
     //
 
-    fun add_limit_order_internal<I, Q>(
+    fun add_order_internal<I, Q>(
         owner: &signer,
         side: u8,
+        type: u8,
         price: FixedPoint64,
         qty: FixedPoint64,
         clientOrderID: String,
@@ -435,7 +386,39 @@ module ferum::market {
         fixed_point_64::to_u128(price, book.qDecimals);
         fixed_point_64::to_u128(qty, book.iDecimals);
 
-        let (buyCollateral, sellCollateral) = obtain_limit_order_collateral_internal<I, Q>(
+        // Before adding taker only orders, check to make sure it crosses the spread. If it doesn't, immediately cancel.
+        if (type == TYPE_IOC || type == TYPE_FOK) {
+            // TODO: for a FOK order, we need to check to make sure there is enough liquidity
+            // to fill the order at its price point.
+            if (side == SIDE_SELL) {
+                if (is_empty(&book.buys)) {
+                    // It doesn't cross the spread, cancel.
+                    return create_cancelled_taker_order(book, ownerAddr, side, type, price, qty, clientOrderID, custodianAddress)
+                };
+                let topOfBook= fixed_point_64::new_u128(max_key(&book.buys));
+                if (fixed_point_64::gt(price, topOfBook)) {
+                    // It doesn't cross the spread, cancel.
+                    return create_cancelled_taker_order(book, ownerAddr, side, type, price, qty, clientOrderID, custodianAddress)
+                }
+            } else if (side == SIDE_BUY) {
+                if (is_empty(&book.sells)) {
+                    // It doesn't cross the spread, cancel.
+                    return create_cancelled_taker_order(book, ownerAddr, side, type, price, qty, clientOrderID, custodianAddress)
+                };
+                let topOfBook= fixed_point_64::new_u128(min_key(&book.sells));
+                if (fixed_point_64::lt(price, topOfBook)) {
+                    std::debug::print(&topOfBook);
+                    std::debug::print(&price);
+                    // It doesn't cross the spread, cancel.
+                    return create_cancelled_taker_order(book, ownerAddr, side, type, price, qty, clientOrderID, custodianAddress)
+                }
+            } else {
+                abort ERR_INVALID_SIDE
+            };
+        };
+        // TODO: add handling for POST only orders.
+
+        let (buyCollateral, sellCollateral) = obtain_order_collateral<I, Q>(
             owner,
             side,
             price,
@@ -454,7 +437,7 @@ module ferum::market {
                 side,
                 price,
                 remainingQty: qty,
-                type: TYPE_LIMIT,
+                type,
                 originalQty: qty,
                 status: STATUS_PENDING,
                 clientOrderID,
@@ -462,56 +445,7 @@ module ferum::market {
                 updateCounter: 0,
             },
         };
-        add_order<I, Q>(book, order);
-        orderID
-    }
-
-    fun add_market_order_internal<I, Q>(
-        owner: &signer,
-        side: u8,
-        qty: FixedPoint64,
-        maxCollateralAmt: u64,
-        clientOrderID: String,
-        custodianAddress: address,
-    ): OrderID acquires OrderBook, UserMarketInfo {
-        let bookAddr = get_market_addr<I, Q>();
-        assert!(exists<OrderBook<I, Q>>(bookAddr), ERR_BOOK_DOES_NOT_EXIST);
-        validate_coins<I, Q>();
-        create_user_info_if_needed<I, Q>(owner);
-        let book = borrow_global_mut<OrderBook<I, Q>>(bookAddr);
-        let ownerAddr = address_of(owner);
-
-        // Validates that the decimal places don't exceed the max decimal places allowed by the market.
-        fixed_point_64::to_u128(qty, book.iDecimals);
-
-        let (buyCollateral, sellCollateral) = obtain_market_order_collateral_internal<I, Q>(
-            owner,
-            side,
-            qty,
-            maxCollateralAmt,
-        );
-
-        let orderID = gen_order_id<I, Q>(ownerAddr);
-        let order = Order<I, Q>{
-            id: orderID,
-            buyCollateral,
-            sellCollateral,
-            custodianAddress,
-            metadata: OrderMetadata{
-                instrumentType: type_info::type_of<I>(),
-                quoteType: type_info::type_of<Q>(),
-                side,
-                price: fixed_point_64::zero(),
-                remainingQty: qty,
-                type: TYPE_MARKET,
-                originalQty: qty,
-                status: STATUS_PENDING,
-                clientOrderID,
-                executionCounter: 0,
-                updateCounter: 0,
-            },
-        };
-        add_order(book, order);
+        add_order_to_book<I, Q>(book, order);
         orderID
     }
 
@@ -536,7 +470,17 @@ module ferum::market {
             CANCEL_AGENT_USER,
         );
 
-        clean_order(order.id, &mut book.orderMap, &mut book.finalizedOrderMap);
+        let order = table::remove(&mut book.orderMap, order.id);
+        settle_unsettled_collateral(&mut order);
+        let orderTree = if (order.metadata.side == SIDE_BUY) {
+            &mut book.buys
+        } else if (order.metadata.side == SIDE_SELL) {
+            &mut book.sells
+        } else {
+            abort ERR_INVALID_SIDE
+        };
+        order_tree::delete_value(orderTree, fixed_point_64::value(order.metadata.price), order.id);
+        table::add(&mut book.finalizedOrderMap, order.id, order);
     }
 
     fun gen_order_id<I, Q>(owner: address): OrderID acquires UserMarketInfo {
@@ -549,68 +493,87 @@ module ferum::market {
         }
     }
 
-    fun add_order<I, Q>(book: &mut OrderBook<I, Q>, order: Order<I, Q>) {
+    fun create_cancelled_taker_order<I, Q>(
+        book: &mut OrderBook<I, Q>,
+        ownerAddr: address,
+        side: u8,
+        type: u8,
+        price: FixedPoint64,
+        qty: FixedPoint64,
+        clientOrderID: String,
+        custodianAddress: address,
+    ): OrderID acquires UserMarketInfo {
+        let orderID = gen_order_id<I, Q>(ownerAddr);
+        let order = Order<I, Q>{
+            id: orderID,
+            buyCollateral: coin::zero(),
+            sellCollateral: coin::zero(),
+            custodianAddress,
+            metadata: OrderMetadata{
+                instrumentType: type_info::type_of<I>(),
+                quoteType: type_info::type_of<Q>(),
+                side,
+                price,
+                remainingQty: qty,
+                type,
+                originalQty: qty,
+                status: STATUS_CANCELLED,
+                clientOrderID,
+                executionCounter: 0,
+                updateCounter: 1,
+            },
+        };
+        validate_order(&order);
+        emit_order_created_event(book, &order);
+        let agent = if (type == TYPE_IOC) {
+            CANCEL_AGENT_IOC
+        } else if (type == TYPE_FOK) {
+            CANCEL_AGENT_FOK
+        } else {
+            abort ERR_INVALID_TYPE
+        };
+        mark_cancelled_order(&mut book.finalizeEvents, &mut order, agent);
+        table::add(&mut book.finalizedOrderMap, order.id, order);
+        orderID
+    }
+
+    fun add_order_to_book<I, Q>(book: &mut OrderBook<I, Q>, order: Order<I, Q>) {
         validate_order(&order);
         emit_order_created_event(book, &order);
 
-        if (order.metadata.type == TYPE_MARKET) {
-            vector::push_back(&mut book.marketOrders, order.id);
-        } else if (order.metadata.side == SIDE_BUY) {
-            red_black_tree::insert(&mut book.buys, fixed_point_64::value(order.metadata.price), order.id);
+        // Match order as much as we can against the book.
+        match(book, &mut order);
+
+        if (is_order_finalized(&order)) {
+            // The order is finalized, we can now move it to the finalized map.
+            settle_unsettled_collateral(&mut order);
+            table::add(&mut book.finalizedOrderMap, order.id, order);
         } else {
-            red_black_tree::insert(&mut book.sells, fixed_point_64::value(order.metadata.price), order.id);
-        };
-
-        let orderMap = &mut book.orderMap;
-        table::add(orderMap, order.id, order);
-
-        process_orders(book)
-    }
-
-    fun process_orders<I, Q>(book: &mut OrderBook<I, Q>) {
-        let buysTree = &mut book.buys;
-        let sellsTree = &mut book.sells;
-        let marketOrders = &book.marketOrders;
-        let orderMap = &mut book.orderMap;
-        // Process market orders first.
-        if (vector::length(marketOrders) > 0) {
-            let i = vector::length(marketOrders);
-            while (i > 0) {
-                let order = get_order_from_list_mut(orderMap, marketOrders, i - 1);
-                if (order.metadata.side == SIDE_BUY) {
-                    execute_market_order(
-                        &mut book.executionEvents,
-                        &mut book.finalizeEvents,
-                        orderMap,
-                        sellsTree,
-                        order.id,
-                    )
+            if (order.metadata.type == TYPE_IOC) {
+                // Cancel remaing portion of taker only orders.
+                mark_cancelled_order(&mut book.finalizeEvents, &mut order, CANCEL_AGENT_IOC);
+                settle_unsettled_collateral(&mut order);
+                table::add(&mut book.finalizedOrderMap, order.id, order);
+            } else if (order.metadata.type == TYPE_RESTING) {
+                // For other orders, add them to the book.
+                let orderTree = if (order.metadata.side == SIDE_BUY) {
+                    &mut book.buys
+                } else if (order.metadata.side == SIDE_SELL) {
+                    &mut book.sells
                 } else {
-                    execute_market_order(
-                        &mut book.executionEvents,
-                        &mut book.finalizeEvents,
-                        orderMap,
-                        buysTree,
-                        order.id,
-                    )
+                    abort ERR_INVALID_SIDE
                 };
-                i = i - 1;
+                order_tree::insert(orderTree, fixed_point_64::value(order.metadata.price), order.id);
+                let orderMap = &mut book.orderMap;
+                table::add(orderMap, order.id, order);
+            } else {
+                // POST orders should never reach this point because we add them directly into the book and skip
+                // any matching.
+                // FOK orders should never reach this point because they either finalize completely or are cancelled
+                // immediately.
+                abort ERR_INVALID_TYPE
             }
         };
-
-        clean_market_orders(&mut book.orderMap, &mut book.finalizedOrderMap, &mut book.marketOrders);
-
-        // If there are no orders in any one side, we can return.
-        if (is_empty(&book.buys) || is_empty(&book.sells)) {
-            // Update the price before we do return.
-            let data = get_quote(book);
-            emit_event(&mut book.priceUpdateEvents, PriceUpdateEvent{
-                data,
-            });
-            return
-        };
-
-        execute_limit_orders(book);
 
         // Update the price before returning.
         let data = get_quote(book);
@@ -619,261 +582,149 @@ module ferum::market {
         });
     }
 
-    fun get_order_from_list_mut<I, Q>(
-        orderMap: &mut table::Table<OrderID, Order<I, Q>>,
-        list: &vector<OrderID>,
-        i: u64,
-    ): &mut Order<I, Q> {
-        let orderID = *vector::borrow(list, i);
-        table::borrow_mut(orderMap, orderID)
-    }
+    fun match<I, Q>(book: &mut OrderBook<I, Q>, order: &mut Order<I, Q>) {
+        let timestampMicroSeconds = timestamp::now_microseconds();
 
-    fun get_order_from_list<I, Q>(
-        orderMap: &table::Table<OrderID, Order<I, Q>>,
-        list: &vector<OrderID>,
-        i: u64,
-    ): &Order<I, Q> {
-        let orderID = *vector::borrow(list, i);
-        table::borrow(orderMap, orderID)
-    }
+        let side = order.metadata.side;
+        let priceVal = fixed_point_64::value(order.metadata.price);
 
-    fun execute_limit_orders<I, Q>(book: &mut OrderBook<I, Q>) {
+        let finalizeEventHandle = &mut book.finalizeEvents;
+        let executionEventHandle = &mut book.executionEvents;
+        let quoteDecimals = book.qDecimals;
         let orderMap = &mut book.orderMap;
-        let timestampMicroSeconds = timestamp::now_microseconds();
+        let finalizedOrderMap = &mut book.finalizedOrderMap;
+        let sellTree = &mut book.sells;
+        let buyTree = &mut book.buys;
 
-        // Iterate until either of the sides is empty or until the lowest ask is higher than the highest bid.
-        while (!(is_empty(&book.sells) || is_empty(&book.buys)) &&
-               max_key(&book.buys) >= min_key(&book.sells)) {
+        // Move side comparison outside of the match loop to save on gas costs.
+        if (side == SIDE_BUY) {
+            let minAskKey = min_key(sellTree);
 
-            let maxBidKey = max_key(&book.buys);
-            let maxBidPrice = fixed_point_64::new_u128(maxBidKey);
-            let maxBidID = *red_black_tree::first_value_at(&book.buys, maxBidKey);
-            let maxBid = table::borrow(orderMap, maxBidID);
-
-            let minAskKey = min_key(&book.sells);
-            let minAskPrice = fixed_point_64::new_u128(minAskKey);
-            let minAskID = *red_black_tree::first_value_at(&book.sells, minAskKey);
-            let minAsk = table::borrow(orderMap, minAskID);
-
-            // Shouldn't need to worry about over executing collateral because the minAsk price is less than the
-            // maxBid price.
-            let executedQty = fixed_point_64::min(maxBid.metadata.remainingQty, minAsk.metadata.remainingQty);
-
-            let maxBidMut = table::borrow_mut(orderMap, maxBidID);
-            maxBidMut.metadata.updateCounter = maxBidMut.metadata.updateCounter + 1;
-            maxBidMut.metadata.executionCounter = maxBidMut.metadata.executionCounter + 1;
-            maxBidMut.metadata.remainingQty = fixed_point_64::sub(maxBidMut.metadata.remainingQty, executedQty);
-
-            let minAskMut = table::borrow_mut(orderMap, minAskID);
-            minAskMut.metadata.updateCounter = minAskMut.metadata.updateCounter + 1;
-            minAskMut.metadata.executionCounter = minAskMut.metadata.executionCounter + 1;
-            minAskMut.metadata.remainingQty = fixed_point_64::sub(minAskMut.metadata.remainingQty, executedQty);
-
-            // Give the midpoint for the price.
-            // TODO: compute feed using market fee structure.
-            let price = fixed_point_64::divide_round_up(
-                fixed_point_64::add(minAskPrice, maxBidPrice),
-                from_u64(2, 0),
-            );
-            // Its possible for the midpoint to have more decimal places than the market allows for quotes.
-            // In this case, round up.
-            price = fixed_point_64::round_up_to_decimals(price, book.qDecimals);
-
-            swap_collateral(orderMap, maxBidID, minAskID, price, executedQty);
-
-            // Update status of orders.
-            let maxBidMut = table::borrow_mut(orderMap, maxBidID);
-            let maxBidFinalized = finalize_order_if_needed(&mut book.finalizeEvents, maxBidMut);
-            let maxBidMetadata = maxBidMut.metadata;
-            let minAskMut = table::borrow_mut(orderMap, minAskID);
-            let minAskFinalized = finalize_order_if_needed(&mut book.finalizeEvents, minAskMut);
-            let minAskMetadata = minAskMut.metadata;
-
-            // Emit execution events after having modified what we need to.
-            emit_event(&mut book.executionEvents, ExecutionEvent {
-                orderID: maxBidID,
-                orderMetadata: maxBidMetadata,
-                oppositeOrderID: minAskID,
-                oppositeOrderMetadata: minAskMetadata,
-                price,
-                qty: executedQty,
-                timestampMicroSeconds,
-            });
-            emit_event(&mut book.executionEvents, ExecutionEvent {
-                orderID: minAskID,
-                orderMetadata: minAskMetadata,
-                oppositeOrderID: maxBidID,
-                oppositeOrderMetadata: maxBidMetadata,
-                price,
-                qty: executedQty,
-                timestampMicroSeconds,
-            });
-
-            if (maxBidFinalized) {
-                clean_order(maxBidID, orderMap, &mut book.finalizedOrderMap);
-                red_black_tree::delete_value(&mut book.buys, maxBidKey, maxBidID);
-            };
-
-            if (minAskFinalized) {
-                clean_order(minAskID, orderMap, &mut book.finalizedOrderMap);
-                red_black_tree::delete_value(&mut book.sells, minAskKey, minAskID);
-            };
-        };
-    }
-
-    fun execute_market_order<I, Q>(
-        execution_event_handle: &mut EventHandle<ExecutionEvent>,
-        finalize_event_handle: &mut EventHandle<FinalizeEvent>,
-        orderMap: &mut table::Table<OrderID, Order<I, Q>>,
-        orderTree: &mut red_black_tree::Tree<OrderID>,
-        orderID: OrderID,
-    ) {
-        let order =  table::borrow_mut(orderMap, orderID);
-        assert!(order.metadata.status == STATUS_PENDING, ERR_MARKET_ORDER_NOT_PENDING);
-        if (is_empty(orderTree)) {
-            mark_cancelled_order(finalize_event_handle, order, CANCEL_AGENT_IOC);
-            return
-        };
-        let timestampMicroSeconds = timestamp::now_microseconds();
-        let isOrderFinalized = false;
-
-        let orderTreeIterator =
-            if (order.metadata.side == SIDE_BUY)
-                red_black_tree::min_iterator(orderTree)
-            else
-                red_black_tree::max_iterator(orderTree);
-
-        // Iterate until the current order is finalized or there are no more orders left in the book.
-        while (!isOrderFinalized && has_next_value(&orderTreeIterator)) {
-            let bookOrderID = get_next_value(orderTree, &mut orderTreeIterator);
-            let executedQty = {
-                let order =  table::borrow(orderMap, orderID);
-                let bookOrder = table::borrow(orderMap, bookOrderID);
-                if (order.metadata.side == SIDE_BUY) {
-                    // For a buy order, we need to factor in the remaining collateral for the order when deciding what
-                    // the execution qty should be.
-                    let remainingCollateral = get_remaining_collateral(order);
-                    let maxQtyAtPrice = fixed_point_64::divide_trunc(remainingCollateral, bookOrder.metadata.price);
-                    let remainingQty =  fixed_point_64::min(
-                        bookOrder.metadata.remainingQty,
-                        order.metadata.remainingQty,
-                    );
-                    fixed_point_64::min(maxQtyAtPrice, remainingQty)
-                } else {
-                    // For a sell order, we can just use the remaining quantity.
-                    fixed_point_64::min(
-                        bookOrder.metadata.remainingQty,
-                        order.metadata.remainingQty,
-                    )
-                }
-            };
-
-            let bookOrder = table::borrow_mut(orderMap, bookOrderID);
-            bookOrder.metadata.updateCounter = bookOrder.metadata.updateCounter + 1;
-            bookOrder.metadata.executionCounter = bookOrder.metadata.executionCounter + 1;
-            bookOrder.metadata.remainingQty = fixed_point_64::sub(bookOrder.metadata.remainingQty, executedQty);
-            let bookOrderID = bookOrder.id;
-            let bookOrderPrice = bookOrder.metadata.price;
-
-            let order = table::borrow_mut(orderMap, orderID);
-            order.metadata.updateCounter = order.metadata.updateCounter + 1;
-            order.metadata.executionCounter = order.metadata.executionCounter + 1;
-            order.metadata.remainingQty = fixed_point_64::sub(order.metadata.remainingQty, executedQty);
-            let orderID = order.id;
-
-            if (order.metadata.side == SIDE_BUY) {
-                swap_collateral(
-                    orderMap,
-                    orderID,
-                    bookOrderID,
-                    bookOrderPrice,
-                    executedQty,
+            while (!is_empty(sellTree) && minAskKey <= priceVal) {
+                let bookOrderID = *first_value_at(sellTree, minAskKey);
+                let bookOrder = table::borrow_mut(orderMap, bookOrderID);
+                let (price, executedQty, orderFinalized, bookOrderFinalized) = execute_orders(
+                    order,
+                    bookOrder,
+                    quoteDecimals,
+                    timestampMicroSeconds,
+                    finalizeEventHandle,
+                    executionEventHandle,
                 );
-            } else {
-                swap_collateral(
-                    orderMap,
-                    bookOrderID,
-                    orderID,
-                    bookOrderPrice,
-                    executedQty,
+
+                // Settle funds.
+                swap_collateral(order, bookOrder, price, executedQty);
+
+                if (bookOrderFinalized) {
+                    let bookOrder = table::remove(orderMap, bookOrderID);
+                    settle_unsettled_collateral(&mut bookOrder);
+                    table::add(finalizedOrderMap, bookOrder.id, bookOrder);
+                    order_tree::delete_value(sellTree, minAskKey, bookOrderID);
+                };
+
+                if (orderFinalized) {
+                    break
+                };
+
+                minAskKey = min_key(sellTree);
+            }
+        } else if (side == SIDE_SELL) {
+            let maxBidKey = max_key(buyTree);
+
+            while (!is_empty(buyTree) && maxBidKey >= priceVal) {
+                let bookOrderID = *first_value_at(buyTree, maxBidKey);
+                let bookOrder = table::borrow_mut(orderMap, bookOrderID);
+                let (price, executedQty, orderFinalized, bookOrderFinalized) = execute_orders(
+                    order,
+                    bookOrder,
+                    quoteDecimals,
+                    timestampMicroSeconds,
+                    finalizeEventHandle,
+                    executionEventHandle,
                 );
-            };
 
-            // Update status of orders.
-            let bookOrder = table::borrow_mut(orderMap, bookOrderID);
-            finalize_order_if_needed(finalize_event_handle, bookOrder);
-            let bookOrderMetadata = bookOrder.metadata;
-            let order = table::borrow_mut(orderMap, orderID);
-            isOrderFinalized = finalize_order_if_needed(finalize_event_handle, order);
-            let orderMetadata = order.metadata;
+                // Settle funds.
+                swap_collateral(bookOrder, order, price, executedQty);
 
-            // Emit execution events.
-            emit_event(execution_event_handle, ExecutionEvent {
-                orderID,
-                orderMetadata,
-                oppositeOrderID: bookOrderID,
-                oppositeOrderMetadata: bookOrderMetadata,
-                price: bookOrderMetadata.price,
-                qty: executedQty,
-                timestampMicroSeconds,
-            });
-            emit_event(execution_event_handle, ExecutionEvent {
-                orderID: bookOrderID,
-                orderMetadata: bookOrderMetadata,
-                oppositeOrderID: orderID,
-                oppositeOrderMetadata: orderMetadata,
-                price: bookOrderMetadata.price,
-                qty: executedQty,
-                timestampMicroSeconds,
-            });
+                if (bookOrderFinalized) {
+                    let bookOrder = table::remove(orderMap, bookOrderID);
+                    settle_unsettled_collateral(&mut bookOrder);
+                    table::add(finalizedOrderMap, bookOrder.id, bookOrder);
+                    order_tree::delete_value(buyTree, maxBidKey, bookOrderID);
+                };
+
+                if (orderFinalized) {
+                    break
+                };
+
+                maxBidKey = max_key(buyTree);
+            }
         };
-
-        let order =  table::borrow_mut(orderMap, orderID);
-        if (order.metadata.status != STATUS_FILLED && order.metadata.status != STATUS_PARTIALLY_FILLED) {
-            mark_cancelled_order(finalize_event_handle, order, CANCEL_AGENT_IOC);
-        }
     }
 
-    fun clean_market_orders<I, Q>(
-        orderMap: &mut table::Table<OrderID, Order<I, Q>>,
-        finalizedOrderMap: &mut table::Table<OrderID, Order<I, Q>>,
-        orderList: &mut vector<OrderID>,
-    ) {
-        let i = vector::length(orderList);
-        while (i > 0) {
-            let orderID = *vector::borrow(orderList, i - 1);
-            if (clean_order(orderID, orderMap, finalizedOrderMap)) {
-                vector::remove(orderList, i - 1);
-            };
-            i = i - 1;
-        }
-    }
+    fun execute_orders<I, Q>(
+        order: &mut Order<I, Q>,
+        bookOrder: &mut Order<I, Q>,
+        quoteDecimals: u8,
+        timestampMicroSeconds: u64,
+        finalizeEvents: &mut EventHandle<FinalizeEvent>,
+        executionEvents: &mut EventHandle<ExecutionEvent>,
+    ): (FixedPoint64, FixedPoint64, bool, bool) {
+        let orderRemainingQty = order.metadata.remainingQty;
+        let orderPrice = order.metadata.price;
 
-    // Returns true if given order is finalized.
-    fun clean_order<I, Q>(
-        orderID: OrderID,
-        orderMap: &mut table::Table<OrderID, Order<I, Q>>,
-        finalizedOrderMap: &mut table::Table<OrderID, Order<I, Q>>) : bool {
-        let order = table::borrow(orderMap, orderID);
-        let isFinalized = (
-            order.metadata.status == STATUS_FILLED ||
-            order.metadata.status == STATUS_PARTIALLY_FILLED ||
-            order.metadata.status == STATUS_CANCELLED
+        let bookOrderRemainingQty = bookOrder.metadata.remainingQty;
+        let bookOrderPrice = bookOrder.metadata.price;
+
+        // Shouldn't need to worry about over executing collateral because the minAsk price is less than the
+        // maxBid price.
+        let executedQty = fixed_point_64::min(orderRemainingQty, bookOrderRemainingQty);
+
+        order.metadata.updateCounter = order.metadata.updateCounter + 1;
+        order.metadata.executionCounter = order.metadata.executionCounter + 1;
+        order.metadata.remainingQty = fixed_point_64::sub(order.metadata.remainingQty, executedQty);
+
+        bookOrder.metadata.updateCounter = bookOrder.metadata.updateCounter + 1;
+        bookOrder.metadata.executionCounter = bookOrder.metadata.executionCounter + 1;
+        bookOrder.metadata.remainingQty = fixed_point_64::sub(bookOrder.metadata.remainingQty, executedQty);
+
+        // Give the midpoint for the price.
+        // TODO: compute fees using market fee structure.
+        let price = fixed_point_64::divide_round_up(
+            fixed_point_64::add(orderPrice, bookOrderPrice),
+            from_u64(2, 0),
         );
-        if (isFinalized) {
-            let orderOwner = order.id.owner;
-            let order = table::remove(orderMap, orderID);
+        // Its possible for the midpoint to have more decimal places than the market allows for quotes.
+        // In this case, round up.
+        price = fixed_point_64::round_up_to_decimals(price, quoteDecimals);
 
-            let buyCollateral = coin::extract_all(&mut order.buyCollateral);
-            let sellCollateral = coin::extract_all(&mut order.sellCollateral);
+        // Update status of orders.
+        let orderFinalized = finalize_order_if_needed(finalizeEvents, order);
+        let orderMetadata = order.metadata;
+        let bookOrderFinalized = finalize_order_if_needed(finalizeEvents, bookOrder);
+        let bookOrderMetadata = bookOrder.metadata;
 
-            table::add(finalizedOrderMap, order.id, order);
+        // Emit execution events after having modified what we need to.
+        emit_event(executionEvents, ExecutionEvent {
+            orderID: order.id,
+            orderMetadata,
+            oppositeOrderID: bookOrder.id,
+            oppositeOrderMetadata: bookOrderMetadata,
+            price,
+            qty: executedQty,
+            timestampMicroSeconds,
+        });
+        emit_event(executionEvents, ExecutionEvent {
+            orderID: bookOrder.id,
+            orderMetadata: bookOrderMetadata,
+            oppositeOrderID: order.id,
+            oppositeOrderMetadata: orderMetadata,
+            price,
+            qty: executedQty,
+            timestampMicroSeconds,
+        });
 
-            // Return any remaining collateral to user.
-            coin::deposit(orderOwner, buyCollateral);
-            coin::deposit(orderOwner, sellCollateral);
-        };
-        isFinalized
+        (price, executedQty, orderFinalized, bookOrderFinalized)
     }
 
     fun get_quote<I, Q>(book: &OrderBook<I, Q>): Quote {
@@ -886,12 +737,12 @@ module ferum::market {
         let maxBid = zero;
 
         if (!is_empty(&book.buys)) {
-            maxBid = fixed_point_64::new_u128(red_black_tree::max_key(&book.buys));
+            maxBid = fixed_point_64::new_u128(max_key(&book.buys));
             bidSize = get_size(&book.orderMap, &book.buys, maxBid);
         };
 
         if (!is_empty(&book.sells)) {
-            minAsk = fixed_point_64::new_u128(red_black_tree::min_key(&book.sells));
+            minAsk = fixed_point_64::new_u128(min_key(&book.sells));
             askSize = get_size(&book.orderMap, &book.sells, minAsk);
         };
 
@@ -912,7 +763,7 @@ module ferum::market {
         price: FixedPoint64,
     ): FixedPoint64 {
         let sum = fixed_point_64::zero();
-        let ordersList = red_black_tree::values_at_list(orderTree, fixed_point_64::value(price));
+        let ordersList = order_tree::values_at_list(orderTree, fixed_point_64::value(price));
         let ordersListIterator = linked_list::iterator(ordersList);
         while (linked_list::has_next(&ordersListIterator)) {
             let orderID = linked_list::get_next(ordersList,&mut ordersListIterator);
@@ -928,15 +779,11 @@ module ferum::market {
 
     fun validate_order<I, Q>(order: &Order<I, Q>) {
         let metadata = &order.metadata;
-        if (metadata.type == TYPE_MARKET) {
-            assert!(fixed_point_64::eq(metadata.price, fixed_point_64::zero()), ERR_INVALID_PRICE);
-        }
-        else if (metadata.type == TYPE_LIMIT) {
-            assert!(fixed_point_64::gt(metadata.price, fixed_point_64::zero()), ERR_INVALID_PRICE);
-        };
+        let type = metadata.type;
+        // TODO: add support for FOK and POST orders.
+        assert!(type == TYPE_IOC || type == TYPE_RESTING, ERR_INVALID_TYPE);
         assert!(metadata.side == SIDE_BUY || metadata.side == SIDE_SELL, ERR_INVALID_SIDE);
         assert!(string::length(&metadata.clientOrderID) < 40, ERR_CLORDID_TOO_LARGE);
-
     }
 
     fun validate_coins<I, Q>(): (u8, u8) {
@@ -1000,7 +847,7 @@ module ferum::market {
         }
     }
 
-    public fun mark_cancelled_order<I, Q>(
+    fun mark_cancelled_order<I, Q>(
         finalize_event_handle: &mut EventHandle<FinalizeEvent>,
         order: &mut Order<I, Q>,
         cancelAgent: u8,
@@ -1015,11 +862,17 @@ module ferum::market {
         })
     }
 
+    fun is_order_finalized<I, Q>(order: &Order<I, Q>): bool {
+        order.metadata.status == STATUS_FILLED ||
+            order.metadata.status == STATUS_PARTIALLY_FILLED ||
+            order.metadata.status == STATUS_CANCELLED
+    }
+
     //
     // Collateral functions.
     //
 
-    fun obtain_limit_order_collateral_internal<I, Q>(
+    fun obtain_order_collateral<I, Q>(
         owner: &signer,
         side: u8,
         price: FixedPoint64,
@@ -1044,41 +897,27 @@ module ferum::market {
         }
     }
 
-    fun obtain_market_order_collateral_internal<I, Q>(
-        owner: &signer,
-        side: u8,
-        qty: FixedPoint64,
-        maxCollateralAmt: u64,
-    ): (coin::Coin<Q>, coin::Coin<I>) {
-        if (side == SIDE_BUY) {
-            (coin::withdraw<Q>(owner, maxCollateralAmt), coin::zero<I>())
-        } else {
-            let coinDecimals = coin::decimals<I>();
-            (coin::zero<Q>(), coin::withdraw<I>(owner,  fixed_point_64::to_u64(qty, coinDecimals)))
-        }
+    fun settle_unsettled_collateral<I, Q>(order: &mut Order<I, Q>) {
+        let orderOwner = order.id.owner;
+
+        let buyCollateral = coin::extract_all(&mut order.buyCollateral);
+        let sellCollateral = coin::extract_all(&mut order.sellCollateral);
+
+        // Return any remaining collateral to user.
+        coin::deposit(orderOwner, buyCollateral);
+        coin::deposit(orderOwner, sellCollateral);
     }
 
-    // Moves collateral from orders to owners based on the execution details.
     fun swap_collateral<I, Q>(
-        orderMap: &mut table::Table<OrderID, Order<I, Q>>,
-        buyID: OrderID,
-        sellID: OrderID,
+        buy: &mut Order<I, Q>,
+        sell: &mut Order<I, Q>,
         price: FixedPoint64,
         qty: FixedPoint64,
     ) {
-        {
-            let sellOwner = sellID.owner;
-            let buy = table::borrow_mut(orderMap, buyID);
-            let buyCollateral = extract_buy_collateral(buy, price, qty);
-            coin::deposit(sellOwner, buyCollateral);
-        };
-
-        {
-            let buyOwner = buyID.owner;
-            let sell = table::borrow_mut(orderMap, sellID);
-            let sellCollateral = extract_sell_collateral(sell, qty);
-            coin::deposit(buyOwner, sellCollateral);
-        };
+        let buyCollateral = extract_buy_collateral(buy, price, qty);
+        coin::deposit(sell.id.owner, buyCollateral);
+        let sellCollateral = extract_sell_collateral(sell, qty);
+        coin::deposit(buy.id.owner, sellCollateral);
     }
 
     fun extract_buy_collateral<I, Q>(order: &mut Order<I, Q>, price: FixedPoint64, qty: FixedPoint64): coin::Coin<Q> {
@@ -1103,62 +942,69 @@ module ferum::market {
         });
     }
 
-    #[test(owner = @ferum)]
-    #[expected_failure]
-    fun test_init_market_with_duplicate_market<I, Q>(owner: &signer) {
+    #[test(owner = @ferum, user = @0x2)]
+    #[expected_failure(abort_code = 3)]
+    fun test_init_duplicate_market(owner: &signer, user: &signer) {
+        account::create_account_for_test(address_of(owner));
+        account::create_account_for_test(address_of(user));
         init_ferum(owner, 0, 0, 0, 0);
-        init_market_entry<I, Q>(owner, 4, 4);
-        init_market_entry<I, Q>(owner, 4, 4);
+        setup_fake_coins(owner, user, 100, 8);
+        init_market_entry<FMA, FMB>(owner, 4, 4);
+        init_market_entry<FMA, FMB>(owner, 4, 4);
     }
 
     #[test(owner = @ferum, user = @0x2)]
-    #[expected_failure]
-    fun test_add_limit_order_to_uninited_book(owner: &signer, user: &signer) acquires OrderBook, UserMarketInfo {
+    #[expected_failure(abort_code = 1)]
+    fun test_add_resting_order_to_uninited_book(owner: &signer, user: &signer) acquires OrderBook, UserMarketInfo {
+        // Tests that a limit order added for uninitialized book fails.
+
+        account::create_account_for_test(address_of(owner));
+        account::create_account_for_test(address_of(user));
+        init_ferum(owner, 0, 0, 0, 0);
+        setup_fake_coins(owner, user, 100, 8);
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 1, 1, empty_client_order_id());
+    }
+
+    #[test(owner = @ferum, user = @0x2)]
+    #[expected_failure(abort_code = 1)]
+    fun test_add_ioc_order_to_uninited_book(owner: &signer, user: &signer) acquires OrderBook, UserMarketInfo {
         // Tests that a limit order added for uninitialized book fails.
 
         account::create_account_for_test(address_of(owner));
         account::create_account_for_test(address_of(user));
         init_ferum(owner, 0, 0, 0, 0);
         setup_fake_coins(owner, user, 100, 18);
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 1, 1, empty_client_order_id());
-    }
-
-    #[test(owner = @ferum, user = @0x2)]
-    #[expected_failure]
-    fun test_add_market_order_to_uninited_book(owner: &signer, user: &signer) acquires OrderBook, UserMarketInfo {
-        // Tests that a limit order added for uninitialized book fails.
-
-        account::create_account_for_test(address_of(owner));
-        account::create_account_for_test(address_of(user));
-        init_ferum(owner, 0, 0, 0, 0);
-        setup_fake_coins(owner, user, 100, 18);
-        add_market_order_entry<FMA, FMB>(owner, SIDE_SELL, 1, 1, empty_client_order_id());
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_IOC, 1, 1, empty_client_order_id());
     }
 
     #[test(owner = @ferum, aptos = @0x1, user = @0x2)]
     #[expected_failure]
     fun test_add_buy_order_exceed_balance(owner: &signer, aptos: &signer, user: &signer) acquires OrderBook, UserMarketInfo {
-        // Tests that a buy order that requires more collateral than the user has fails.
+        // Tests that a buy order that requires more collateral than the user has fails
+        // (because of order quantity).
 
         account::create_account_for_test(address_of(owner));
         account::create_account_for_test(address_of(user));
         setup_fake_coins(owner, user, 10000000000, 8); // Users have 100 FMA and FMB.
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 10000, 1200000, empty_client_order_id()); // BUY 120 FMA @ 1 FMB
+        // BUY 120 FMA @ 1 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 10000, 1200000, empty_client_order_id());
     }
 
     #[test(owner = @ferum, aptos = @0x1, user = @0x2)]
     #[expected_failure]
     fun test_add_buy_order_exceed_balance_price(owner: &signer, aptos: &signer, user: &signer) acquires OrderBook, UserMarketInfo {
         // Tests that a buy order that requires more collateral than the user has fails.
+        // (because of order price).
 
         account::create_account_for_test(address_of(owner));
         account::create_account_for_test(address_of(user));
         setup_fake_coins(owner, user, 10000000000, 8); // Users have 100 FMA and FMB.
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 1200000, 10000, empty_client_order_id()); // BUY 1 FMA @ 120 FMB
+        // BUY 1 FMA @ 120 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 1200000, 10000, empty_client_order_id());
     }
 
     #[test(owner = @ferum, aptos = @0x1, user = @0x2)]
@@ -1171,7 +1017,8 @@ module ferum::market {
         setup_fake_coins(owner, user, 10000000000, 8); // Users have 100 FMA and FMB.
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 10000, 1200000, empty_client_order_id()); // SELL 120 FMA @ 1 FMB
+        // SELL 120 FMA @ 1 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 10000, 1200000, empty_client_order_id());
     }
 
     #[test(owner = @ferum, aptos = @0x1, user = @0x2)]
@@ -1185,7 +1032,7 @@ module ferum::market {
 
         // SELL 0.00000001 FMA @ 0.00000001 FMB
         // Requires obtaining 0.00000001 FMA of collateral, which is possible.
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 1, 1, empty_client_order_id());
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 1, 1, empty_client_order_id());
     }
 
     #[test(owner = @ferum, aptos = @0x1, user = @0x2)]
@@ -1197,13 +1044,13 @@ module ferum::market {
         setup_fake_coins(owner, user, 10000000000, 8);
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 100000, 10000, empty_client_order_id()); // BUY 1 FMA @ 10 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 100000, 10000, empty_client_order_id()); // BUY 1 FMA @ 10 FMB
 
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 200000, 100000, empty_client_order_id()); // SELL 10 FMA @ 20 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 200000, 100000, empty_client_order_id()); // SELL 10 FMA @ 20 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
 
         assert!(coin::balance<FMA>(address_of(owner)) == 8800000000, 0);
         assert!(coin::balance<FMB>(address_of(owner)) == 7800000000, 0);
@@ -1219,17 +1066,19 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // BUY 10 FMA @ 1 FMB
-        let buyID = add_limit_order<FMA, FMB>(
+        let buyID = add_order<FMA, FMB>(
             user,
             SIDE_BUY,
+            TYPE_RESTING,
             from_u64(10000, 4),
             from_u64(100000, 4),
             empty_client_order_id(),
         );
         // SELL 10 FMA @ 20 FMB
-        let sellID = add_limit_order<FMA, FMB>(
+        let sellID = add_order<FMA, FMB>(
             user,
             SIDE_SELL,
+            TYPE_RESTING,
             from_u64(200000, 4),
             from_u64(100000, 4),
             empty_client_order_id(),
@@ -1269,10 +1118,11 @@ module ferum::market {
         let cap = register_custodian(custodian);
 
         // BUY 10 FMA @ 1 FMB
-        let buyID = add_limit_order_as_custodian<FMA, FMB>(
+        let buyID = add_order_as_custodian<FMA, FMB>(
             user,
             &cap,
             SIDE_BUY,
+            TYPE_RESTING,
             from_u64(10000, 4),
             from_u64(100000, 4),
             empty_client_order_id(),
@@ -1306,10 +1156,11 @@ module ferum::market {
         let cap = register_custodian(custodian);
 
         // BUY 10 FMA @ 1 FMB
-        let buyID = add_limit_order_as_custodian<FMA, FMB>(
+        let buyID = add_order_as_custodian<FMA, FMB>(
             user,
             &cap,
             SIDE_BUY,
+            TYPE_RESTING,
             from_u64(10000, 4),
             from_u64(100000, 4),
             empty_client_order_id(),
@@ -1333,9 +1184,10 @@ module ferum::market {
         let cap = register_custodian(custodian);
 
         // BUY 10 FMA @ 1 FMB
-        let buyID = add_limit_order<FMA, FMB>(
+        let buyID = add_order<FMA, FMB>(
             user,
             SIDE_BUY,
+            TYPE_RESTING,
             from_u64(10000, 4),
             from_u64(100000, 4),
             empty_client_order_id(),
@@ -1357,34 +1209,35 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // BUY 10 FMA @ 1 FMB
-        let buyID = add_limit_order<FMA, FMB>(
+        let buyID = add_order<FMA, FMB>(
             user1,
             SIDE_BUY,
+            TYPE_RESTING,
             from_u64(10000, 4),
             from_u64(100000, 4),
             empty_client_order_id(),
         );
 
         cancel_order_entry<FMA, FMB>(user2, buyID.counter);
-
     }
 
     #[test(owner = @ferum, aptos = @0x1, user = @0x2)]
-    fun test_add_market_orders_cancelled(owner: &signer, aptos: &signer, user: &signer) acquires OrderBook, UserMarketInfo {
-        // Tests that market orders should get cancelled because there is nothing to execute them against.
+    fun test_add_ioc_orders_cancelled(owner: &signer, aptos: &signer, user: &signer) acquires OrderBook, UserMarketInfo {
+        // Tests that IOC orders should get cancelled because there is nothing to execute them against.
 
         account::create_account_for_test(address_of(owner));
         account::create_account_for_test(address_of(user));
         setup_fake_coins(owner, user, 10000000000, 8);
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
-        // BUY 1 FMA spending at most 10 FMB
+        // BUY 1 FMA @ 10 FMB
         {
-            let orderID = add_market_order<FMA, FMB>(
+            let orderID = add_order<FMA, FMB>(
                 owner,
                 SIDE_BUY,
+                TYPE_IOC,
+                from_u64(100000, 4),
                 from_u64(10000, 4),
-                100000,
                 empty_client_order_id(),
             );
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
@@ -1394,13 +1247,14 @@ module ferum::market {
             assert!(coin::value(&order.sellCollateral) == 0, 0);
         };
 
-        // SELL 1 FMA.
+        // SELL 1 FMA @ 10 FMB.
         {
-            let orderID = add_market_order<FMA, FMB>(
+            let orderID = add_order<FMA, FMB>(
                 owner,
                 SIDE_SELL,
+                TYPE_IOC,
+                from_u64(100000, 4),
                 from_u64(10000, 4),
-                0,
                 empty_client_order_id(),
             );
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
@@ -1412,8 +1266,8 @@ module ferum::market {
     }
 
     #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x3)]
-    fun test_market_buy_execute_against_limit(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook, UserMarketInfo {
-        // Tests that market buy order execute against limit orders.
+    fun test_ioc_buy_execute_against_limit(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook, UserMarketInfo {
+        // Tests that IOC buy order execute against limit orders.
 
         account::create_account_for_test(address_of(owner));
         account::create_account_for_test(address_of(user1));
@@ -1424,30 +1278,32 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_client_order_id(), ); // BUY 10 FMA @ 1 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 20000, 10000, empty_client_order_id(), ); // BUY 1 FMA @ 2 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 100000, 10000, empty_client_order_id(), ); // BUY 1 FMA @ 10 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 100000, 10000, empty_client_order_id()); // BUY 1 FMA @ 10 FMB
 
-        let targetSellID = add_limit_order<FMA, FMB>(  // SELL 10 FMA @ 20 FMB
+        let targetSellID = add_order<FMA, FMB>(  // SELL 10 FMA @ 20 FMB
             user2,
             SIDE_SELL,
+            TYPE_RESTING,
             from_u64(200000, 4),
             from_u64(100000, 4),
             empty_client_order_id(),
         );
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 210000, 10000, empty_client_order_id(), ); // SELL 1 FMA @ 21 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 250000, 10000, empty_client_order_id(), );  // SELL 1 FMA @ 25 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 210000, 10000, empty_client_order_id(), ); // SELL 1 FMA @ 21 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 250000, 10000, empty_client_order_id(), );  // SELL 1 FMA @ 25 FMB
 
-        // BUY 1 FMA spending at most 20 FMB.
-        let orderID = add_market_order<FMA, FMB>(
+        // BUY 1 FMA @ 20 FMB.
+        let orderID = add_order<FMA, FMB>(
             user1,
             SIDE_BUY,
+            TYPE_IOC,
+            from_u64(200000, 4),
             from_u64(10000, 4),
-            2000000000,
             empty_client_order_id(),
         );
 
-        // Verify market order user.
+        // Verify IOC order user.
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
             let order = get_order<FMA, FMB>(book, orderID);
@@ -1483,24 +1339,26 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 100000, 10000, empty_client_order_id()); // BUY 1 FMA @ 10 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 100000, 10000, empty_client_order_id()); // BUY 1 FMA @ 10 FMB
 
-        let targetSellID = add_limit_order<FMA, FMB>( // SELL 10 FMA @ 20 FMB
+        let targetSellID = add_order<FMA, FMB>( // SELL 10 FMA @ 20 FMB
             user2,
             SIDE_SELL,
+            TYPE_RESTING,
             from_u64(200000, 4),
             from_u64(100000, 4),
             empty_client_order_id(),
         );
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
 
         // BUY 10 FMA at 20 FMB.
-        let orderID = add_limit_order<FMA, FMB>(
+        let orderID = add_order<FMA, FMB>(
             user1,
             SIDE_BUY,
+            TYPE_RESTING,
             from_u64(200000, 4),
             from_u64(100000, 4),
             empty_client_order_id(),
@@ -1530,8 +1388,8 @@ module ferum::market {
     }
 
     #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x3)]
-    fun test_market_buy_execute_fully_against_limit(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook, UserMarketInfo {
-        // Tests that market buy order executes completely against limit sell order.
+    fun test_ioc_buy_execute_fully_against_limit(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook, UserMarketInfo {
+        // Tests that IOC buy order executes completely against limit sell order.
 
         account::create_account_for_test(address_of(owner));
         account::create_account_for_test(address_of(user1));
@@ -1542,30 +1400,32 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 100000, 10000, empty_client_order_id()); // BUY 1 FMA @ 10 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 100000, 10000, empty_client_order_id()); // BUY 1 FMA @ 10 FMB
 
-        let targetSellID = add_limit_order<FMA, FMB>(  // SELL 10 FMA @ 20 FMB
+        let targetSellID = add_order<FMA, FMB>(  // SELL 10 FMA @ 20 FMB
             user2,
             SIDE_SELL,
+            TYPE_RESTING,
             from_u64(200000, 4),
             from_u64(100000, 4),
             empty_client_order_id(),
         );
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
 
-        // BUY 10 FMA for at most 200 FMB.
-        let orderID = add_market_order<FMA, FMB>(
+        // BUY 10 FMA @ 20 FMB.
+        let orderID = add_order<FMA, FMB>(
             user1,
             SIDE_BUY,
+            TYPE_IOC,
+            from_u64(200000, 4),
             from_u64(100000, 4),
-            20000000000,
             empty_client_order_id(),
         );
 
-        // Verify market order user.
+        // Verify IOC order user.
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
             let order = get_order<FMA, FMB>(book, orderID);
@@ -1589,8 +1449,8 @@ module ferum::market {
     }
 
     #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x3)]
-    fun test_market_sell_execute_against_limit(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook, UserMarketInfo {
-        // Tests that market sell order execute against limit orders.
+    fun test_ioc_sell_execute_against_limit(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook, UserMarketInfo {
+        // Tests that market IOC order execute against limit orders.
 
         account::create_account_for_test(address_of(owner));
         account::create_account_for_test(address_of(user1));
@@ -1601,37 +1461,40 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
-        let targetBuyID = add_limit_order<FMA, FMB>( // BUY 1 FMA @ 10 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
+        let targetBuyID = add_order<FMA, FMB>( // BUY 1 FMA @ 10 FMB
             user2,
             SIDE_BUY,
+            TYPE_RESTING,
             from_u64(100000, 4),
             from_u64(10000, 4),
             empty_client_order_id(),
         );
 
-        add_limit_order_entry<FMA, FMB>(owner,SIDE_SELL,200000,100000,empty_client_order_id());  // SELL 10 FMA @ 20 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 200000,100000,empty_client_order_id());  // SELL 10 FMA @ 20 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
 
-        // SELL 1 FMA.
-        let orderID = add_market_order<FMA, FMB>(
+        // SELL 1 FMA @ 5 FMB.
+        // Order executes for ((5 + 10) / 2) = 7.5 FMB.
+        let orderID = add_order<FMA, FMB>(
             user1,
             SIDE_SELL,
+            TYPE_IOC,
+            from_u64(50000, 4),
             from_u64(10000, 4),
-            0,
             empty_client_order_id(),
         );
 
-        // Verify market order user.
+        // Verify IOC order user.
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
             let order = get_order<FMA, FMB>(book, orderID);
             assert!(order.metadata.status == STATUS_FILLED, 0);
             assert!(coin::value(&order.buyCollateral) == 0, 0);
             assert!(coin::value(&order.sellCollateral) == 0, 0);
-            assert!(coin::balance<FMB>(address_of(user1)) == 11000000000, 0);
+            assert!(coin::balance<FMB>(address_of(user1)) == 10750000000, 0);
             assert!(coin::balance<FMA>(address_of(user1)) == 9900000000, 0);
         };
 
@@ -1642,14 +1505,14 @@ module ferum::market {
             assert!(order.metadata.status == STATUS_FILLED, 0);
             assert!(coin::value(&order.buyCollateral) == 0, 0);
             assert!(coin::value(&order.sellCollateral) == 0, 0);
-            assert!(coin::balance<FMB>(address_of(user2)) == 9000000000, 0);
+            assert!(coin::balance<FMB>(address_of(user2)) == 9250000000, 0);
             assert!(coin::balance<FMA>(address_of(user2)) == 10100000000, 0);
         };
     }
 
     #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x3)]
-    fun test_market_sell_execute_against_multiple_limits(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook, UserMarketInfo {
-        // Tests that market sell order execute against multiple limit orders.
+    fun test_ioc_sell_execute_against_multiple_limits(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook, UserMarketInfo {
+        // Tests that market IOC order execute against multiple limit orders.
 
         account::create_account_for_test(address_of(owner));
         account::create_account_for_test(address_of(user1));
@@ -1660,42 +1523,50 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
-        let targetBuyIDC = add_limit_order<FMA, FMB>( // BUY 10 FMA @ 1 FMB
+        let targetBuyIDC = add_order<FMA, FMB>( // BUY 10 FMA @ 1 FMB
             user2,
             SIDE_BUY,
+            TYPE_RESTING,
             from_u64(10000, 4),
             from_u64(100000, 4),
             empty_client_order_id(),
         );
-        let targetBuyIDB = add_limit_order<FMA, FMB>( // BUY 1 FMA @ 2 FMB
+        let targetBuyIDB = add_order<FMA, FMB>( // BUY 1 FMA @ 2 FMB
             user2,
             SIDE_BUY,
+            TYPE_RESTING,
             from_u64(20000, 4),
             from_u64(10000, 4),
             empty_client_order_id(),
         );
-        let targetBuyIDA = add_limit_order<FMA, FMB>( // BUY 1 FMA @ 10 FMB
+        let targetBuyIDA = add_order<FMA, FMB>( // BUY 1 FMA @ 10 FMB
             user2,
             SIDE_BUY,
+            TYPE_RESTING,
             from_u64(100000, 4),
             from_u64(10000, 4),
             empty_client_order_id(),
         );
 
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 200000, 100000, empty_client_order_id());  // SELL 10 FMA @ 20 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 200000, 100000, empty_client_order_id());  // SELL 10 FMA @ 20 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
 
-        // SELL 5 FMA.
-        let orderID = add_market_order<FMA, FMB>(
+        // SELL 5 FMA @ 1 FMB.
+        // Order's first execution is for 1 FMA for ((1 + 10) / 2) = 5.5 FMB.
+        // Order's second execution is for 1 FMA for ((1 + 2) / 2) = 1.5 FMB.
+        // Order's third execution is for 3 FMA for ((1 + 1) / 2) = 1 FMB.
+        // User should receive 10 FMB total.
+        let orderID = add_order<FMA, FMB>(
             user1,
             SIDE_SELL,
+            TYPE_IOC,
+            from_u64(10000, 4),
             from_u64(50000, 4),
-            0,
             empty_client_order_id(),
         );
 
-        // Verify market order user.
+        // Verify IOC order user.
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
             let order = get_order<FMA, FMB>(book, orderID);
@@ -1703,7 +1574,7 @@ module ferum::market {
             assert!(order.metadata.status == STATUS_FILLED, 0);
             assert!(coin::value(&order.buyCollateral) == 0, 0);
             assert!(coin::value(&order.sellCollateral) == 0, 0);
-            assert!(coin::balance<FMB>(address_of(user1)) == 11500000000, 0);
+            assert!(coin::balance<FMB>(address_of(user1)) == 11000000000, 0);
             assert!(coin::balance<FMA>(address_of(user1)) == 9500000000, 0);
         };
 
@@ -1726,14 +1597,14 @@ module ferum::market {
             assert!(coin::value(&orderC.buyCollateral) == 700000000, 0);
             assert!(coin::value(&orderC.sellCollateral) == 0, 0);
 
-            assert!(coin::balance<FMB>(address_of(user2)) == 7800000000, 0);
+            assert!(coin::balance<FMB>(address_of(user2)) == 8300000000, 0);
             assert!(coin::balance<FMA>(address_of(user2)) == 10500000000, 0);
         };
     }
 
     #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x3)]
-    fun test_market_buy_execute_against_multiple_limits(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook, UserMarketInfo {
-        // Tests that market buy order execute against multiple limit orders.
+    fun test_ioc_buy_execute_against_multiple_limits(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook, UserMarketInfo {
+        // Tests that IOC buy order execute against multiple limit orders.
 
         account::create_account_for_test(address_of(owner));
         account::create_account_for_test(address_of(user1));
@@ -1744,42 +1615,50 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 100000, 10000, empty_client_order_id()); // BUY 1 FMA @ 10 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 100000, 10000, empty_client_order_id()); // BUY 1 FMA @ 10 FMB
 
-        let targetSellIDA = add_limit_order<FMA, FMB>(  // SELL 10 FMA @ 20 FMB
+        let targetSellIDA = add_order<FMA, FMB>(  // SELL 10 FMA @ 20 FMB
             user2,
             SIDE_SELL,
+            TYPE_RESTING,
             from_u64(200000, 4),
             from_u64(100000, 4),
             empty_client_order_id(),
         );
-        let targetSellIDB = add_limit_order<FMA, FMB>( // SELL 1 FMA @ 21 FMB
+        let targetSellIDB = add_order<FMA, FMB>( // SELL 1 FMA @ 21 FMB
             user2,
             SIDE_SELL,
+            TYPE_RESTING,
             from_u64(210000, 4),
             from_u64(10000, 4),
             empty_client_order_id(),
         );
-        let targetSellIDC = add_limit_order<FMA, FMB>( // SELL 1 FMA @ 25 FMB
+        let targetSellIDC = add_order<FMA, FMB>( // SELL 1 FMA @ 25 FMB
             user2,
             SIDE_SELL,
+            TYPE_RESTING,
             from_u64(250000, 4),
             from_u64(10000, 4),
             empty_client_order_id(),
         );
 
-        // BUY 12 FMA spending at most 360 FMB.
-        let orderID = add_market_order<FMA, FMB>(
+        // BUY 12 FMA @ 30 FMB.
+        // Order's first execution is for 10 FMA for ((30 + 20) / 2) = 25 FMB.
+        // Order's second execution is for 1 FMA for ((30 + 21) / 2) = 25.5 FMB.
+        // Order's third execution is for 1 FMA for ((30 + 25) / 2) = 27.5 FMB.
+        // User should spend 303 FMB total.
+        let orderID = add_order<FMA, FMB>(
             user1,
             SIDE_BUY,
+            TYPE_IOC,
+            from_u64(300000, 4),
             from_u64(120000, 4),
-            36000000000,
             empty_client_order_id(),
         );
 
-        // Verify market order user.
+        // Verify IOC order user.
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
             let order = get_order<FMA, FMB>(book, orderID);
@@ -1787,7 +1666,7 @@ module ferum::market {
             assert!(order.metadata.status == STATUS_FILLED, 0);
             assert!(coin::value(&order.buyCollateral) == 0, 0);
             assert!(coin::value(&order.sellCollateral) == 0, 0);
-            assert!(coin::balance<FMB>(address_of(user1)) == 25400000000, 0);
+            assert!(coin::balance<FMB>(address_of(user1)) == 19700000000, 0);
             assert!(coin::balance<FMA>(address_of(user1)) == 51200000000, 0);
         };
 
@@ -1810,14 +1689,14 @@ module ferum::market {
             assert!(coin::value(&orderC.buyCollateral) == 0, 0);
             assert!(coin::value(&orderC.sellCollateral) == 0, 0);
 
-            assert!(coin::balance<FMB>(address_of(user2)) == 74600000000, 0);
+            assert!(coin::balance<FMB>(address_of(user2)) == 80300000000, 0);
             assert!(coin::balance<FMA>(address_of(user2)) == 48800000000, 0);
         };
     }
 
     #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x3)]
-    fun test_market_sell_eat_book_not_filled(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook, UserMarketInfo {
-        // Tests that market sell order that eats through the book is cancelled.
+    fun test_ioc_sell_eat_book_not_filled(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook, UserMarketInfo {
+        // Tests that market IOC order that eats through the book is cancelled.
 
         account::create_account_for_test(address_of(owner));
         account::create_account_for_test(address_of(user1));
@@ -1828,28 +1707,32 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
-        let targetBuyIDA = add_limit_order<FMA, FMB>( // BUY 1 FMA @ 10 FMB
+        let targetBuyIDA = add_order<FMA, FMB>( // BUY 1 FMA @ 10 FMB
             user2,
             SIDE_BUY,
+            TYPE_RESTING,
             from_u64(100000, 4),
             from_u64(10000, 4),
             empty_client_order_id(),
         );
 
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 200000, 100000, empty_client_order_id());  // SELL 10 FMA @ 20 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 200000, 100000, empty_client_order_id());  // SELL 10 FMA @ 20 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
 
-        // SELL 2 FMA.
-        let orderID = add_market_order<FMA, FMB>(
+        // SELL 2 FMA @ 1 FMB.
+        // Order's first execution is for 1 FMA for ((1 + 10) / 2) = 5.5 FMB.
+        // User should receive 5.5 FMB total.
+        let orderID = add_order<FMA, FMB>(
             user1,
             SIDE_SELL,
+            TYPE_IOC,
+            from_u64(10000, 4),
             from_u64(20000, 4),
-            0,
             empty_client_order_id(),
         );
 
-        // Verify market order user.
+        // Verify IOC order user.
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
             let order = get_order<FMA, FMB>(book, orderID);
@@ -1857,7 +1740,7 @@ module ferum::market {
             assert!(order.metadata.status == STATUS_CANCELLED, 0);
             assert!(coin::value(&order.buyCollateral) == 0, 0);
             assert!(coin::value(&order.sellCollateral) == 0, 0);
-            assert!(coin::balance<FMB>(address_of(user1)) == 51000000000, 0);
+            assert!(coin::balance<FMB>(address_of(user1)) == 50550000000, 0);
             assert!(coin::balance<FMA>(address_of(user1)) == 49900000000, 0);
         };
 
@@ -1870,14 +1753,14 @@ module ferum::market {
             assert!(coin::value(&orderA.buyCollateral) == 0, 0);
             assert!(coin::value(&orderA.sellCollateral) == 0, 0);
 
-            assert!(coin::balance<FMB>(address_of(user2)) == 49000000000, 0);
+            assert!(coin::balance<FMB>(address_of(user2)) == 49450000000, 0);
             assert!(coin::balance<FMA>(address_of(user2)) == 50100000000, 0);
         };
     }
 
     #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x3)]
-    fun test_market_buy_eat_book_not_filled(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook, UserMarketInfo {
-        // Tests that market buy order that eats through the book is cancelled.
+    fun test_ioc_buy_eat_book_not_filled(owner: &signer, aptos: &signer, user1: &signer, user2: &signer) acquires OrderBook, UserMarketInfo {
+        // Tests that IOC buy order that eats through the book is cancelled.
 
         account::create_account_for_test(address_of(owner));
         account::create_account_for_test(address_of(user1));
@@ -1888,28 +1771,32 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 100000, 10000, empty_client_order_id()); // BUY 1 FMA @ 10 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 100000, 10000, empty_client_order_id()); // BUY 1 FMA @ 10 FMB
 
-        let targetSellIDA = add_limit_order<FMA, FMB>( // SELL 1 FMA @ 25 FMB
+        let targetSellIDA = add_order<FMA, FMB>( // SELL 1 FMA @ 25 FMB
             user2,
             SIDE_SELL,
+            TYPE_RESTING,
             from_u64(250000, 4),
             from_u64(10000, 4),
             empty_client_order_id(),
         );
 
-        // BUY 2 FMA spending at most 360 FMB.
-        let orderID = add_market_order<FMA, FMB>(
+        // BUY 2 FMA @ 120 FMB.
+        // Order's first execution is for 1 FMA for ((120 + 25) / 2) = 72.5 FMB.
+        // User should spend 72.5 FMB total.
+        let orderID = add_order<FMA, FMB>(
             user1,
             SIDE_BUY,
+            TYPE_IOC,
+            from_u64(1200000, 4),
             from_u64(20000, 4),
-            36000000000,
             empty_client_order_id(),
         );
 
-        // Verify market order user.
+        // Verify IOC order user.
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
             let order = get_order<FMA, FMB>(book, orderID);
@@ -1917,7 +1804,7 @@ module ferum::market {
             assert!(order.metadata.status == STATUS_CANCELLED, 0);
             assert!(coin::value(&order.buyCollateral) == 0, 0);
             assert!(coin::value(&order.sellCollateral) == 0, 0);
-            assert!(coin::balance<FMB>(address_of(user1)) == 47500000000, 0);
+            assert!(coin::balance<FMB>(address_of(user1)) == 42750000000, 0);
             assert!(coin::balance<FMA>(address_of(user1)) == 50100000000, 0);
         };
 
@@ -1930,7 +1817,7 @@ module ferum::market {
             assert!(coin::value(&orderA.buyCollateral) == 0, 0);
             assert!(coin::value(&orderA.sellCollateral) == 0, 0);
 
-            assert!(coin::balance<FMB>(address_of(user2)) == 52500000000, 0);
+            assert!(coin::balance<FMB>(address_of(user2)) == 57250000000, 0);
             assert!(coin::balance<FMA>(address_of(user2)) == 49900000000, 0);
         };
     }
@@ -1948,24 +1835,26 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 100000, 10000, empty_client_order_id()); // BUY 1 FMA @ 10 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 100000, 10000, empty_client_order_id()); // BUY 1 FMA @ 10 FMB
 
-        let targetSellID = add_limit_order<FMA, FMB>( // SELL 10 FMA @ 20 FMB
+        let targetSellID = add_order<FMA, FMB>( // SELL 10 FMA @ 20 FMB
             user2,
             SIDE_SELL,
+            TYPE_RESTING,
             from_u64(200000, 4),
             from_u64(100000, 4),
             empty_client_order_id(),
         );
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
 
         // BUY 1 FMA @ 20 FMB.
-        let orderID = add_limit_order<FMA, FMB>(
+        let orderID = add_order<FMA, FMB>(
             user1,
             SIDE_BUY,
+            TYPE_RESTING,
             from_u64(200000, 4),
             from_u64(10000, 4),
             empty_client_order_id(),
@@ -2007,24 +1896,26 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 95000, 10000, empty_client_order_id()); // BUY 1 FMA @ 9.5 FMB
-        let targetBuyID = add_limit_order<FMA, FMB>( // BUY 1 FMA @ 10 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 95000, 10000, empty_client_order_id()); // BUY 1 FMA @ 9.5 FMB
+        let targetBuyID = add_order<FMA, FMB>( // BUY 1 FMA @ 10 FMB
             user2,
             SIDE_BUY,
+            TYPE_RESTING,
             from_u64(100000, 4),
             from_u64(10000, 4),
             empty_client_order_id(),
         );
 
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 200000, 100000, empty_client_order_id()); // SELL 10 FMA @ 20 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 200000, 100000, empty_client_order_id()); // SELL 10 FMA @ 20 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
 
         // SELL 1 FMA @ 9 FMB.
-        let orderID = add_limit_order<FMA, FMB>(
+        let orderID = add_order<FMA, FMB>(
             user1,
             SIDE_SELL,
+            TYPE_RESTING,
             from_u64(90000, 4),
             from_u64(10000, 4),
             empty_client_order_id(),
@@ -2066,36 +1957,40 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 100000, 10000, empty_client_order_id()); // BUY 1 FMA @ 10 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 10000, 100000, empty_client_order_id()); // BUY 10 FMA @ 1 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 20000, 10000, empty_client_order_id()); // BUY 1 FMA @ 2 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 100000, 10000, empty_client_order_id()); // BUY 1 FMA @ 10 FMB
 
-        let targetSellIDA = add_limit_order<FMA, FMB>( // SELL 10 FMA @ 20 FMB
+        let targetSellIDA = add_order<FMA, FMB>( // SELL 10 FMA @ 20 FMB
             user2,
             SIDE_SELL,
+            TYPE_RESTING,
             from_u64(200000, 4),
             from_u64(100000, 4),
             empty_client_order_id(),
         );
-        let targetSellIDB = add_limit_order<FMA, FMB>( // SELL 1 FMA @ 21 FMB
+        let targetSellIDB = add_order<FMA, FMB>( // SELL 1 FMA @ 21 FMB
             user2,
             SIDE_SELL,
+            TYPE_RESTING,
             from_u64(210000, 4),
             from_u64(10000, 4),
             empty_client_order_id(),
         );
-        let targetSellIDC = add_limit_order<FMA, FMB>( // SELL 1 FMA @ 25 FMB
+        let targetSellIDC = add_order<FMA, FMB>( // SELL 1 FMA @ 25 FMB
             user2,
             SIDE_SELL,
+            TYPE_RESTING,
             from_u64(250000, 4),
             from_u64(10000, 4),
             empty_client_order_id(),
         );
 
         // BUY 11 FMA @ 22 FMB.
-        let orderID = add_limit_order<FMA, FMB>(
+        let orderID = add_order<FMA, FMB>(
             user1,
             SIDE_BUY,
+            TYPE_RESTING,
             from_u64(220000, 4),
             from_u64(110000, 4),
             empty_client_order_id(),
@@ -2149,36 +2044,40 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
-        let targetBuyIDC = add_limit_order<FMA, FMB>( // BUY 10 FMA @ 1 FMB
+        let targetBuyIDC = add_order<FMA, FMB>( // BUY 10 FMA @ 1 FMB
             user2,
             SIDE_BUY,
+            TYPE_RESTING,
             from_u64(10000, 4),
             from_u64(100000, 4),
             empty_client_order_id(),
         );
-        let targetBuyIDB = add_limit_order<FMA, FMB>( // BUY 1 FMA @ 2 FMB
+        let targetBuyIDB = add_order<FMA, FMB>( // BUY 1 FMA @ 2 FMB
             user2,
             SIDE_BUY,
+            TYPE_RESTING,
             from_u64(20000, 4),
             from_u64(10000, 4),
             empty_client_order_id(),
         );
-        let targetBuyIDA = add_limit_order<FMA, FMB>( // BUY 1 FMA @ 10 FMB
+        let targetBuyIDA = add_order<FMA, FMB>( // BUY 1 FMA @ 10 FMB
             user2,
             SIDE_BUY,
+            TYPE_RESTING,
             from_u64(100000, 4),
             from_u64(10000, 4),
             empty_client_order_id(),
         );
 
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 200000, 100000, empty_client_order_id()); // SELL 10 FMA @ 20 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 200000, 100000, empty_client_order_id()); // SELL 10 FMA @ 20 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 210000, 10000, empty_client_order_id()); // SELL 1 FMA @ 21 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 250000, 10000, empty_client_order_id()); // SELL 1 FMA @ 25 FMB
 
         // SELL 11 FMA @ 1.5 FMB.
-        let orderID = add_limit_order<FMA, FMB>(
+        let orderID = add_order<FMA, FMB>(
             user1,
             SIDE_SELL,
+            TYPE_RESTING,
             from_u64(15000, 4),
             from_u64(110000, 4),
             empty_client_order_id(),
@@ -2234,16 +2133,18 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
-        let buyID = add_limit_order<FMA, FMB>( // BUY 0.0002 FMA @ 0.0002 FMB
+        let buyID = add_order<FMA, FMB>( // BUY 0.0002 FMA @ 0.0002 FMB
             user2,
             SIDE_BUY,
+            TYPE_RESTING,
             from_u64(2, 4),
             from_u64(2, 4),
             empty_client_order_id(),
         );
-        let sellID = add_limit_order<FMA, FMB>( // SELL 0.0001 FMA @ 0.0001 FMB
+        let sellID = add_order<FMA, FMB>( // SELL 0.0001 FMA @ 0.0001 FMB
             user1,
             SIDE_SELL,
+            TYPE_RESTING,
             from_u64(1, 4),
             from_u64(1, 4),
             empty_client_order_id(),
@@ -2290,12 +2191,12 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 1, 2, empty_client_order_id()); // BUY 0.0002 FMA @ 0.0001 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 2, 2, empty_client_order_id()); // BUY 0.0002 FMA @ 0.0002 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 2, 2, empty_client_order_id()); // BUY 0.0002 FMA @ 0.0002 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 3, 1, empty_client_order_id()); // SELL 0.0001 FMA @ 0.0003 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 3, 1, empty_client_order_id()); // SELL 0.0001 FMA @ 0.0003 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 4, 1, empty_client_order_id()); // SELL 0.0001 FMA @ 0.0004 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 1, 2, empty_client_order_id()); // BUY 0.0002 FMA @ 0.0001 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 2, 2, empty_client_order_id()); // BUY 0.0002 FMA @ 0.0002 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 2, 2, empty_client_order_id()); // BUY 0.0002 FMA @ 0.0002 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 3, 1, empty_client_order_id()); // SELL 0.0001 FMA @ 0.0003 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 3, 1, empty_client_order_id()); // SELL 0.0001 FMA @ 0.0003 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 4, 1, empty_client_order_id()); // SELL 0.0001 FMA @ 0.0004 FMB
 
         // Validate quote.
         let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
@@ -2349,9 +2250,9 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 1, 2, empty_client_order_id()); // BUY 0.0002 FMA @ 0.0001 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 2, 2, empty_client_order_id()); // BUY 0.0002 FMA @ 0.0002 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_BUY, 2, 2, empty_client_order_id()); // BUY 0.0002 FMA @ 0.0002 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 1, 2, empty_client_order_id()); // BUY 0.0002 FMA @ 0.0001 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 2, 2, empty_client_order_id()); // BUY 0.0002 FMA @ 0.0002 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_BUY, TYPE_RESTING, 2, 2, empty_client_order_id()); // BUY 0.0002 FMA @ 0.0002 FMB
 
         // Validate quote.
         let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
@@ -2379,9 +2280,9 @@ module ferum::market {
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
         // Book setup.
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 3, 1, empty_client_order_id()); // SELL 0.0001 FMA @ 0.0003 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 3, 1, empty_client_order_id()); // SELL 0.0001 FMA @ 0.0003 FMB
-        add_limit_order_entry<FMA, FMB>(owner, SIDE_SELL, 4, 1, empty_client_order_id()); // SELL 0.0001 FMA @ 0.0004 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 3, 1, empty_client_order_id()); // SELL 0.0001 FMA @ 0.0003 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 3, 1, empty_client_order_id()); // SELL 0.0001 FMA @ 0.0003 FMB
+        add_order_entry<FMA, FMB>(owner, SIDE_SELL, TYPE_RESTING, 4, 1, empty_client_order_id()); // SELL 0.0001 FMA @ 0.0004 FMB
 
         // Validate quote.
         let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
