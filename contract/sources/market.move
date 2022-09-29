@@ -1087,19 +1087,13 @@ module ferum::market {
         cancel_order_entry<FMA, FMB>(user, buyID.counter);
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
-            let order = get_order<FMA, FMB>(book, buyID);
-            assert!(order.metadata.status == STATUS_CANCELLED, 0);
-            assert!(coin::value(&order.buyCollateral) == 0, 0);
-            assert!(coin::value(&order.sellCollateral) == 0, 0);
+            assert_order_finalized(book, buyID, STATUS_CANCELLED);
         };
 
         cancel_order_entry<FMA, FMB>(user, sellID.counter);
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
-            let order = get_order<FMA, FMB>(book, sellID);
-            assert!(order.metadata.status == STATUS_CANCELLED, 0);
-            assert!(coin::value(&order.buyCollateral) == 0, 0);
-            assert!(coin::value(&order.sellCollateral) == 0, 0);
+            assert_order_finalized(book, sellID, STATUS_CANCELLED);
         };
 
         assert!(coin::balance<FMB>(address_of(user)) == 10000000000, 0);
@@ -1131,10 +1125,7 @@ module ferum::market {
         cancel_order_as_custodian<FMA, FMB>(custodian, &cap, address_of(user), buyID.counter);
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
-            let order = get_order<FMA, FMB>(book, buyID);
-            assert!(order.metadata.status == STATUS_CANCELLED, 0);
-            assert!(coin::value(&order.buyCollateral) == 0, 0);
-            assert!(coin::value(&order.sellCollateral) == 0, 0);
+            assert_order_finalized(book, buyID, STATUS_CANCELLED);
         };
 
         assert!(coin::balance<FMB>(address_of(user)) == 10000000000, 0);
@@ -1241,10 +1232,7 @@ module ferum::market {
                 empty_client_order_id(),
             );
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
-            let order = get_order<FMA, FMB>(book, orderID);
-            assert!(order.metadata.status == STATUS_CANCELLED, 0);
-            assert!(coin::value(&order.buyCollateral) == 0, 0);
-            assert!(coin::value(&order.sellCollateral) == 0, 0);
+            assert_order_finalized(book, orderID, STATUS_CANCELLED);
         };
 
         // SELL 1 FMA @ 10 FMB.
@@ -1258,10 +1246,7 @@ module ferum::market {
                 empty_client_order_id(),
             );
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
-            let order = get_order<FMA, FMB>(book, orderID);
-            assert!(order.metadata.status == STATUS_CANCELLED, 0);
-            assert!(coin::value(&order.buyCollateral) == 0, 0);
-            assert!(coin::value(&order.sellCollateral) == 0, 0);
+            assert_order_finalized(book, orderID, STATUS_CANCELLED);
         };
     }
 
@@ -1306,10 +1291,7 @@ module ferum::market {
         // Verify IOC order user.
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
-            let order = get_order<FMA, FMB>(book, orderID);
-            assert!(order.metadata.status == STATUS_FILLED, 0);
-            assert!(coin::value(&order.buyCollateral) == 0, 0);
-            assert!(coin::value(&order.sellCollateral) == 0, 0);
+            assert_order_finalized(book, orderID, STATUS_FILLED);
             assert!(coin::balance<FMB>(address_of(user1)) == 8000000000, 0);
             assert!(coin::balance<FMA>(address_of(user1)) == 10100000000, 0);
         };
@@ -1367,10 +1349,7 @@ module ferum::market {
         // Verify user1.
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
-            let order = get_order<FMA, FMB>(book, orderID);
-            assert!(order.metadata.status == STATUS_FILLED, 0);
-            assert!(coin::value(&order.buyCollateral) == 0, 0);
-            assert!(coin::value(&order.sellCollateral) == 0, 0);
+            assert_order_finalized(book, orderID, STATUS_FILLED);
             assert!(coin::balance<FMB>(address_of(user1)) == 0, 0);
             assert!(coin::balance<FMA>(address_of(user1)) == 21000000000, 0);
         };
@@ -1378,10 +1357,7 @@ module ferum::market {
         // Verify user2.
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
-            let order = get_order<FMA, FMB>(book, targetSellID);
-            assert!(order.metadata.status == STATUS_FILLED, 0);
-            assert!(coin::value(&order.buyCollateral) == 0, 0);
-            assert!(coin::value(&order.sellCollateral) == 0, 0);
+            assert_order_finalized(book, targetSellID, STATUS_FILLED);
             assert!(coin::balance<FMB>(address_of(user2)) == 40000000000, 0);
             assert!(coin::balance<FMA>(address_of(user2)) == 19000000000, 0);
         };
@@ -1428,10 +1404,7 @@ module ferum::market {
         // Verify IOC order user.
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
-            let order = get_order<FMA, FMB>(book, orderID);
-            assert!(order.metadata.status == STATUS_FILLED, 0);
-            assert!(coin::value(&order.buyCollateral) == 0, 0);
-            assert!(coin::value(&order.sellCollateral) == 0, 0);
+            assert_order_finalized(book, orderID, STATUS_FILLED);
             assert!(coin::balance<FMB>(address_of(user1)) == 0, 0);
             assert!(coin::balance<FMA>(address_of(user1)) == 21000000000, 0);
         };
@@ -1439,10 +1412,7 @@ module ferum::market {
         // Verify limit order user.
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
-            let order = get_order<FMA, FMB>(book, targetSellID);
-            assert!(order.metadata.status == STATUS_FILLED, 0);
-            assert!(coin::value(&order.buyCollateral) == 0, 0);
-            assert!(coin::value(&order.sellCollateral) == 0, 0);
+            assert_order_finalized(book, targetSellID, STATUS_FILLED);
             assert!(coin::balance<FMB>(address_of(user2)) == 40000000000, 0);
             assert!(coin::balance<FMA>(address_of(user2)) == 19000000000, 0);
         };
@@ -1490,10 +1460,7 @@ module ferum::market {
         // Verify IOC order user.
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
-            let order = get_order<FMA, FMB>(book, orderID);
-            assert!(order.metadata.status == STATUS_FILLED, 0);
-            assert!(coin::value(&order.buyCollateral) == 0, 0);
-            assert!(coin::value(&order.sellCollateral) == 0, 0);
+            assert_order_finalized(book, orderID, STATUS_FILLED);
             assert!(coin::balance<FMB>(address_of(user1)) == 10750000000, 0);
             assert!(coin::balance<FMA>(address_of(user1)) == 9900000000, 0);
         };
@@ -1501,10 +1468,7 @@ module ferum::market {
         // Verify limit order user.
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
-            let order = get_order<FMA, FMB>(book, targetBuyID);
-            assert!(order.metadata.status == STATUS_FILLED, 0);
-            assert!(coin::value(&order.buyCollateral) == 0, 0);
-            assert!(coin::value(&order.sellCollateral) == 0, 0);
+            assert_order_finalized(book, targetBuyID, STATUS_FILLED);
             assert!(coin::balance<FMB>(address_of(user2)) == 9250000000, 0);
             assert!(coin::balance<FMA>(address_of(user2)) == 10100000000, 0);
         };
@@ -1569,11 +1533,9 @@ module ferum::market {
         // Verify IOC order user.
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
-            let order = get_order<FMA, FMB>(book, orderID);
 
-            assert!(order.metadata.status == STATUS_FILLED, 0);
-            assert!(coin::value(&order.buyCollateral) == 0, 0);
-            assert!(coin::value(&order.sellCollateral) == 0, 0);
+            assert_order_finalized(book, orderID, STATUS_FILLED);
+
             assert!(coin::balance<FMB>(address_of(user1)) == 11000000000, 0);
             assert!(coin::balance<FMA>(address_of(user1)) == 9500000000, 0);
         };
@@ -1582,15 +1544,8 @@ module ferum::market {
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
 
-            let orderA = get_order<FMA, FMB>(book, targetBuyIDA);
-            assert!(orderA.metadata.status == STATUS_FILLED, 0);
-            assert!(coin::value(&orderA.buyCollateral) == 0, 0);
-            assert!(coin::value(&orderA.sellCollateral) == 0, 0);
-
-            let orderB = get_order<FMA, FMB>(book, targetBuyIDB);
-            assert!(orderB.metadata.status == STATUS_FILLED, 0);
-            assert!(coin::value(&orderB.buyCollateral) == 0, 0);
-            assert!(coin::value(&orderB.sellCollateral) == 0, 0);
+            assert_order_finalized(book, targetBuyIDA, STATUS_FILLED);
+            assert_order_finalized(book, targetBuyIDB, STATUS_FILLED);
 
             let orderC = get_order<FMA, FMB>(book, targetBuyIDC);
             assert!(orderC.metadata.status == STATUS_PENDING, 0);
@@ -1661,11 +1616,7 @@ module ferum::market {
         // Verify IOC order user.
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
-            let order = get_order<FMA, FMB>(book, orderID);
-
-            assert!(order.metadata.status == STATUS_FILLED, 0);
-            assert!(coin::value(&order.buyCollateral) == 0, 0);
-            assert!(coin::value(&order.sellCollateral) == 0, 0);
+            assert_order_finalized(book, orderID, STATUS_FILLED);
             assert!(coin::balance<FMB>(address_of(user1)) == 19700000000, 0);
             assert!(coin::balance<FMA>(address_of(user1)) == 51200000000, 0);
         };
@@ -1674,20 +1625,9 @@ module ferum::market {
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
 
-            let orderA = get_order<FMA, FMB>(book, targetSellIDA);
-            assert!(orderA.metadata.status == STATUS_FILLED, 0);
-            assert!(coin::value(&orderA.buyCollateral) == 0, 0);
-            assert!(coin::value(&orderA.sellCollateral) == 0, 0);
-
-            let orderB = get_order<FMA, FMB>(book, targetSellIDB);
-            assert!(orderB.metadata.status == STATUS_FILLED, 0);
-            assert!(coin::value(&orderB.buyCollateral) == 0, 0);
-            assert!(coin::value(&orderB.sellCollateral) == 0, 0);
-
-            let orderC = get_order<FMA, FMB>(book, targetSellIDC);
-            assert!(orderC.metadata.status == STATUS_FILLED, 0);
-            assert!(coin::value(&orderC.buyCollateral) == 0, 0);
-            assert!(coin::value(&orderC.sellCollateral) == 0, 0);
+            assert_order_finalized(book, targetSellIDA, STATUS_FILLED);
+            assert_order_finalized(book, targetSellIDB, STATUS_FILLED);
+            assert_order_finalized(book, targetSellIDC, STATUS_FILLED);
 
             assert!(coin::balance<FMB>(address_of(user2)) == 80300000000, 0);
             assert!(coin::balance<FMA>(address_of(user2)) == 48800000000, 0);
@@ -1735,11 +1675,7 @@ module ferum::market {
         // Verify IOC order user.
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
-            let order = get_order<FMA, FMB>(book, orderID);
-
-            assert!(order.metadata.status == STATUS_CANCELLED, 0);
-            assert!(coin::value(&order.buyCollateral) == 0, 0);
-            assert!(coin::value(&order.sellCollateral) == 0, 0);
+            assert_order_finalized(book, orderID, STATUS_CANCELLED);
             assert!(coin::balance<FMB>(address_of(user1)) == 50550000000, 0);
             assert!(coin::balance<FMA>(address_of(user1)) == 49900000000, 0);
         };
@@ -1748,10 +1684,7 @@ module ferum::market {
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
 
-            let orderA = get_order<FMA, FMB>(book, targetBuyIDA);
-            assert!(orderA.metadata.status == STATUS_FILLED, 0);
-            assert!(coin::value(&orderA.buyCollateral) == 0, 0);
-            assert!(coin::value(&orderA.sellCollateral) == 0, 0);
+            assert_order_finalized(book, targetBuyIDA, STATUS_FILLED);
 
             assert!(coin::balance<FMB>(address_of(user2)) == 49450000000, 0);
             assert!(coin::balance<FMA>(address_of(user2)) == 50100000000, 0);
@@ -1799,11 +1732,7 @@ module ferum::market {
         // Verify IOC order user.
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
-            let order = get_order<FMA, FMB>(book, orderID);
-
-            assert!(order.metadata.status == STATUS_CANCELLED, 0);
-            assert!(coin::value(&order.buyCollateral) == 0, 0);
-            assert!(coin::value(&order.sellCollateral) == 0, 0);
+            assert_order_finalized(book, orderID, STATUS_CANCELLED);
             assert!(coin::balance<FMB>(address_of(user1)) == 42750000000, 0);
             assert!(coin::balance<FMA>(address_of(user1)) == 50100000000, 0);
         };
@@ -1812,10 +1741,7 @@ module ferum::market {
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
 
-            let orderA = get_order<FMA, FMB>(book, targetSellIDA);
-            assert!(orderA.metadata.status == STATUS_FILLED, 0);
-            assert!(coin::value(&orderA.buyCollateral) == 0, 0);
-            assert!(coin::value(&orderA.sellCollateral) == 0, 0);
+            assert_order_finalized(book, targetSellIDA, STATUS_FILLED);
 
             assert!(coin::balance<FMB>(address_of(user2)) == 57250000000, 0);
             assert!(coin::balance<FMA>(address_of(user2)) == 49900000000, 0);
@@ -1863,10 +1789,7 @@ module ferum::market {
         // Verify buy order user.
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
-            let order = get_order<FMA, FMB>(book, orderID);
-            assert!(order.metadata.status == STATUS_FILLED, 0);
-            assert!(coin::value(&order.buyCollateral) == 0, 0);
-            assert!(coin::value(&order.sellCollateral) == 0, 0);
+            assert_order_finalized(book, orderID, STATUS_FILLED);
             assert!(coin::balance<FMB>(address_of(user1)) == 8000000000, 0);
             assert!(coin::balance<FMA>(address_of(user1)) == 10100000000, 0);
         };
@@ -1924,10 +1847,7 @@ module ferum::market {
         // Verify sell order user.
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
-            let order = get_order<FMA, FMB>(book, orderID);
-            assert!(order.metadata.status == STATUS_FILLED, 0);
-            assert!(coin::value(&order.buyCollateral) == 0, 0);
-            assert!(coin::value(&order.sellCollateral) == 0, 0);
+            assert_order_finalized(book, orderID, STATUS_FILLED);
             assert!(coin::balance<FMA>(address_of(user1)) == 9900000000, 0);
             assert!(coin::balance<FMB>(address_of(user1)) == 10950000000, 0);
         };
@@ -1935,10 +1855,7 @@ module ferum::market {
         // Verify buy order user.
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
-            let order = get_order<FMA, FMB>(book, targetBuyID);
-            assert!(order.metadata.status == STATUS_FILLED, 0);
-            assert!(coin::value(&order.buyCollateral) == 0, 0);
-            assert!(coin::value(&order.sellCollateral) == 0, 0);
+            assert_order_finalized(book, targetBuyID, STATUS_FILLED);
             assert!(coin::balance<FMB>(address_of(user2)) == 9050000000, 0);
             assert!(coin::balance<FMA>(address_of(user2)) == 10100000000, 0);
         };
@@ -1999,10 +1916,7 @@ module ferum::market {
         // Verify buy order user.
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
-            let order = get_order<FMA, FMB>(book, orderID);
-            assert!(order.metadata.status == STATUS_FILLED, 0);
-            assert!(coin::value(&order.buyCollateral) == 0, 0);
-            assert!(coin::value(&order.sellCollateral) == 0, 0);
+            assert_order_finalized(book, orderID, STATUS_FILLED);
             assert!(coin::balance<FMB>(address_of(user1)) == 26850000000, 0);
             assert!(coin::balance<FMA>(address_of(user1)) == 51100000000, 0);
         };
@@ -2010,16 +1924,8 @@ module ferum::market {
         // Verify sell orders' users.
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
-
-            let orderA = get_order<FMA, FMB>(book, targetSellIDA);
-            assert!(orderA.metadata.status == STATUS_FILLED, 0);
-            assert!(coin::value(&orderA.buyCollateral) == 0, 0);
-            assert!(coin::value(&orderA.sellCollateral) == 0, 0);
-
-            let orderB = get_order<FMA, FMB>(book, targetSellIDB);
-            assert!(orderB.metadata.status == STATUS_FILLED, 0);
-            assert!(coin::value(&orderB.buyCollateral) == 0, 0);
-            assert!(coin::value(&orderB.sellCollateral) == 0, 0);
+            assert_order_finalized(book, targetSellIDA, STATUS_FILLED);
+            assert_order_finalized(book, targetSellIDB, STATUS_FILLED);
 
             let orderC = get_order<FMA, FMB>(book, targetSellIDC);
             assert!(orderC.metadata.status == STATUS_PENDING, 0);
@@ -2098,15 +2004,8 @@ module ferum::market {
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
 
-            let orderA = get_order<FMA, FMB>(book, targetBuyIDA);
-            assert!(orderA.metadata.status == STATUS_FILLED, 0);
-            assert!(coin::value(&orderA.buyCollateral) == 0, 0);
-            assert!(coin::value(&orderA.sellCollateral) == 0, 0);
-
-            let orderB = get_order<FMA, FMB>(book, targetBuyIDB);
-            assert!(orderB.metadata.status == STATUS_FILLED, 0);
-            assert!(coin::value(&orderB.buyCollateral) == 0, 0);
-            assert!(coin::value(&orderB.sellCollateral) == 0, 0);
+            assert_order_finalized(book, targetBuyIDA, STATUS_FILLED);
+            assert_order_finalized(book, targetBuyIDB, STATUS_FILLED);
 
             let orderC = get_order<FMA, FMB>(book, targetBuyIDC);
             assert!(orderC.metadata.status == STATUS_PENDING, 0);
@@ -2171,10 +2070,7 @@ module ferum::market {
         // Verify sell.
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
-            let order = get_order<FMA, FMB>(book, sellID);
-            assert!(order.metadata.status == STATUS_FILLED, 0);
-            assert!(coin::value(&order.buyCollateral) == 0, 0);
-            assert!(coin::value(&order.sellCollateral) == 0, 0);
+            assert_order_finalized(book, sellID, STATUS_FILLED);
             assert!(coin::balance<FMB>(address_of(user1)) == 50000000002, 0);
             assert!(coin::balance<FMA>(address_of(user1)) == 49999990000, 0);
         };
@@ -2330,5 +2226,20 @@ module ferum::market {
     #[test_only]
     fun empty_client_order_id(): String {
         string::utf8(b"")
+    }
+
+    #[test_only]
+    fun assert_order_finalized<I, Q>(book: &OrderBook<I, Q>, orderID: OrderID, status: u8) {
+        let order = get_order(book, orderID);
+        let orderStatus = order.metadata.status;
+        assert!(orderStatus == status, 0);
+        if (orderStatus == STATUS_PARTIALLY_FILLED || orderStatus == STATUS_CANCELLED) {
+            assert!(fixed_point_64::gt(order.metadata.remainingQty, fixed_point_64::zero()), 0);
+        } else {
+            assert!(fixed_point_64::eq(order.metadata.remainingQty, fixed_point_64::zero()), 0);
+        };
+        assert!(table::contains(&book.finalizedOrderMap, orderID), 0);
+        assert!(coin::value(&order.buyCollateral) == 0, 0);
+        assert!(coin::value(&order.sellCollateral) == 0, 0);
     }
 }
