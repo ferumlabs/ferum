@@ -70,10 +70,8 @@ module ferum::market {
     const STATUS_PENDING: u8 = 1;
     // Represents a cancelled order.
     const STATUS_CANCELLED: u8 = 2;
-    // Represents a partially filled order.
-    const STATUS_PARTIALLY_FILLED: u8 = 3;
     // Represents a filled order.
-    const STATUS_FILLED: u8 = 4;
+    const STATUS_FILLED: u8 = 3;
 
     // Used as the default value, ie: the order was not cancelled.
     const CANCEL_AGENT_NONE: u8 = 0;
@@ -804,10 +802,8 @@ module ferum::market {
         finalize_event_handle: &mut EventHandle<FinalizeEvent>,
         order: &mut Order<I, Q>,
     ): bool {
-        let hasCollateral = has_remaining_collateral(order);
-        let hasQty = has_remaining_qty(order);
-        if (!hasCollateral || !hasQty) {
-            order.metadata.status = if (hasQty) STATUS_PARTIALLY_FILLED else STATUS_FILLED;
+        if (!has_remaining_qty(order)) {
+            order.metadata.status = STATUS_FILLED;
             order.metadata.updateCounter = order.metadata.updateCounter + 1;
             emit_event(finalize_event_handle, FinalizeEvent{
                 orderID: order.id,
@@ -831,10 +827,6 @@ module ferum::market {
 
     fun has_remaining_qty<I, Q>(order: &Order<I, Q>): bool {
         !fixed_point_64::eq(order.metadata.remainingQty, fixed_point_64::zero())
-    }
-
-    fun has_remaining_collateral<I, Q>(order: &Order<I, Q>): bool {
-        coin::value(&order.buyCollateral) > 0 || coin::value(&order.sellCollateral) > 0
     }
 
     fun get_remaining_collateral<I, Q>(order: &Order<I, Q>): FixedPoint64 {
@@ -864,7 +856,6 @@ module ferum::market {
 
     fun is_order_finalized<I, Q>(order: &Order<I, Q>): bool {
         order.metadata.status == STATUS_FILLED ||
-            order.metadata.status == STATUS_PARTIALLY_FILLED ||
             order.metadata.status == STATUS_CANCELLED
     }
 
@@ -2233,7 +2224,7 @@ module ferum::market {
         let order = get_order(book, orderID);
         let orderStatus = order.metadata.status;
         assert!(orderStatus == status, 0);
-        if (orderStatus == STATUS_PARTIALLY_FILLED || orderStatus == STATUS_CANCELLED) {
+        if (orderStatus == STATUS_CANCELLED) {
             assert!(fixed_point_64::gt(order.metadata.remainingQty, fixed_point_64::zero()), 0);
         } else {
             assert!(fixed_point_64::eq(order.metadata.remainingQty, fixed_point_64::zero()), 0);
