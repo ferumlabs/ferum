@@ -9,7 +9,7 @@ module ferum::market {
     use std::string::{Self, String};
 
     use ferum::admin::{register_market, get_market_addr};
-    use ferum::platform::{UserIdentifier, get_addresses_from_user_identifier, is_address_valid, ProtocolCapability, get_protocol_address, is_user_identifier_valid, sentinal_user_identifier, register_protocol, get_user_identifier, drop_protocol_capability};
+    use ferum::platform::{UserIdentifier, get_addresses_from_user_identifier, is_address_valid, ProtocolCapability, get_protocol_address, is_user_identifier_valid, sentinal_user_identifier, register_protocol, get_user_identifier};
     use ferum_std::math::min_u8;
     use ferum::order_tree::{Self, Tree, is_empty, max_key, min_key, first_value_at};
     use ferum_std::fixed_point_64::{Self, FixedPoint64, from_u64};
@@ -21,6 +21,8 @@ module ferum::market {
     use ferum::coin_test_helpers::{FMA, FMB, setup_fake_coins, register_fmb, register_fma, create_fake_coins};
     #[test_only]
     use aptos_framework::account;
+    #[test_only]
+    use ferum::platform::{drop_protocol_capability};
 
     //
     // Errors
