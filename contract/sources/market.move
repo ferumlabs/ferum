@@ -9,7 +9,7 @@ module ferum::market {
     use std::string::{Self, String};
 
     use ferum::admin::{register_market, get_market_addr};
-    use ferum::custodian::{CustodianCapability, get_custodian_address, is_custodian_address_valid};
+    use ferum::platform::{UserIdentifier, get_addresses_from_user_identifier, is_address_valid, ProtocolCapability, get_protocol_address, is_user_identifier_valid, sentinal_user_identifier, register_protocol, get_user_identifier, drop_protocol_capability};
     use ferum_std::math::min_u8;
     use ferum::order_tree::{Self, Tree, is_empty, max_key, min_key, first_value_at};
     use ferum_std::fixed_point_64::{Self, FixedPoint64, from_u64};
@@ -17,8 +17,6 @@ module ferum::market {
 
     #[test_only]
     use ferum::admin::{init_ferum};
-    #[test_only]
-    use ferum::custodian::{register_custodian, drop_custodian_capability};
     #[test_only]
     use ferum::coin_test_helpers::{FMA, FMB, setup_fake_coins, register_fmb, register_fma, create_fake_coins};
     #[test_only]
@@ -43,8 +41,8 @@ module ferum::market {
     const ERR_INVALID_DECIMAL_CONFIG: u64 = 13;
     const ERR_INVALID_SIDE: u64 = 14;
     const ERR_CLORDID_TOO_LARGE: u64 = 15;
-    const ERR_NOT_CUSTODIAN: u64 = 16;
-    const ERR_INVALID_CUSTODIAN_ADDRESS: u64 = 17;
+    const ERR_NOT_CORRECT_PROTOCOL: u64 = 16;
+    const ERR_INVALID_USER_IDENTIFIER: u64 = 17;
 
     //
     // Enums.
@@ -138,6 +136,10 @@ module ferum::market {
         // an event with a higher update counter is more up to date
         // than an event with a lower counter.
         updateCounter: u128,
+        // Identifies both the user and the protocol the user used to place this order.
+        // If this is not populated, then the order was not placed by a protocol.
+        // If not placed via a protocol, will be the sentinal value (see platform::sentinal_user_identifier).
+        userIdentifier: UserIdentifier,
     }
 
     struct Order<phantom I, phantom Q> has store {
@@ -149,9 +151,6 @@ module ferum::market {
         buyCollateral: coin::Coin<Q>,
         // Remaining sell collateral for this order.
         sellCollateral: coin::Coin<I>,
-        // Address of the custodian that placed this order.
-        // If not placed via a custodian, will be the sentinal value of @0x0.
-        custodianAddress: address,
     }
 
     struct OrderBook<phantom I, phantom Q> has key, store {
@@ -296,20 +295,19 @@ module ferum::market {
         qty: FixedPoint64,
         clientOrderID: String,
     ): OrderID acquires OrderBook, UserMarketInfo {
-        add_order_internal<I, Q>(owner, side, type, price, qty, clientOrderID, @0x0)
+        add_order_internal<I, Q>(owner, side, type, price, qty, clientOrderID, sentinal_user_identifier())
     }
 
-    public fun add_order_as_custodian<I, Q>(
+    public fun add_order_for_user<I, Q>(
         owner: &signer,
-        custodianCap: &CustodianCapability,
+        userIdentifier: UserIdentifier,
         side: u8,
         type: u8,
         price: FixedPoint64,
         qty: FixedPoint64,
         clientOrderID: String,
     ): OrderID acquires OrderBook, UserMarketInfo {
-        let custodianAddress = get_custodian_address(custodianCap);
-        assert!(is_custodian_address_valid(custodianAddress), ERR_INVALID_CUSTODIAN_ADDRESS);
+        assert!(is_user_identifier_valid(&userIdentifier), ERR_INVALID_USER_IDENTIFIER);
 
         add_order_internal<I, Q>(
             owner,
@@ -318,22 +316,22 @@ module ferum::market {
             price,
             qty,
             clientOrderID,
-            custodianAddress,
+            userIdentifier,
         )
     }
 
-    public fun cancel_order_as_custodian<I, Q>(
+    public fun cancel_order_for_user<I, Q>(
         signer: &signer,
-        custodianCap: &CustodianCapability,
+        protocolCapability: &ProtocolCapability,
         orderOwner: address,
         orderIDCounter: u128,
     ) acquires OrderBook {
-        let custodianAddress = get_custodian_address(custodianCap);
+        let protocolAddress = get_protocol_address(protocolCapability);
         let id = OrderID {
             owner: orderOwner,
             counter: orderIDCounter,
         };
-        cancel_order_internal<I, Q>(signer, id, custodianAddress)
+        cancel_order_internal<I, Q>(signer, id, protocolAddress)
     }
 
     public fun get_order_collateral_amount<I, Q>(
@@ -370,7 +368,7 @@ module ferum::market {
         price: FixedPoint64,
         qty: FixedPoint64,
         clientOrderID: String,
-        custodianAddress: address,
+        userIdentifier: UserIdentifier,
     ): OrderID acquires OrderBook, UserMarketInfo {
         let bookAddr = get_market_addr<I, Q>();
         assert!(exists<OrderBook<I, Q>>(bookAddr), ERR_BOOK_DOES_NOT_EXIST);
@@ -391,24 +389,24 @@ module ferum::market {
             if (side == SIDE_SELL) {
                 if (is_empty(&book.buys)) {
                     // It doesn't cross the spread, cancel.
-                    return create_cancelled_taker_order(book, ownerAddr, side, type, price, qty, clientOrderID, custodianAddress)
+                    return create_cancelled_taker_order(book, ownerAddr, side, type, price, qty, clientOrderID, userIdentifier)
                 };
                 let topOfBook= fixed_point_64::new_u128(max_key(&book.buys));
                 if (fixed_point_64::gt(price, topOfBook)) {
                     // It doesn't cross the spread, cancel.
-                    return create_cancelled_taker_order(book, ownerAddr, side, type, price, qty, clientOrderID, custodianAddress)
+                    return create_cancelled_taker_order(book, ownerAddr, side, type, price, qty, clientOrderID, userIdentifier)
                 }
             } else if (side == SIDE_BUY) {
                 if (is_empty(&book.sells)) {
                     // It doesn't cross the spread, cancel.
-                    return create_cancelled_taker_order(book, ownerAddr, side, type, price, qty, clientOrderID, custodianAddress)
+                    return create_cancelled_taker_order(book, ownerAddr, side, type, price, qty, clientOrderID, userIdentifier)
                 };
                 let topOfBook= fixed_point_64::new_u128(min_key(&book.sells));
                 if (fixed_point_64::lt(price, topOfBook)) {
                     std::debug::print(&topOfBook);
                     std::debug::print(&price);
                     // It doesn't cross the spread, cancel.
-                    return create_cancelled_taker_order(book, ownerAddr, side, type, price, qty, clientOrderID, custodianAddress)
+                    return create_cancelled_taker_order(book, ownerAddr, side, type, price, qty, clientOrderID, userIdentifier)
                 }
             } else {
                 abort ERR_INVALID_SIDE
@@ -428,7 +426,6 @@ module ferum::market {
             id: orderID,
             buyCollateral,
             sellCollateral,
-            custodianAddress,
             metadata: OrderMetadata{
                 instrumentType: type_info::type_of<I>(),
                 quoteType: type_info::type_of<Q>(),
@@ -441,13 +438,14 @@ module ferum::market {
                 clientOrderID,
                 executionCounter: 0,
                 updateCounter: 0,
+                userIdentifier,
             },
         };
         add_order_to_book<I, Q>(book, order);
         orderID
     }
 
-    fun cancel_order_internal<I, Q>(owner: &signer, orderID: OrderID, custodianAddress: address) acquires OrderBook {
+    fun cancel_order_internal<I, Q>(owner: &signer, orderID: OrderID, protocolAddress: address) acquires OrderBook {
         let bookAddr = get_market_addr<I, Q>();
         assert!(exists<OrderBook<I, Q>>(bookAddr), ERR_BOOK_DOES_NOT_EXIST);
 
@@ -456,8 +454,9 @@ module ferum::market {
         assert!(table::contains(&book.orderMap, orderID), ERR_UNKNOWN_ORDER);
         let order = table::borrow_mut(&mut book.orderMap, orderID);
 
-        if (is_custodian_address_valid(order.custodianAddress)) {
-            assert!(custodianAddress == order.custodianAddress, ERR_NOT_CUSTODIAN);
+        let (orderProtocolAddress, _) = get_addresses_from_user_identifier(&order.metadata.userIdentifier);
+        if (is_address_valid(orderProtocolAddress)) {
+            assert!(protocolAddress == orderProtocolAddress, ERR_NOT_CORRECT_PROTOCOL);
         } else {
             assert!(ownerAddr == order.id.owner, ERR_NOT_OWNER);
         };
@@ -499,14 +498,13 @@ module ferum::market {
         price: FixedPoint64,
         qty: FixedPoint64,
         clientOrderID: String,
-        custodianAddress: address,
+        userIdentifier: UserIdentifier,
     ): OrderID acquires UserMarketInfo {
         let orderID = gen_order_id<I, Q>(ownerAddr);
         let order = Order<I, Q>{
             id: orderID,
             buyCollateral: coin::zero(),
             sellCollateral: coin::zero(),
-            custodianAddress,
             metadata: OrderMetadata{
                 instrumentType: type_info::type_of<I>(),
                 quoteType: type_info::type_of<Q>(),
@@ -519,6 +517,7 @@ module ferum::market {
                 clientOrderID,
                 executionCounter: 0,
                 updateCounter: 1,
+                userIdentifier,
             },
         };
         validate_order(&order);
@@ -1091,21 +1090,29 @@ module ferum::market {
         assert!(coin::balance<FMA>(address_of(user)) == 10000000000, 0);
     }
 
-    #[test(owner = @ferum, aptos = @0x1, user = @0x2, custodian = @0x4)]
-    fun test_cancel_orders_as_custodian(owner: &signer, aptos: &signer, user: &signer, custodian: &signer) acquires OrderBook, UserMarketInfo {
-        // Tests that custodial orders can be added a book and then cancelled.
+    #[test(owner = @ferum, aptos = @0x1, user = @0x2, userProtocolAccount = @0x3, protocol = @0x4)]
+    fun test_cancel_order_for_user_made_using_protocol_user_account(
+        owner: &signer,
+        aptos: &signer,
+        user: &signer,
+        userProtocolAccount: &signer,
+        protocol: &signer,
+    ) acquires OrderBook, UserMarketInfo {
+        // Tests that protocol created order can be added a book and then cancelled.
 
         account::create_account_for_test(address_of(owner));
         account::create_account_for_test(address_of(user));
-        setup_fake_coins(owner, user, 10000000000, 8);
+        account::create_account_for_test(address_of(userProtocolAccount));
+        setup_fake_coins(owner, userProtocolAccount, 10000000000, 8);
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
-        let cap = register_custodian(custodian);
+        let cap = register_protocol(protocol);
 
         // BUY 10 FMA @ 1 FMB
-        let buyID = add_order_as_custodian<FMA, FMB>(
-            user,
-            &cap,
+        let userIdentifier = get_user_identifier(user, &cap);
+        let buyID = add_order_for_user<FMA, FMB>(
+            userProtocolAccount,
+            userIdentifier,
             SIDE_BUY,
             TYPE_RESTING,
             from_u64(10000, 4),
@@ -1113,7 +1120,47 @@ module ferum::market {
             empty_client_order_id(),
         );
 
-        cancel_order_as_custodian<FMA, FMB>(custodian, &cap, address_of(user), buyID.counter);
+        cancel_order_for_user<FMA, FMB>(protocol, &cap, address_of(userProtocolAccount), buyID.counter);
+        {
+            let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
+            assert_order_finalized(book, buyID, STATUS_CANCELLED);
+        };
+
+        assert!(coin::balance<FMB>(address_of(userProtocolAccount)) == 10000000000, 0);
+        assert!(coin::balance<FMA>(address_of(userProtocolAccount)) == 10000000000, 0);
+
+        drop_protocol_capability(cap);
+    }
+
+    #[test(owner = @ferum, aptos = @0x1, user = @0x2, protocol = @0x4)]
+    fun test_cancel_order_for_user_made_using_user_account_directly(
+        owner: &signer,
+        aptos: &signer,
+        user: &signer,
+        protocol: &signer,
+    ) acquires OrderBook, UserMarketInfo {
+        // Tests that protocol created order can be added a book and then cancelled.
+
+        account::create_account_for_test(address_of(owner));
+        account::create_account_for_test(address_of(user));
+        setup_fake_coins(owner, user, 10000000000, 8);
+        setup_market_for_test<FMA, FMB>(owner, aptos);
+
+        let cap = register_protocol(protocol);
+
+        // BUY 10 FMA @ 1 FMB
+        let userIdentifier = get_user_identifier(user, &cap);
+        let buyID = add_order_for_user<FMA, FMB>(
+            user,
+            userIdentifier,
+            SIDE_BUY,
+            TYPE_RESTING,
+            from_u64(10000, 4),
+            from_u64(100000, 4),
+            empty_client_order_id(),
+        );
+
+        cancel_order_for_user<FMA, FMB>(protocol, &cap, address_of(user), buyID.counter);
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
             assert_order_finalized(book, buyID, STATUS_CANCELLED);
@@ -1122,12 +1169,17 @@ module ferum::market {
         assert!(coin::balance<FMB>(address_of(user)) == 10000000000, 0);
         assert!(coin::balance<FMA>(address_of(user)) == 10000000000, 0);
 
-        drop_custodian_capability(cap);
+        drop_protocol_capability(cap);
     }
 
-    #[test(owner = @ferum, aptos = @0x1, user = @0x2, custodian = @0x4)]
-    #[expected_failure]
-    fun test_cancel_custodial_order_without_capability(owner: &signer, aptos: &signer, user: &signer, custodian: &signer) acquires OrderBook, UserMarketInfo {
+    #[test(owner = @ferum, aptos = @0x1, user = @0x2, protocol = @0x4)]
+    #[expected_failure(abort_code = 16)]
+    fun test_cancel_order_for_user_without_protocol_capability(
+        owner: &signer,
+        aptos: &signer,
+        user: &signer,
+        protocol: &signer,
+    ) acquires OrderBook, UserMarketInfo {
         // Tests that custodial orders can't be cancelled by the user.
 
         account::create_account_for_test(address_of(owner));
@@ -1135,12 +1187,13 @@ module ferum::market {
         setup_fake_coins(owner, user, 10000000000, 8);
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
-        let cap = register_custodian(custodian);
+        let cap = register_protocol(protocol);
 
         // BUY 10 FMA @ 1 FMB
-        let buyID = add_order_as_custodian<FMA, FMB>(
+        let userIdentifier = get_user_identifier(user, &cap);
+        let buyID = add_order_for_user<FMA, FMB>(
             user,
-            &cap,
+            userIdentifier,
             SIDE_BUY,
             TYPE_RESTING,
             from_u64(10000, 4),
@@ -1150,12 +1203,17 @@ module ferum::market {
 
         cancel_order_entry<FMA, FMB>(user,  buyID.counter);
 
-        drop_custodian_capability(cap);
+        drop_protocol_capability(cap);
     }
 
-    #[test(owner = @ferum, aptos = @0x1, user = @0x2, custodian = @0x4)]
-    #[expected_failure]
-    fun test_cancel_non_custodial_order_as_custodian(owner: &signer, aptos: &signer, user: &signer, custodian: &signer) acquires OrderBook, UserMarketInfo {
+    #[test(owner = @ferum, aptos = @0x1, user = @0x2, protocol = @0x4)]
+    #[expected_failure(abort_code = 8)]
+    fun test_cancel_non_protocol_order_as_protocol(
+        owner: &signer,
+        aptos: &signer,
+        user: &signer,
+        protocol: &signer,
+    ) acquires OrderBook, UserMarketInfo {
         // Tests that non custodial orders can only be cancelled by the original user.
 
         account::create_account_for_test(address_of(owner));
@@ -1163,7 +1221,7 @@ module ferum::market {
         setup_fake_coins(owner, user, 10000000000, 8);
         setup_market_for_test<FMA, FMB>(owner, aptos);
 
-        let cap = register_custodian(custodian);
+        let cap = register_protocol(protocol);
 
         // BUY 10 FMA @ 1 FMB
         let buyID = add_order<FMA, FMB>(
@@ -1175,9 +1233,9 @@ module ferum::market {
             empty_client_order_id(),
         );
 
-        cancel_order_as_custodian<FMA, FMB>(custodian, &cap, address_of(user), buyID.counter);
+        cancel_order_for_user<FMA, FMB>(protocol, &cap, address_of(user), buyID.counter);
 
-        drop_custodian_capability(cap);
+        drop_protocol_capability(cap);
     }
 
     #[test(owner = @ferum, aptos = @0x1, user1 = @0x2, user2 = @0x4)]
