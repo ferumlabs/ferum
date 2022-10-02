@@ -5,7 +5,7 @@ import {
   MaybeHexString,
   HexString,
 } from "aptos";
-import { client } from "./aptos-client";
+import { getClient } from "./aptos-client";
 import Config, { CONFIG_PATH } from "./config";
 import { sendSignedTransactionWithAccount } from "./utils/transaction-utils";
 
@@ -109,7 +109,7 @@ async function getBalance(
   coinName: string
 ): Promise<number> {
   try {
-    const resource = await client.getAccountResource(
+    const resource = await getClient().getAccountResource(
       accountAddress,
       `0x1::coin::CoinStore<${coinName}>`
     );
@@ -156,7 +156,7 @@ export async function createTestCoin(
     coinSymbol,
   );
   console.log(`Transaction Hash: ${txHash}`);
-  await client.waitForTransaction(txHash);
+  await getClient().waitForTransaction(txHash);
 
   console.log(`\n---\n`);
 
@@ -167,7 +167,7 @@ export async function createTestCoin(
     coinName
   );
   console.log(`Transaction Hash: ${txHash}`);
-  await client.waitForTransaction(txHash);
+  await getClient().waitForTransaction(txHash);
 
   console.log(`\n---\n`);
 
@@ -180,7 +180,7 @@ export async function createTestCoin(
     coinName
   );
   console.log(`Transaction Hash: ${txHash}`);
-  await client.waitForTransaction(txHash);
+  await getClient().waitForTransaction(txHash);
 
   console.log(`\n---\n`);
 

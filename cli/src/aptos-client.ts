@@ -1,8 +1,50 @@
 import { AptosClient, FaucetClient } from "aptos";
+import { getEnv } from "./utils/env";
 
-export const NODE_URL = "https://fullnode.devnet.aptoslabs.com/v1";
-const FAUCET_URL = "https://faucet.devnet.aptoslabs.com";
+const DEVNET_NODE_URL = "https://fullnode.devnet.aptoslabs.com/v1";
+const DEVNET_FAUCET_URL = "https://faucet.devnet.aptoslabs.com";
+const TESTNET_NODE_URL = "https://fullnode.testnet.aptoslabs.com/v1";
+const TESTNET_FAUCET_URL = "https://faucet.testnet.aptoslabs.com";
 
-export const client = new AptosClient(NODE_URL);
+const DevnetClient = new AptosClient(DEVNET_NODE_URL);
+const DevnetFaucetClient = new FaucetClient(DEVNET_NODE_URL, DEVNET_FAUCET_URL);
 
-export const faucetClient = new FaucetClient(NODE_URL, FAUCET_URL);
+const TestnetClient = new AptosClient(TESTNET_NODE_URL);
+const TestnetFaucetClient = new FaucetClient(TESTNET_NODE_URL, TESTNET_FAUCET_URL);
+
+export function getClient(): AptosClient {
+  const env = getEnv();
+  switch(env) {
+    case 'devnet':
+      return DevnetClient;
+    case 'testnet':
+      return TestnetClient;  
+  }
+  assertUnreachable(env);
+}
+
+export function getFaucetClient(): FaucetClient {
+  const env = getEnv();
+  switch(env) {
+    case 'devnet':
+      return DevnetFaucetClient;
+    case 'testnet':
+      return TestnetFaucetClient;  
+  }
+  assertUnreachable(env);
+}
+
+export function getNodeURL(): string {
+  const env = getEnv();
+  switch(env) {
+    case 'devnet':
+      return DEVNET_NODE_URL;
+    case 'testnet':
+      return TESTNET_NODE_URL;  
+  }
+  assertUnreachable(env);
+}
+
+function assertUnreachable(x: never): never {
+  throw new Error("Didn't expect to get here");
+}

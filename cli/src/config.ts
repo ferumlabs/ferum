@@ -1,9 +1,8 @@
-import { AptosAccount, AptosAccountObject } from "aptos";
+import { AptosAccount, AptosAccountObject, } from "aptos";
 import { assert } from "console";
 import fs from "fs";
-
 import log from "loglevel";
-import { faucetClient } from "./aptos-client";
+import { getFaucetClient } from "./aptos-client";
 
 type Profile = AptosAccountObject;
 
@@ -60,7 +59,7 @@ export default {
 
   createNewProfile: async function (name: string) {
     const account = new AptosAccount();
-    await faucetClient.fundAccount(account.address(), 20000);
+    await getFaucetClient().fundAccount(account.address(), 20000);
     if (name in ConfigCache.Profiles) {
       log.debug(`Overwriting profile ${name}`);
     }

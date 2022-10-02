@@ -8,9 +8,10 @@ import { initializeFerum, initializeMarket, addLimitOrder, addMarketOrder, cance
 import { AptosAccount } from "aptos";
 import { Types } from "aptos";
 import { publishModuleUsingCLI } from "./utils/module-publish-utils";
-import { client, NODE_URL } from './aptos-client';
+import { getClient, getNodeURL } from './aptos-client';
+import { setEnv } from './utils/env';
 import Config, { CONFIG_PATH } from './config';
-import { initializeUSDF, registerUSDF, mintCoin } from './usdf';
+import { initializeUSDF, registerUSDF, mintUSDF } from './usdf';
 import { testModuleUsingCLI } from "./utils/module-testing-utils";
 
 const DEFAULT_CONTRACT_DIR = "../contract"
@@ -22,12 +23,30 @@ for (let symbol in TEST_COINS) {
 
 log.setLevel("info");
 
+setEnv('devnet');
+
 program.version("1.1.0", undefined, "Output the version number.");
 
 program.option("-l, --log-level <string>", "Log level")
   .hook('preAction', (cmd, subCmd) => {
     const { logLevel } = cmd.opts();
     setLogLevel(logLevel);
+  });
+
+program.option("-e, --env <string>", "Environment to use. Valid options are devnet or testnet")
+  .hook('preAction', (cmd, subCmd) => {
+    const { env } = cmd.opts();
+    if (!env) {
+      return
+    }
+    if (env === 'devnet') {
+      setEnv(env);
+    } else if (env === 'testnet') {
+      setEnv(env);
+    } else {
+      log.error('Invalid environment')
+      throw new Error();
+    }
   });
 
 program.command("create-profile")
@@ -126,7 +145,7 @@ signedCmd("publish-ferum")
     const maxGasNum = parseNumber(maxGas, 'max-gas');
     log.info('Publishing modules under account', account.address().toString());
     try {
-      await publishModuleUsingCLI(NODE_URL, account, modulePath, maxGasNum);
+      await publishModuleUsingCLI(getNodeURL(), account, modulePath, maxGasNum);
       Config.setFerumAddress((account as AptosAccount).address().toString());
     }
     catch {
@@ -140,7 +159,7 @@ signedCmd("test-ferum")
     const { account, modulePath } = cmd.opts();
     log.info('Testing modules under account', account.address().toString());
     try {
-      await testModuleUsingCLI(NODE_URL, account, modulePath);
+      await testModuleUsingCLI(getNodeURL(), account, modulePath);
     }
     catch {
       console.error('Unable to publish module.');
@@ -161,7 +180,7 @@ signedCmd("create-usdf")
     const { account } = cmd.opts();
     const txHash = await initializeUSDF(account);
     log.info(`Started pending transaction: ${txHash}.`)
-    const txResult = await client.waitForTransactionWithResult(txHash) as Types.UserTransaction;
+    const txResult = await getClient().waitForTransactionWithResult(txHash) as Types.UserTransaction;
     prettyPrint(transactionStatusMessage(txResult), txResult)
   });
 
@@ -183,7 +202,7 @@ signedCmd("init-ferum")
     const { account } = cmd.opts();
     const txHash = await initializeFerum(account)
     log.info(`Started pending transaction: ${txHash}.`)
-    const txResult = await client.waitForTransactionWithResult(txHash) as Types.UserTransaction;
+    const txResult = await getClient().waitForTransactionWithResult(txHash) as Types.UserTransaction;
     prettyPrint(transactionStatusMessage(txResult), txResult)
   });
 
@@ -220,7 +239,7 @@ signedCmd("init-market")
 
     const txHash = await initializeMarket(account, instrumentCoinType, instrumentDecimalsNum, quoteCoinType, quoteDecimalsNum);
     log.info(`Started pending transaction: ${txHash}.`)
-    const txResult = await client.waitForTransactionWithResult(txHash) as Types.UserTransaction;
+    const txResult = await getClient().waitForTransactionWithResult(txHash) as Types.UserTransaction;
     prettyPrint(transactionStatusMessage(txResult), txResult)
   });
 
@@ -254,7 +273,7 @@ signedCmd("add-limit-order")
 
     const txHash = await addLimitOrder(account, instrumentCoinType, quoteCoinType, side, price, quantity)
     log.info(`Started pending transaction: ${txHash}.`)
-    const txResult = await client.waitForTransactionWithResult(txHash) as Types.UserTransaction;
+    const txResult = await getClient().waitForTransactionWithResult(txHash) as Types.UserTransaction;
     prettyPrint(transactionStatusMessage(txResult), txResult)
   });
 
@@ -288,7 +307,7 @@ signedCmd("add-market-order")
 
     const txHash = await addMarketOrder(account, instrumentCoinType, quoteCoinType, side, quantity, maxCollateral)
     log.info(`Started pending transaction: ${txHash}.`)
-    const txResult = await client.waitForTransactionWithResult(txHash) as Types.UserTransaction;
+    const txResult = await getClient().waitForTransactionWithResult(txHash) as Types.UserTransaction;
     prettyPrint(transactionStatusMessage(txResult), txResult)
   });
 
@@ -312,7 +331,7 @@ signedCmd("cancel-order")
 
     const txHash = await cancelOrder(account, instrumentCoinType, quoteCoinType, orderID)
     log.info(`Started pending transaction: ${txHash}.`)
-    const txResult = await client.waitForTransactionWithResult(txHash) as Types.UserTransaction;
+    const txResult = await getClient().waitForTransactionWithResult(txHash) as Types.UserTransaction;
     prettyPrint(transactionStatusMessage(txResult), txResult)
   });
 

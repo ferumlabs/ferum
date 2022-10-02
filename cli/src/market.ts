@@ -65,7 +65,7 @@ export async function cancelOrder(
   return await sendSignedTransactionWithAccount(signerAccount, entryFunction)
 }
 
-export async function addLimitOrder(
+export function addLimitTxnPayload(
   signerAccount: AptosAccount,
   instrumentCoin: string,
   quoteCoin: string,
@@ -73,7 +73,7 @@ export async function addLimitOrder(
   price: number,
   quantity: number,
 ) {
-  const entryFunction = TxnBuilderTypes.EntryFunction.natural(
+  return TxnBuilderTypes.EntryFunction.natural(
     `${signerAccount.address()}::market`,
     "add_limit_order_entry",
     coinTypeTags(instrumentCoin, quoteCoin),
@@ -84,7 +84,18 @@ export async function addLimitOrder(
       BCS.bcsSerializeStr(""),
     ]
   );
-  return await sendSignedTransactionWithAccount(signerAccount, entryFunction)
+}
+
+export async function addLimitOrder(
+  signerAccount: AptosAccount,
+  instrumentCoin: string,
+  quoteCoin: string,
+  side: 'buy' | 'sell',
+  price: number,
+  quantity: number,
+) {
+  const entryFn = addLimitTxnPayload(signerAccount, instrumentCoin, quoteCoin, side, price, quantity);
+  return await sendSignedTransactionWithAccount(signerAccount, entryFn);
 }
 
 export async function addMarketOrder(

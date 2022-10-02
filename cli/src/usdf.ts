@@ -39,7 +39,7 @@ export async function registerUSDF(
   );
 }
 
-export async function mintCoin(
+export async function mintUSDF(
   signer: AptosAccount,
   amount: number,
 ): Promise<string> {

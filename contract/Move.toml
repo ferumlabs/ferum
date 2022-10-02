@@ -7,4 +7,4 @@ AptosFramework = { git = "https://github.com/aptos-labs/aptos-core.git", subdir 
 FerumSTD = { git = "https://github.com/ferum-dex/ferum-std.git", rev = "devnet" }
 
 [addresses]
-ferum = "0xdcd166a8422c44369b232d1a27fa4bd57fa428fe59af01f5bfa345be65c43358"
+
