@@ -4,7 +4,7 @@ import {
   BCS,
 } from "aptos";
 
-import { sendSignedTransactionWithAccount, sendSignedTransactionWithPrivateKey } from  "./utils/transaction-utils";
+import { sendSignedTransactionWithAccount } from  "./utils/transaction-utils";
 
 function coinTypeTags(instrumentCoin: string, quoteCoin: string) {
   const instrumentCoinTypeTag = new TxnBuilderTypes.TypeTagStruct(

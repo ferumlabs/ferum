@@ -1,8 +1,7 @@
-
 module ferum::liquidity_pool {
     use ferum_std::math::{sqrt_u128};
     use aptos_framework::coin::{Self, Coin};
-    use ferum::lp_coin::{LPCoin};
+    use ferum::lp_coin::{FerumLP};
     use ferum::coin_utils::{get_coin_pair_name_and_symbol};
     use std::signer::address_of;
     use std::option;
@@ -45,8 +44,8 @@ module ferum::liquidity_pool {
     struct LiquidityPool<phantom  X, phantom Y> has key {
         xCoinReserve: Coin<X>,
         yCoinReserve: Coin<Y>,
-        lpCoinMintCapability: coin::MintCapability<LPCoin<X, Y>>,
-        lpCoinBurnCapability: coin::BurnCapability<LPCoin<X, Y>>,
+        lpCoinMintCapability: coin::MintCapability<FerumLP<X, Y>>,
+        lpCoinBurnCapability: coin::BurnCapability<FerumLP<X, Y>>,
     }
 
     public fun init_pool<X, Y>(poolAdmin: &signer) {
@@ -57,7 +56,7 @@ module ferum::liquidity_pool {
         let (lpCoinBurnCap,
             lpCoinFreezeCap,
             lpCoinMintCap) =
-            coin::initialize<LPCoin<X, Y>>(
+            coin::initialize<FerumLP<X, Y>>(
                 poolAdmin,
                 lpCoinName,
                 lpCoinSymbol,
@@ -97,7 +96,7 @@ module ferum::liquidity_pool {
     }
 
     /// For providing additional liquidity to the AMM, the signer mints additional LP coins.
-    public fun mint<X, Y>(coinX: Coin<X>, coinY: Coin<Y>): Coin<LPCoin<X, Y>> acquires LiquidityPool {
+    public fun mint<X, Y>(coinX: Coin<X>, coinY: Coin<Y>): Coin<FerumLP<X, Y>> acquires LiquidityPool {
         assert!(exists<LiquidityPool<X, Y>>(@ferum), ERR_POOL_NOT_INITIALIZED);
         assert_valid_sorted_coin_pair<X, Y>();
 
@@ -107,7 +106,7 @@ module ferum::liquidity_pool {
         let yCoinProvided = coin_fp_value(&coinY);
         let xCoinReserve = coin_fp_value(&pool.xCoinReserve);
         let yCoinReserve = coin_fp_value(&pool.yCoinReserve);
-        let lpSupply = coin_fp_supply<LPCoin<X, Y>>();
+        let lpSupply = coin_fp_supply<FerumLP<X, Y>>();
 
         let lpProvided = if (fixed_point_64::value(lpSupply) == 0) {
             // If this is the initial deposit, LP's equal to the geometric mean of the pair.
@@ -126,7 +125,7 @@ module ferum::liquidity_pool {
         coin::merge(&mut pool.xCoinReserve, coinX);
         coin::merge(&mut pool.yCoinReserve, coinY);
 
-        coin::mint<LPCoin<X, Y>>(to_u64_trunc(new_u128(lpProvided), coin::decimals<LPCoin<X, Y>>()), &pool.lpCoinMintCapability)
+        coin::mint<FerumLP<X, Y>>(to_u64_trunc(new_u128(lpProvided), coin::decimals<FerumLP<X, Y>>()), &pool.lpCoinMintCapability)
     }
 
     fun lp_from_provided_coin(provided: u64, reserve: u64, lpSupply: u128) : u64 {
@@ -143,7 +142,7 @@ module ferum::liquidity_pool {
         coin::extract(coin, to_u64_trunc(amount, coin::decimals<c>()))
     }
 
-    public fun burn<X, Y>(lpCoins: Coin<LPCoin<X, Y>>): (Coin<X>, Coin<Y>) acquires LiquidityPool {
+    public fun burn<X, Y>(lpCoins: Coin<FerumLP<X, Y>>): (Coin<X>, Coin<Y>) acquires LiquidityPool {
         assert!(exists<LiquidityPool<X, Y>>(@ferum), ERR_POOL_NOT_INITIALIZED);
         assert_valid_sorted_coin_pair<X, Y>();
 
@@ -151,7 +150,7 @@ module ferum::liquidity_pool {
 
         let xCoinReserve = coin_fp_value(&pool.xCoinReserve);
         let yCoinReserve = coin_fp_value(&pool.yCoinReserve);
-        let lpCoinSupply = coin_fp_supply<LPCoin<X, Y>>();
+        let lpCoinSupply = coin_fp_supply<FerumLP<X, Y>>();
         let lpCoinsBurnt = coin_fp_value(&lpCoins);
 
         let xCoinToExtract = divide_trunc(multiply_trunc(lpCoinsBurnt, xCoinReserve), lpCoinSupply);
@@ -216,7 +215,7 @@ module ferum::liquidity_pool {
         create_fake_coins(poolAdmin, 3);
         register_fma(poolAdmin, user, 20000); // 20 FMA
         register_fmb(poolAdmin, user, 30000); // 30 FMB
-        coin::register<LPCoin<FMA, FMB>>(user);
+        coin::register<FerumLP<FMA, FMB>>(user);
 
         init_pool<FMA, FMB>(poolAdmin);
 
@@ -226,7 +225,7 @@ module ferum::liquidity_pool {
         let lp = mint<FMA, FMB>(coinA, coinB);
         assert!(to_u64_round_up(x_price<FMA, FMB>(), coin::decimals<FMB>()) == 2000, 0);
         assert!(to_u64_round_up(y_price<FMA, FMB>(), coin::decimals<FMA>()) == 500, 0);
-        print(&to_u64_trunc(coin_fp_supply<LPCoin<FMA, FMB>>(), 3));
+        print(&to_u64_trunc(coin_fp_supply<FerumLP<FMA, FMB>>(), 3));
         //assert!(get_lp_coin_supply<FMA, FMB>() == 13142, 0);
         coin::deposit(address_of(user), lp);
 
@@ -249,7 +248,7 @@ module ferum::liquidity_pool {
         create_fake_coins(poolAdmin, 3);
         register_fma(poolAdmin, user, 20000); // 20 FMA
         register_fmb(poolAdmin, user, 30000); // 30 FMB
-        coin::register<LPCoin<FMA, FMB>>(user);
+        coin::register<FerumLP<FMA, FMB>>(user);
 
         init_pool<FMA, FMB>(poolAdmin);
 
@@ -278,7 +277,7 @@ module ferum::liquidity_pool {
         create_fake_coins(poolAdmin, 3);
         register_fma(poolAdmin, user, 20000); // 20 FMA
         register_fmb(poolAdmin, user, 30000); // 30 FMB
-        coin::register<LPCoin<FMA, FMB>>(user);
+        coin::register<FerumLP<FMA, FMB>>(user);
 
         init_pool<FMA, FMB>(poolAdmin);
 

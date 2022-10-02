@@ -5,10 +5,10 @@ import log from "loglevel";
 import util from "util";
 import { createTestCoin, getTestCoinBalance, TestCoinSymbol, TEST_COINS } from "./test-coins";
 import { initializeFerum, initializeMarket, addLimitOrder, addMarketOrder, cancelOrder } from "./market";
-import { AptosAccount } from "aptos";
+import { AptosAccount, HexString } from "aptos";
 import { Types } from "aptos";
 import { publishModuleUsingCLI } from "./utils/module-publish-utils";
-import { getClient, getNodeURL } from './aptos-client';
+import { getClient, getFaucetClient, getNodeURL } from './aptos-client';
 import { setEnv } from './utils/env';
 import Config, { CONFIG_PATH } from './config';
 import { initializeUSDF, registerUSDF, mintUSDF } from './usdf';
@@ -47,6 +47,37 @@ program.option("-e, --env <string>", "Environment to use. Valid options are devn
       log.error('Invalid environment')
       throw new Error();
     }
+  });
+
+program.command("init-account")
+  .description('Initializes an aptos account.')
+  .requiredOption('-pk, --private-key <string>', 'Private key of the account')
+  .requiredOption('-a, --address <string>', 'Address of the account')
+  .action(async (_, cmd) => {
+    const { address, privateKey } = cmd.opts();
+    const account = AptosAccount.fromAptosAccountObject({
+      privateKeyHex: privateKey,
+      address,
+    });
+    await getFaucetClient().fundAccount(account.address(), 2_000_000_00000000);
+    log.info(`Created account ${account.address()}`);
+  });
+
+program.command("fund-account")
+  .description('Funds the specified account with 2,000,000 APT.')
+  .option('-a, --address <string>', 'Address of the account')
+  .action(async (_, cmd) => {
+    let { address } = cmd.opts();
+    if (!address) {
+      const profile = Config.getCurrentProfileName();
+      if (!profile) {
+        log.error('Need to specify an address or have a profile set.');
+        throw new Error('No address to fund');
+      }
+      address = Config.getProfileAccount(profile).address();
+    }
+    await getFaucetClient().fundAccount(address, 2_000_000_00000000);
+    log.info(`Funded account ${address} with 2,000,000 APT`);
   });
 
 program.command("create-profile")
