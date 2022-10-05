@@ -3,12 +3,14 @@ module ferum::admin {
     use std::signer::address_of;
     use std::string;
     use aptos_std::type_info;
-    #[test_only]
-    use ferum::coin_test_helpers;
-    #[test_only]
-    use aptos_framework::account;
     use ferum::fees::{Self, FeeStructure};
     use ferum_std::fixed_point_64;
+    #[test_only]
+    use ferum::coin_test_helpers::{Self, FMA, FMB};
+    #[test_only]
+    use aptos_framework::account;
+    #[test_only]
+    use ferum::market_types::{LOB};
 
     //
     // Enums
@@ -47,7 +49,7 @@ module ferum::admin {
     }
 
     // Key used to map to a market address. Is first converted to a string using TypeInfo.
-    struct MarketKey<phantom I, phantom Q> has key {}
+    struct MarketKey<phantom I, phantom Q, phantom T> has key {}
 
     //
     // Entry functions.
@@ -229,18 +231,18 @@ module ferum::admin {
         assert!(exists<FerumInfo>(@ferum), ERR_NOT_ALLOWED);
     }
 
-    public fun register_market<I, Q>(marketAddr: address) acquires FerumInfo {
+    public fun register_market<I, Q, T>(marketAddr: address) acquires FerumInfo {
         assert_ferum_inited();
         let info = borrow_global_mut<FerumInfo>(@ferum);
-        let key = market_key<I, Q>();
+        let key = market_key<I, Q, T>();
         assert!(!table::contains(&info.marketMap, key), ERR_MARKET_EXISTS);
-        table::add(&mut info.marketMap, market_key<I, Q>(), marketAddr);
+        table::add(&mut info.marketMap, market_key<I, Q, T>(), marketAddr);
     }
 
-    public fun get_market_addr<I, Q>(): address acquires FerumInfo {
+    public fun get_market_addr<I, Q, T>(): address acquires FerumInfo {
         assert_ferum_inited();
         let info = borrow_global<FerumInfo>(@ferum);
-        let key = market_key<I, Q>();
+        let key = market_key<I, Q, T>();
         assert!(table::contains(&info.marketMap, key), ERR_MARKET_NOT_EXISTS);
         *table::borrow(&info.marketMap, key)
     }
@@ -249,8 +251,8 @@ module ferum::admin {
     // Private functions.
     //
 
-    fun market_key<I, Q>(): string::String {
-        type_info::type_name<MarketKey<I, Q>>()
+    fun market_key<I, Q, T>(): string::String {
+        type_info::type_name<MarketKey<I, Q, T>>()
     }
 
     //
@@ -280,8 +282,8 @@ module ferum::admin {
         account::create_account_for_test(address_of(other));
         init_ferum(owner, 0, 0, 0, 0);
         coin_test_helpers::setup_fake_coins(owner, other, 100, 18);
-        register_market<coin_test_helpers::FMA, coin_test_helpers::FMB>(address_of(owner));
-        let market_addr = get_market_addr<coin_test_helpers::FMA, coin_test_helpers::FMB>();
+        register_market<FMA, FMB, LOB>(address_of(owner));
+        let market_addr = get_market_addr<FMA, FMB, LOB>();
         assert!(market_addr == address_of(owner), 0);
     }
 
@@ -292,9 +294,9 @@ module ferum::admin {
 
         init_ferum(owner, 0, 0, 0, 0);
         coin_test_helpers::setup_fake_coins(owner, other, 100, 18);
-        register_market<coin_test_helpers::FMA, coin_test_helpers::FMB>(address_of(owner));
-        let market_addr = get_market_addr<coin_test_helpers::FMA, coin_test_helpers::FMB>();
+        register_market<FMA, FMB, LOB>(address_of(owner));
+        let market_addr = get_market_addr<FMA, FMB, LOB>();
         assert!(market_addr == address_of(owner), 0);
-        get_market_addr<coin_test_helpers::FMB, coin_test_helpers::FMA>();
+        get_market_addr<FMB, FMA, LOB>();
     }
 }
