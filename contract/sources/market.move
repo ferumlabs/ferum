@@ -45,6 +45,7 @@ module ferum::market {
     const ERR_INVALID_USER_IDENTIFIER: u64 = 411;
     const ERR_INVALID_MARKET_TYPE: u64 = 412;
     const ERR_SIGNER_NOT_IN_MAP: u64 = 413;
+    const ERR_INVALID_SWAP_REQUEST: u64 = 415;
 
     //
     // Enums.
@@ -285,6 +286,26 @@ module ferum::market {
         add_order<I, Q>(owner, side, type, priceFixedPoint, qtyFixedPoint, clientOrderID);
     }
 
+    public entry fun swap_entry<I, Q>(
+        owner: &signer,
+        side: u8,
+        price: u64,
+        qty: u64,
+        clientOrderID: String,
+    ) acquires OrderBook, UserMarketInfo {
+        let book = borrow_global<OrderBook<I, Q>>(get_market_addr<I, Q>());
+        let priceFixedPoint = from_u64(price, book.qDecimals);
+        let qtyFixedPoint = if (side == SIDE_BUY) {
+            from_u64(qty, book.qDecimals)
+        } else if (side == SIDE_SELL) {
+            from_u64(qty, book.iDecimals)
+        } else {
+            abort ERR_INVALID_SIDE
+        };
+
+        swap<I, Q>(owner, side, priceFixedPoint, qtyFixedPoint, clientOrderID);
+    }
+
     public entry fun cancel_order_entry<I, Q>(owner: &signer, orderIDCounter: u128) acquires OrderBook {
         let id = OrderID {
             owner: address_of(owner),
@@ -369,6 +390,16 @@ module ferum::market {
             clientOrderID,
             userIdentifier,
         )
+    }
+
+    public fun swap<I, Q>(
+        owner: &signer,
+        side: u8,
+        price: FixedPoint64,
+        qty: FixedPoint64,
+        clientOrderID: String,
+    ): OrderID acquires OrderBook, UserMarketInfo {
+        add_order<I, Q>(owner, side, TYPE_IOC, price, qty, clientOrderID)
     }
 
     public fun cancel_order_for_user<I, Q>(
@@ -1510,6 +1541,31 @@ module ferum::market {
             );
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
             assert_order_finalized(book, orderID, STATUS_CANCELLED);
+        };
+    }
+
+    #[test(owner = @ferum, aptos = @0x1, user = @0x2)]
+    fun test_swap(owner: &signer, aptos: &signer, user: &signer) acquires OrderBook, UserMarketInfo {
+        // Tests that a swap mimics placing an IOC order.
+
+        account::create_account_for_test(address_of(owner));
+        account::create_account_for_test(address_of(user));
+        setup_fake_coins(owner, user, 10000000000, 8);
+        setup_market_for_test<FMA, FMB>(owner, aptos);
+
+        // Swap 1 FMA for a max price 10 FMB.
+        {
+            let orderID = swap<FMA, FMB>(
+                owner,
+                SIDE_BUY,
+                from_u64(100000, 4),
+                from_u64(10000, 4),
+                empty_client_order_id(),
+            );
+            let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
+            assert_order_finalized(book, orderID, STATUS_CANCELLED);
+            let order = get_order(book, orderID);
+            assert!(order.metadata.type == TYPE_IOC, 0)
         };
     }
 
