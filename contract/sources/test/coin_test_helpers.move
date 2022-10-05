@@ -70,6 +70,12 @@ module ferum::coin_test_helpers {
     }
 
     #[test_only]
+    public fun register_fma_fmb(owner: &signer, user: &signer, amt: u64) acquires FakeMoneyACapabilities, FakeMoneyBCapabilities {
+        register_fma(owner, user, amt);
+        register_fmb(owner, user, amt);
+    }
+
+    #[test_only]
     public fun register_fma(owner: &signer, user: &signer, amt: u64) acquires FakeMoneyACapabilities {
         coin::register<FMA>(user);
         let cap = borrow_global<FakeMoneyACapabilities>(address_of(owner));

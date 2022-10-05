@@ -7,9 +7,10 @@ module ferum::market {
     use aptos_std::type_info;
     use std::signer::address_of;
     use std::string::{Self, String};
+    use std::vector;
 
     use ferum::admin::{register_market, get_market_addr};
-    use ferum::platform::{UserIdentifier, get_addresses_from_user_identifier, is_address_valid, ProtocolCapability, get_protocol_address, is_user_identifier_valid, sentinal_user_identifier, register_protocol, get_user_identifier};
+    use ferum::platform::{UserIdentifier, is_user_identifier_valid, sentinal_user_identifier, register_protocol, get_user_identifier};
     use ferum_std::math::min_u8;
     use ferum::order_tree::{Self, Tree, is_empty, max_key, min_key, first_value_at};
     use ferum_std::fixed_point_64::{Self, FixedPoint64, from_u64};
@@ -18,7 +19,7 @@ module ferum::market {
     #[test_only]
     use ferum::admin::{init_ferum};
     #[test_only]
-    use ferum::coin_test_helpers::{FMA, FMB, setup_fake_coins, register_fmb, register_fma, create_fake_coins};
+    use ferum::coin_test_helpers::{FMA, FMB, setup_fake_coins, register_fmb, register_fma, create_fake_coins, register_fma_fmb};
     #[test_only]
     use aptos_framework::account;
     #[test_only]
@@ -43,6 +44,7 @@ module ferum::market {
     const ERR_NOT_CORRECT_PROTOCOL: u64 = 410;
     const ERR_INVALID_USER_IDENTIFIER: u64 = 411;
     const ERR_INVALID_MARKET_TYPE: u64 = 412;
+    const ERR_SIGNER_NOT_IN_MAP: u64 = 413;
 
     //
     // Enums.
@@ -162,6 +164,8 @@ module ferum::market {
         orderMap: table::Table<OrderID, Order<I, Q>>,
         // Map of all finalized orders.
         finalizedOrderMap: table::Table<OrderID, Order<I, Q>>,
+        // Map of signer to their orders.
+        signerToOrders: table::Table<address, vector<OrderID>>,
         // Number of decimals for the instrument coin.
         iDecimals: u8,
         // Number of decimals for the quote coin.
@@ -253,6 +257,7 @@ module ferum::market {
             buys: order_tree::new<OrderID>(),
             orderMap: table::new<OrderID, Order<I, Q>>(),
             finalizedOrderMap: table::new<OrderID, Order<I, Q>>(),
+            signerToOrders: table::new<address, vector<OrderID>>(),
             iDecimals: instrumentDecimals,
             qDecimals: quoteDecimals,
             feeType: FEE_TYPE_DEFAULT,
@@ -285,7 +290,48 @@ module ferum::market {
             owner: address_of(owner),
             counter: orderIDCounter,
         };
-        cancel_order_internal<I, Q>(owner, id, @0x0);
+        cancel_order_internal<I, Q>(owner, id, sentinal_user_identifier());
+    }
+
+    public entry fun cancel_all_orders_for_owner<I, Q>(owner: &signer) acquires OrderBook {
+        let ownerAddr = address_of(owner);
+
+        let bookAddr = get_market_addr<I, Q>();
+        assert!(exists<OrderBook<I, Q>>(bookAddr), ERR_BOOK_DOES_NOT_EXIST);
+        let book = borrow_global_mut<OrderBook<I, Q>>(bookAddr);
+
+        assert!(table::contains(&book.signerToOrders, ownerAddr), ERR_SIGNER_NOT_IN_MAP);
+
+        let orderIDs = table::remove(&mut book.signerToOrders, ownerAddr);
+        let ordersLength = vector::length(&orderIDs);
+        let i = 0;
+        while (i < ordersLength) {
+            let orderID = vector::pop_back(&mut orderIDs);
+            let order = table::borrow_mut(&mut book.orderMap, orderID);
+
+            assert!(order.id.owner == ownerAddr, ERR_NOT_OWNER);
+
+            mark_cancelled_order(
+                &mut book.finalizeEvents,
+                order,
+                CANCEL_AGENT_USER,
+            );
+
+            let order = table::remove(&mut book.orderMap, order.id);
+            settle_unsettled_collateral(&mut order);
+            let orderTree = if (order.metadata.side == SIDE_BUY) {
+                &mut book.buys
+            } else if (order.metadata.side == SIDE_SELL) {
+                &mut book.sells
+            } else {
+                abort ERR_INVALID_SIDE
+            };
+            order_tree::delete_value(orderTree, fixed_point_64::value(order.metadata.price), order.id);
+            table::add(&mut book.finalizedOrderMap, order.id, order);
+
+            i = i + 1;
+        };
+        vector::destroy_empty(orderIDs);
     }
 
     //
@@ -327,16 +373,15 @@ module ferum::market {
 
     public fun cancel_order_for_user<I, Q>(
         signer: &signer,
-        protocolCapability: &ProtocolCapability,
+        userIdentifier: UserIdentifier,
         orderOwner: address,
         orderIDCounter: u128,
     ) acquires OrderBook {
-        let protocolAddress = get_protocol_address(protocolCapability);
         let id = OrderID {
             owner: orderOwner,
             counter: orderIDCounter,
         };
-        cancel_order_internal<I, Q>(signer, id, protocolAddress)
+        cancel_order_internal<I, Q>(signer, id, userIdentifier)
     }
 
     public fun get_order_collateral_amount<I, Q>(
@@ -446,11 +491,16 @@ module ferum::market {
                 userIdentifier,
             },
         };
+        if (!table::contains(&book.signerToOrders, ownerAddr)) {
+            table::add(&mut book.signerToOrders, ownerAddr, vector::empty());
+        };
+        let orderIDs = table::borrow_mut(&mut book.signerToOrders, ownerAddr);
+        vector::push_back(orderIDs, orderID);
         add_order_to_book<I, Q>(book, order);
         orderID
     }
 
-    fun cancel_order_internal<I, Q>(owner: &signer, orderID: OrderID, protocolAddress: address) acquires OrderBook {
+    fun cancel_order_internal<I, Q>(owner: &signer, orderID: OrderID, userIdentifier: UserIdentifier) acquires OrderBook {
         let bookAddr = get_market_addr<I, Q>();
         assert!(exists<OrderBook<I, Q>>(bookAddr), ERR_BOOK_DOES_NOT_EXIST);
 
@@ -459,9 +509,8 @@ module ferum::market {
         assert!(table::contains(&book.orderMap, orderID), ERR_UNKNOWN_ORDER);
         let order = table::borrow_mut(&mut book.orderMap, orderID);
 
-        let (orderProtocolAddress, _) = get_addresses_from_user_identifier(&order.metadata.userIdentifier);
-        if (is_address_valid(orderProtocolAddress)) {
-            assert!(protocolAddress == orderProtocolAddress, ERR_NOT_CORRECT_PROTOCOL);
+        if (is_user_identifier_valid(&order.metadata.userIdentifier)) {
+            assert!(userIdentifier == order.metadata.userIdentifier, ERR_NOT_CORRECT_PROTOCOL);
         } else {
             assert!(ownerAddr == order.id.owner, ERR_NOT_OWNER);
         };
@@ -482,6 +531,11 @@ module ferum::market {
             abort ERR_INVALID_SIDE
         };
         order_tree::delete_value(orderTree, fixed_point_64::value(order.metadata.price), order.id);
+
+        let signerOrderIDs = table::borrow_mut(&mut book.signerToOrders, order.id.owner);
+        let (exists, orderIDIdx) = vector::index_of(signerOrderIDs, &order.id);
+        assert!(exists, ERR_SIGNER_NOT_IN_MAP);
+        vector::swap_remove(signerOrderIDs, orderIDIdx);
         table::add(&mut book.finalizedOrderMap, order.id, order);
     }
 
@@ -1095,6 +1149,160 @@ module ferum::market {
         assert!(coin::balance<FMA>(address_of(user)) == 10000000000, 0);
     }
 
+    #[test(
+        owner = @ferum,
+        aptos = @0x1,
+        user1 = @0x2,
+        user2 = @0x3,
+        protocol1 = @0x4,
+        protocol2 = @0x5,
+        user1Protocol1Account = @0x6,
+        user1Protocol2Account = @0x7,
+        user2Protocol1Account = @0x8,
+        user2Protocol2Account = @0x9,
+    )]
+    fun test_cancel_all_orders_for_user(
+        owner: &signer,
+        aptos: &signer,
+        user1: &signer,
+        user2: &signer,
+        protocol1: &signer,
+        protocol2: &signer,
+        user1Protocol1Account: &signer,
+        user1Protocol2Account: &signer,
+        user2Protocol1Account: &signer,
+        user2Protocol2Account: &signer,
+    ) acquires OrderBook, UserMarketInfo {
+        // Tests that cancel_all_orders_for_user only cancels orders for the user only
+        // for the requesting protocol.
+
+        account::create_account_for_test(address_of(owner));
+        account::create_account_for_test(address_of(user1));
+        account::create_account_for_test(address_of(user2));
+        account::create_account_for_test(address_of(protocol1));
+        account::create_account_for_test(address_of(protocol2));
+        account::create_account_for_test(address_of(user1Protocol1Account));
+        account::create_account_for_test(address_of(user1Protocol2Account));
+        account::create_account_for_test(address_of(user2Protocol1Account));
+        account::create_account_for_test(address_of(user2Protocol2Account));
+        setup_fake_coins(owner, user1, 10000000000, 8);
+        register_fma_fmb(owner, user2, 10000000000);
+        register_fma_fmb(owner, user1Protocol1Account, 10000000000);
+        register_fma_fmb(owner, user1Protocol2Account, 10000000000);
+        register_fma_fmb(owner, user2Protocol1Account, 10000000000);
+        register_fma_fmb(owner, user2Protocol2Account, 10000000000);
+        setup_market_for_test<FMA, FMB>(owner, aptos);
+
+        let capProtocol1 = register_protocol(protocol1);
+        let capProtocol2 = register_protocol(protocol2);
+        let user1IdentifierProtocol1 = get_user_identifier(user1, &capProtocol1);
+        let user1IdentifierProtocol2 = get_user_identifier(user1, &capProtocol2);
+        let user2IdentifierProtocol1 = get_user_identifier(user2, &capProtocol1);
+        let user2IdentifierProtocol2 = get_user_identifier(user2, &capProtocol2);
+
+        let cancelledOrder1ID = add_order_for_user<FMA, FMB>(
+            user1Protocol1Account,
+            user1IdentifierProtocol1,
+            SIDE_BUY,
+            TYPE_RESTING,
+            from_u64(10000, 4),
+            from_u64(10000, 4),
+            empty_client_order_id(),
+        );
+        let cancelledOrder2ID = add_order_for_user<FMA, FMB>(
+            user1Protocol1Account,
+            user1IdentifierProtocol1,
+            SIDE_BUY,
+            TYPE_RESTING,
+            from_u64(20000, 4),
+            from_u64(10000, 4),
+            empty_client_order_id(),
+        );
+        // An order placed by the user via another protocol.
+        let notCancelledOrder1 = add_order_for_user<FMA, FMB>(
+            user1Protocol2Account,
+            user1IdentifierProtocol2,
+            SIDE_BUY,
+            TYPE_RESTING,
+            from_u64(20000, 4),
+            from_u64(10000, 4),
+            empty_client_order_id(),
+        );
+        // An order placed by another user via the same protocol.
+        let notCancelledOrder2 = add_order_for_user<FMA, FMB>(
+            user2Protocol1Account,
+            user2IdentifierProtocol1,
+            SIDE_BUY,
+            TYPE_RESTING,
+            from_u64(20000, 4),
+            from_u64(10000, 4),
+            empty_client_order_id(),
+        );
+        // An order placed by another user on another protocol.
+        let notCancelledOrder3 = add_order_for_user<FMA, FMB>(
+            user2Protocol2Account,
+            user2IdentifierProtocol2,
+            SIDE_BUY,
+            TYPE_RESTING,
+            from_u64(20000, 4),
+            from_u64(10000, 4),
+            empty_client_order_id(),
+        );
+        // An order placed by the user directly.
+        let notCancelledOrder4 = add_order<FMA, FMB>(
+            user1,
+            SIDE_BUY,
+            TYPE_RESTING,
+            from_u64(20000, 4),
+            from_u64(10000, 4),
+            empty_client_order_id(),
+        );
+        // An order placed by another user directly.
+        let notCancelledOrder5 = add_order<FMA, FMB>(
+            user2,
+            SIDE_BUY,
+            TYPE_RESTING,
+            from_u64(20000, 4),
+            from_u64(10000, 4),
+            empty_client_order_id(),
+        );
+
+        let cancelledOrders = vector<OrderID>[cancelledOrder1ID, cancelledOrder2ID];
+        let uncancelledOrders = vector<OrderID>[
+            notCancelledOrder1,
+            notCancelledOrder2,
+            notCancelledOrder3,
+            notCancelledOrder4,
+            notCancelledOrder5,
+        ];
+
+        cancel_all_orders_for_owner<FMA, FMB>(user1Protocol1Account);
+
+        let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
+
+        let i = 0;
+        let vecLength = vector::length(&cancelledOrders);
+        while (i < vecLength) {
+            let orderID = vector::pop_back(&mut cancelledOrders);
+            assert_order_finalized(book, orderID, STATUS_CANCELLED);
+            i = i + 1;
+        };
+        vector::destroy_empty(cancelledOrders);
+
+        i = 0;
+        vecLength = vector::length(&uncancelledOrders);
+        while (i < vecLength) {
+            let orderID = vector::pop_back(&mut uncancelledOrders);
+            let order = get_order(book, orderID);
+            assert!(!is_order_finalized(order), 0);
+            i = i + 1;
+        };
+        vector::destroy_empty(uncancelledOrders);
+
+        drop_protocol_capability(capProtocol1);
+        drop_protocol_capability(capProtocol2);
+    }
+
     #[test(owner = @ferum, aptos = @0x1, user = @0x2, userProtocolAccount = @0x3, protocol = @0x4)]
     fun test_cancel_order_for_user_made_using_protocol_user_account(
         owner: &signer,
@@ -1125,7 +1333,7 @@ module ferum::market {
             empty_client_order_id(),
         );
 
-        cancel_order_for_user<FMA, FMB>(protocol, &cap, address_of(userProtocolAccount), buyID.counter);
+        cancel_order_for_user<FMA, FMB>(protocol, userIdentifier, address_of(userProtocolAccount), buyID.counter);
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
             assert_order_finalized(book, buyID, STATUS_CANCELLED);
@@ -1165,7 +1373,7 @@ module ferum::market {
             empty_client_order_id(),
         );
 
-        cancel_order_for_user<FMA, FMB>(protocol, &cap, address_of(user), buyID.counter);
+        cancel_order_for_user<FMA, FMB>(protocol, userIdentifier, address_of(user), buyID.counter);
         {
             let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
             assert_order_finalized(book, buyID, STATUS_CANCELLED);
@@ -1238,7 +1446,8 @@ module ferum::market {
             empty_client_order_id(),
         );
 
-        cancel_order_for_user<FMA, FMB>(protocol, &cap, address_of(user), buyID.counter);
+        let userIdentifier = get_user_identifier(user, &cap);
+        cancel_order_for_user<FMA, FMB>(protocol, userIdentifier, address_of(user), buyID.counter);
 
         drop_protocol_capability(cap);
     }
