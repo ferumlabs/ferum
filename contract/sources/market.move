@@ -293,7 +293,7 @@ module ferum::market {
         cancel_order_internal<I, Q>(owner, id, sentinal_user_identifier());
     }
 
-    public entry fun cancel_all_orders_for_owner<I, Q>(owner: &signer) acquires OrderBook {
+    public entry fun cancel_all_orders_for_owner_entry<I, Q>(owner: &signer) acquires OrderBook {
         let ownerAddr = address_of(owner);
 
         let bookAddr = get_market_addr<I, Q>();
@@ -1276,7 +1276,7 @@ module ferum::market {
             notCancelledOrder5,
         ];
 
-        cancel_all_orders_for_owner<FMA, FMB>(user1Protocol1Account);
+        cancel_all_orders_for_owner_entry<FMA, FMB>(user1Protocol1Account);
 
         let book = borrow_global<OrderBook<FMA, FMB>>(get_market_addr<FMA, FMB>());
 

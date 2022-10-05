@@ -236,7 +236,9 @@ module ferum::admin {
         let info = borrow_global_mut<FerumInfo>(@ferum);
         let key = market_key<I, Q>();
         assert!(!table::contains(&info.marketMap, key), ERR_MARKET_EXISTS);
-        table::add(&mut info.marketMap, market_key<I, Q>(), marketAddr);
+        let oppositeKey = market_key<Q, I>();
+        assert!(!table::contains(&info.marketMap, oppositeKey), ERR_MARKET_EXISTS);
+        table::add(&mut info.marketMap, key, marketAddr);
     }
 
     public fun get_market_addr<I, Q>(): address acquires FerumInfo {
