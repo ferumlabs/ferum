@@ -2521,15 +2521,6 @@ module ferum::order_tree {
             assert_red_black_tree(&tree);
             i = i + 1;
         };
-        //        while (!is_empty(&tree)) {
-        //            let rootNodeKey = tree.rootNodeKey;
-        //            let keyCountBeforeDeletion = key_count<u128>(&tree);
-        //            delete_key(&mut tree, rootNodeKey);
-        //            assert!(keyCountBeforeDeletion == key_count<u128>(&tree) + 1, 0);
-        //            assert_red_black_tree(&tree);
-        //            i = i - 1;
-        //        };
-        //        assert!(is_empty(&tree), 0);
         move_to(&signer, tree)
     }
 
