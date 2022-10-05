@@ -1,6 +1,6 @@
 // Has methods to perform calculations for AMM operations. It is assumed that LP coins have the same number of
 // decimal places ts FixedPoint64.
-module ferum::calculator {
+module ferum::pool {
     use ferum_std::fixed_point_64::{FixedPoint64,
         sub,
         add,
@@ -148,7 +148,8 @@ module ferum::calculator {
 
     // Calculates the amount of Y produced when swapping for the specified X amount.
     // Only swaps up to n amount that will still satisfy the limit price. The limit price is the price of
-    // Y in terms of X.
+    // Y in terms of X. Note that the limit price may still be exceeded due to rounding but the error is limited to
+    // the number of decimal places for the asset.
     //
     // Charges a fee in token X before performing the swap. Any rounding error is made in favor of the pool.
     //
@@ -184,8 +185,8 @@ module ferum::calculator {
             };
             let maxXCoinIn = sub(product, xSupply);
             if (gt(xCoinsIn, maxXCoinIn)) {
-                unusedXCoin = sub(xCoinsIn, maxXCoinIn);
-                xCoinsIn = maxXCoinIn;
+                unusedXCoin = round_up_to_decimals(sub(xCoinsIn, maxXCoinIn), xCoinDecimals);
+                xCoinsIn = sub(xCoinsIn, unusedXCoin);
             };
         };
 
