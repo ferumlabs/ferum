@@ -19,14 +19,21 @@ module ferum::calculator {
         round_up_to_decimals,
         from_u128,
     };
-    const ERR_INVALID_X_SUPPLY: u64 = 0;
-    const ERR_INVALID_Y_SUPPLY: u64 = 1;
-    const ERR_INVALID_X_AMT: u64 = 2;
-    const ERR_INVALID_Y_AMT: u64 = 3;
-    const ERR_INVALID_LP_TOKEN_AMT: u64 = 4;
-    const ERR_INVALID_LP_TOKEN_SUPPLY: u64 = 5;
-    const ERR_DEPOSIT_PRECISION_LOSS: u64 = 6;
-    const ERR_INIT_WITH_SINGLE_ASSET_DEPOSIT: u64 = 7;
+
+    //
+    // Errors
+    //
+
+    // Calculator errors reserve [100, 199].
+
+    const ERR_INVALID_X_SUPPLY: u64 = 100;
+    const ERR_INVALID_Y_SUPPLY: u64 = 101;
+    const ERR_INVALID_X_AMT: u64 = 102;
+    const ERR_INVALID_Y_AMT: u64 = 103;
+    const ERR_INVALID_LP_TOKEN_AMT: u64 = 104;
+    const ERR_INVALID_LP_TOKEN_SUPPLY: u64 = 105;
+    const ERR_DEPOSIT_PRECISION_LOSS: u64 = 106;
+    const ERR_INIT_WITH_SINGLE_ASSET_DEPOSIT: u64 = 107;
 
     // Initial amount of pool tokens for swap contract, hard-coded to something
     // "sensible" given a maximum of u128 (similar to the spl token program).
@@ -309,7 +316,7 @@ module ferum::calculator {
     }
 
     #[test]
-    #[expected_failure(abort_code = 6)]
+    #[expected_failure(abort_code = 106)]
     fun test_deposit_multi_asset_precision_loss() {
         let xAmt = from_u128(1, 10);
         let yAmt = from_u128(3, 10);

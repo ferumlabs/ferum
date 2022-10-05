@@ -1,10 +1,14 @@
 module ferum::platform {
     use std::signer::address_of;
 
-    const ERR_CUSTODIAN_ALREADY_REGISTERED: u64 = 1;
-    const ERR_INVALID_CUSTODIAN_ADDRESS: u64 = 2;
-    const ERR_PROTOCOL_ALREADY_REGISTERED: u64 = 3;
-    const ERR_INVALID_PROTOCOL_ADDRESS: u64 = 4;
+    //
+    // Errors
+    //
+
+    // Platform errors reserve [600, 699].
+
+    const ERR_PROTOCOL_ALREADY_REGISTERED: u64 = 600;
+    const ERR_INVALID_PROTOCOL_ADDRESS: u64 = 601;
 
     // Capability used to identify order placement through a Ferum protocol.
     struct ProtocolCapability has store {
@@ -30,8 +34,8 @@ module ferum::platform {
 
     public fun register_protocol(owner: &signer): ProtocolCapability {
         let ownerAddr = address_of(owner);
-        assert!(!exists<ProtocolInfo>(ownerAddr), ERR_CUSTODIAN_ALREADY_REGISTERED);
-        assert!(is_address_valid(ownerAddr), ERR_INVALID_CUSTODIAN_ADDRESS);
+        assert!(!exists<ProtocolInfo>(ownerAddr), ERR_PROTOCOL_ALREADY_REGISTERED);
+        assert!(is_address_valid(ownerAddr), ERR_INVALID_PROTOCOL_ADDRESS);
         move_to(owner, ProtocolInfo{});
 
         ProtocolCapability{

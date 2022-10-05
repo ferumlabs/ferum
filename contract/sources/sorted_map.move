@@ -12,6 +12,10 @@ module ferum::sorted_map {
     #[test_only]
     use std::string::String;
 
+    //
+    // Errors
+    //
+
     const ERR_MAP_NOT_EMPTY: u64 = 1;
     const ERR_MAP_EMPTY: u64 = 2;
 

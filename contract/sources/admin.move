@@ -25,10 +25,12 @@ module ferum::admin {
     // Errors
     //
 
-    const ERR_NOT_ALLOWED: u64 = 0;
-    const ERR_MARKET_NOT_EXISTS: u64 = 1;
-    const ERR_MARKET_EXISTS: u64 = 2;
-    const ERR_INVALID_FEE_TYPE: u64 = 3;
+    // Admin errors reserve [200, 299].
+
+    const ERR_NOT_ALLOWED: u64 = 200;
+    const ERR_MARKET_NOT_EXISTS: u64 = 201;
+    const ERR_MARKET_EXISTS: u64 = 202;
+    const ERR_INVALID_FEE_TYPE: u64 = 203;
 
     //
     // Structs.

@@ -6,9 +6,11 @@ module ferum::fees {
     // Errors.
     //
 
-    const ERR_NOT_ALLOWED: u64 = 1;
-    const ERR_INVALID_MIN_FERUM_TOKEN_AMT: u64 = 2;
-    const ERR_INVALID_FEE_STRUCTURE: u64 = 3;
+    // Fee errors reserve [300, 399].
+
+    const ERR_NOT_ALLOWED: u64 = 300;
+    const ERR_INVALID_MIN_FERUM_TOKEN_AMT: u64 = 301;
+    const ERR_INVALID_FEE_STRUCTURE: u64 = 302;
 
 
 

@@ -14,6 +14,7 @@ module ferum::market {
     use ferum::order_tree::{Self, Tree, is_empty, max_key, min_key, first_value_at};
     use ferum_std::fixed_point_64::{Self, FixedPoint64, from_u64};
     use ferum_std::linked_list;
+    use ferum::market_types::{LOB, HybridConstantProduct};
 
     #[test_only]
     use ferum::admin::{init_ferum};
@@ -23,30 +24,26 @@ module ferum::market {
     use aptos_framework::account;
     #[test_only]
     use ferum::platform::{drop_protocol_capability};
-    #[test_only]
-    use ferum::market_types::{LOB};
 
     //
     // Errors
     //
 
-    const ERR_NOT_ALLOWED: u64 = 1;
-    const ERR_NOT_ADMIN: u64 = 2;
-    const ERR_BOOK_EXISTS: u64 = 3;
-    const ERR_BOOK_DOES_NOT_EXIST: u64 = 4;
-    const ERR_COIN_UNINITIALIZED: u64 = 5;
-    const ERR_UNKNOWN_ORDER: u64 = 6;
-    const ERR_INVALID_PRICE: u64 = 7;
-    const ERR_NOT_OWNER: u64 = 8;
-    const ERR_COIN_EXCEEDS_MAX_SUPPORTED_DECIMALS: u64 = 9;
-    const ERR_INVALID_TYPE: u64 = 10;
-    const ERR_NO_PROGRESS: u64 = 11;
-    const ERR_TAKER_ONLY_ORDER_NOT_PENDING: u64 = 12;
-    const ERR_INVALID_DECIMAL_CONFIG: u64 = 13;
-    const ERR_INVALID_SIDE: u64 = 14;
-    const ERR_CLORDID_TOO_LARGE: u64 = 15;
-    const ERR_NOT_CORRECT_PROTOCOL: u64 = 16;
-    const ERR_INVALID_USER_IDENTIFIER: u64 = 17;
+    // Market errors reserve [400, 499].
+
+    const ERR_BOOK_EXISTS: u64 = 400;
+    const ERR_BOOK_DOES_NOT_EXIST: u64 = 401;
+    const ERR_COIN_UNINITIALIZED: u64 = 402;
+    const ERR_UNKNOWN_ORDER: u64 = 403;
+    const ERR_NOT_OWNER: u64 = 404;
+    const ERR_COIN_EXCEEDS_MAX_SUPPORTED_DECIMALS: u64 = 405;
+    const ERR_INVALID_TYPE: u64 = 406;
+    const ERR_INVALID_DECIMAL_CONFIG: u64 = 407;
+    const ERR_INVALID_SIDE: u64 = 408;
+    const ERR_CLORDID_TOO_LARGE: u64 = 409;
+    const ERR_NOT_CORRECT_PROTOCOL: u64 = 410;
+    const ERR_INVALID_USER_IDENTIFIER: u64 = 411;
+    const ERR_INVALID_MARKET_TYPE: u64 = 412;
 
     //
     // Enums.
@@ -91,6 +88,11 @@ module ferum::market {
     const FEE_TYPE_DEFAULT: u8 = 1;
     // Used to identify a market with the stable swap fee type.
     const FEE_TYPE_STABLE_SWAP: u8 = 2;
+
+    // Market with only a standard limit order book.
+    const MARKET_TYPE_LOB: u8 = 1;
+    // Market with a hybrid AMM that uses a constant product invariant.
+    const MARKET_TYPE_HYBRID_CONSTANT_PRODUCT: u8 = 2;
 
     //
     // Constants.
@@ -172,6 +174,30 @@ module ferum::market {
         qDecimals: u8,
         // Fee type for this market.
         feeType: u8,
+        // This information is encoded in the type information but to save gas, we provide an accessor
+        // on the struct.
+        marketType: u8,
+
+        //
+        // Pool related information.
+        //
+
+        // Store for insrument coins.
+        coinsI: coin::Coin<I>,
+        // Store for quote coins.
+        coinsQ: coin::Coin<Q>,
+        // Count of outstanding LP token supply.
+        lpTokenSupply: FixedPoint64,
+        // Count of instrument token in the pool. Stored here for faster access.
+        iSupply: FixedPoint64,
+        // Count of quote token in the pool. Stored here for faster access.
+        qSupply: FixedPoint64,
+
+
+        //
+        // Event Handles
+        //
+
         // Finalize order events for this market.
         finalizeEvents: EventHandle<FinalizeEvent>,
         // Execution events for this market.
@@ -247,6 +273,15 @@ module ferum::market {
         let executionEvents = new_event_handle<ExecutionEvent>(owner);
         let priceUpdateEvents = new_event_handle<PriceUpdateEvent>(owner);
 
+        let typeInfo = type_info::type_of<T>();
+        let marketType = if (typeInfo == type_info::type_of<LOB>()) {
+            MARKET_TYPE_LOB
+        } else if (typeInfo == type_info::type_of<HybridConstantProduct>()) {
+            MARKET_TYPE_HYBRID_CONSTANT_PRODUCT
+        } else {
+            abort ERR_INVALID_MARKET_TYPE
+        };
+
         let book = OrderBook<I, Q, T>{
             sells: order_tree::new<OrderID>(),
             buys: order_tree::new<OrderID>(),
@@ -259,6 +294,13 @@ module ferum::market {
             createOrderEvents,
             executionEvents,
             priceUpdateEvents,
+            marketType,
+
+            coinsI: coin::zero(),
+            coinsQ: coin::zero(),
+            lpTokenSupply: fixed_point_64::zero(),
+            iSupply: fixed_point_64::zero(),
+            qSupply: fixed_point_64::zero(),
         };
         move_to(owner, book);
         register_market<I, Q, T>(ownerAddr);
@@ -937,7 +979,7 @@ module ferum::market {
     }
 
     #[test(owner = @ferum, user = @0x2)]
-    #[expected_failure(abort_code = 3)]
+    #[expected_failure(abort_code = 400)]
     fun test_init_duplicate_market(owner: &signer, user: &signer) {
         account::create_account_for_test(address_of(owner));
         account::create_account_for_test(address_of(user));
@@ -948,7 +990,7 @@ module ferum::market {
     }
 
     #[test(owner = @ferum, user = @0x2)]
-    #[expected_failure(abort_code = 1)]
+    #[expected_failure(abort_code = 201)]
     fun test_add_resting_order_to_uninited_book(owner: &signer, user: &signer) acquires OrderBook, UserMarketInfo {
         // Tests that a limit order added for uninitialized book fails.
 
@@ -960,7 +1002,7 @@ module ferum::market {
     }
 
     #[test(owner = @ferum, user = @0x2)]
-    #[expected_failure(abort_code = 1)]
+    #[expected_failure(abort_code = 201)]
     fun test_add_ioc_order_to_uninited_book(owner: &signer, user: &signer) acquires OrderBook, UserMarketInfo {
         // Tests that a limit order added for uninitialized book fails.
 
@@ -1177,7 +1219,7 @@ module ferum::market {
     }
 
     #[test(owner = @ferum, aptos = @0x1, user = @0x2, protocol = @0x4)]
-    #[expected_failure(abort_code = 16)]
+    #[expected_failure(abort_code = 410)]
     fun test_cancel_order_for_user_without_protocol_capability(
         owner: &signer,
         aptos: &signer,
@@ -1211,7 +1253,7 @@ module ferum::market {
     }
 
     #[test(owner = @ferum, aptos = @0x1, user = @0x2, protocol = @0x4)]
-    #[expected_failure(abort_code = 8)]
+    #[expected_failure(abort_code = 404)]
     fun test_cancel_non_protocol_order_as_protocol(
         owner: &signer,
         aptos: &signer,
