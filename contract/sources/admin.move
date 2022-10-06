@@ -249,6 +249,11 @@ module ferum::admin {
         *table::borrow(&info.marketMap, key)
     }
 
+    public fun assert_market_inited<I, Q>() acquires FerumInfo {
+        assert_ferum_inited();
+        get_market_addr<I, Q>();
+    }
+
     //
     // Private functions.
     //
