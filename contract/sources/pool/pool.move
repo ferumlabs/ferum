@@ -11,11 +11,9 @@ module ferum::pool {
         is_zero,
         new_u128,
         gt,
-        lte,
         eq,
         min,
         trunc_to_decimals,
-        round_up_to_decimals,
         from_u128,
         from_u64,
         to_u64_round_up,
@@ -421,66 +419,6 @@ module ferum::pool {
         (trunc_to_decimals(xTokens, xDecimals), trunc_to_decimals(yTokens, yDecimals))
     }
 
-    // Calculates the amount of Y produced when swapping for the specified X amount.
-    // Only swaps up to n amount that will still satisfy the limit price. The limit price is the price of
-    // Y in terms of X. Note that the limit price may still be exceeded due to rounding but the error is limited to
-    // the number of decimal places for the asset.
-    //
-    // Charges a fee in token X before performing the swap. Any rounding error is made in favor of the pool.
-    //
-    // Returns: (yCoinsOut, feeAmt, unusedXCoin).
-    fun swap(
-        xSupply: FixedPoint64,
-        xCoinDecimals: u8,
-        ySupply: FixedPoint64,
-        yCoinDecimals: u8,
-        xCoinsIn: FixedPoint64,
-        swapFeeBps: FixedPoint64,
-        limitPrice: FixedPoint64,
-    ): (FixedPoint64, FixedPoint64, FixedPoint64) {
-        let zero = zero();
-
-        // Some input parameter checks.
-        assert!(!is_zero(xSupply), ERR_INVALID_X_SUPPLY);
-        assert!(!is_zero(ySupply), ERR_INVALID_Y_SUPPLY);
-        assert!(!is_zero(xCoinsIn), ERR_INVALID_X_AMT);
-
-        let unusedXCoin = zero;
-        if (!is_zero(limitPrice)) {
-            // Calculate the max amount that can be swapped while still ensuring the swap's
-            // price is less than the limit price.
-            //
-            // The max quantity is determined by solving `xCoinsIn / yCoinOut <= limitPrice`,
-            // where yCoinOut is given by ySupply - ((xSupply * ySupply) / (xSupply + xCoinsIn)).
-            //
-            // The above reduces simply to xCoinsIn <= ySupply * limitPrice - xSupply.
-            let product = multiply_trunc(ySupply, limitPrice);
-            if (lte(product, xSupply)) {
-                return (zero, zero, zero)
-            };
-            let maxXCoinIn = sub(product, xSupply);
-            if (gt(xCoinsIn, maxXCoinIn)) {
-                unusedXCoin = round_up_to_decimals(sub(xCoinsIn, maxXCoinIn), xCoinDecimals);
-                xCoinsIn = sub(xCoinsIn, unusedXCoin);
-            };
-        };
-
-        let feeAmt = round_up_to_decimals(multiply_round_up(xCoinsIn, swapFeeBps), xCoinDecimals);
-        xCoinsIn = sub(xCoinsIn, feeAmt);
-
-        let k = multiply_round_up(xSupply, ySupply);
-        let newXAmt = add(xSupply, xCoinsIn);
-        let yCoinOut = sub(
-            ySupply,
-            divide_round_up(k, newXAmt),
-        );
-        (
-            trunc_to_decimals(yCoinOut, yCoinDecimals),
-            feeAmt,
-            unusedXCoin,
-        )
-    }
-
     //
     // Tests
     //
@@ -654,97 +592,5 @@ module ferum::pool {
         );
         assert!(eq(xCoinsOut, xAmt), 0);
         assert!(eq(yCoinsOut, yAmt), 0);
-    }
-
-    //
-    // Swap Tests
-    //
-
-    #[test]
-    fun test_pool_swap() {
-        let fee = from_u128(1, 4);
-        let xAmt = from_u128(250, 0);
-        let xSupply = from_u128(500, 0);
-        let ySupply = from_u128(250, 0);
-        let limitPrice = from_u128(100, 0);
-
-        let (yCoinsOut, feeAmt, unusedXCoins) = swap(
-            xSupply,
-            10,
-            ySupply,
-            10,
-            xAmt,
-            fee,
-            limitPrice,
-        );
-        assert!(eq(feeAmt, from_u128(25, 3)), 0);
-        assert!(eq(unusedXCoins, zero()), 0);
-        assert!(eq(yCoinsOut, from_u128(833277775925, 10)), 0);
-    }
-
-    #[test]
-    fun test_pool_swap_no_fee() {
-        let fee = zero();
-        let xAmt = from_u128(250, 0);
-        let xSupply = from_u128(500, 0);
-        let ySupply = from_u128(250, 0);
-        let limitPrice = from_u128(100, 0);
-
-        let (yCoinsOut, feeAmt, unusedXCoins) = swap(
-            xSupply,
-            10,
-            ySupply,
-            10,
-            xAmt,
-            fee,
-            limitPrice,
-        );
-        assert!(eq(feeAmt, zero()), 0);
-        assert!(eq(unusedXCoins, zero()), 0);
-        assert!(eq(yCoinsOut, from_u128(833333333333, 10)), 0);
-    }
-
-    #[test]
-    fun test_pool_swap_limit_price_no_fee() {
-        let fee = zero();
-        let xAmt = from_u128(250, 0);
-        let xSupply = from_u128(500, 0);
-        let ySupply = from_u128(250, 0);
-        let limitPrice = from_u128(25, 1); // A max price of 2.5 X for 1 Y
-
-        let (yCoinsOut, feeAmt, unusedXCoins) = swap(
-            xSupply,
-            10,
-            ySupply,
-            10,
-            xAmt,
-            fee,
-            limitPrice,
-        );
-        assert!(eq(feeAmt, zero()), 0);
-        assert!(eq(unusedXCoins, from_u128(125, 0)), 0);
-        assert!(eq(yCoinsOut, from_u128(50, 0)), 0);
-    }
-
-    #[test]
-    fun test_pool_swap_limit_price_fee() {
-        let fee = zero();
-        let xAmt = from_u128(250, 0);
-        let xSupply = from_u128(500, 0);
-        let ySupply = from_u128(250, 0);
-        let limitPrice = from_u128(25, 1); // A max price of 2.5 X for 1 Y
-
-        let (yCoinsOut, feeAmt, unusedXCoins) = swap(
-            xSupply,
-            10,
-            ySupply,
-            10,
-            xAmt,
-            fee,
-            limitPrice,
-        );
-        assert!(eq(feeAmt, zero()), 0);
-        assert!(eq(unusedXCoins, from_u128(125, 0)), 0);
-        assert!(eq(yCoinsOut, from_u128(50, 0)), 0);
     }
 }
