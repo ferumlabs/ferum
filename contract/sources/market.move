@@ -2525,10 +2525,17 @@ module ferum::market {
     }
 
     #[test_only]
-    fun setup_market_for_test<I, Q>(owner: &signer, aptos: &signer) {
+    public fun setup_market_for_test<I, Q>(owner: &signer, aptos: &signer) {
         timestamp::set_time_has_started_for_testing(aptos);
         init_ferum(owner, 0, 0, 0, 0);
         init_market_entry<I, Q>(owner, 4, 4);
+    }
+
+    #[test_only]
+    public fun setup_market_for_test_with_decimals<I, Q>(owner: &signer, aptos: &signer, iDecimal: u8, qDecimal: u8) {
+        timestamp::set_time_has_started_for_testing(aptos);
+        init_ferum(owner, 0, 0, 0, 0);
+        init_market_entry<I, Q>(owner, iDecimal, qDecimal);
     }
 
     #[test_only]
