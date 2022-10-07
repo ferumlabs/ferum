@@ -3,7 +3,7 @@
 import { program } from "commander";
 import log from "loglevel";
 import util from "util";
-import { createTestCoin, getTestCoinBalance, TestCoinSymbol, TEST_COINS } from "./test-coins";
+import { createTestCoin, getTestCoinBalance, TestCoinSymbol, TEST_COINS, getBalance } from "./test-coins";
 import { initializeFerum, initializeMarket, addLimitOrder, addMarketOrder, cancelOrder } from "./market";
 import { AptosAccount, HexString } from "aptos";
 import { Types } from "aptos";
@@ -75,7 +75,7 @@ program.command("fund-account")
         throw new Error('No address to fund');
       }
       address = Config.getProfileAccount(profile).address();
-    }
+    } 
     await getFaucetClient().fundAccount(address, 2_000_000_00000000);
     log.info(`Funded account ${address} with 2,000,000 APT`);
   });
@@ -214,6 +214,18 @@ signedCmd("create-usdf")
     const txResult = await getClient().waitForTransactionWithResult(txHash) as Types.UserTransaction;
     prettyPrint(transactionStatusMessage(txResult), txResult)
   });
+
+
+signedCmd("apt-balance")
+.description('Get APT coin balance for the current profile.')
+.action(async (_, cmd) => {
+  const { account } = cmd.opts();
+  let balance = await getBalance(
+    account.address(),
+    "0x1::aptos_coin::AptosCoin",
+  );
+  prettyPrint("Coin balance:", balance);
+});
 
 
 signedCmd("test-coin-balances")

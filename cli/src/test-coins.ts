@@ -104,7 +104,7 @@ async function mintCoin(
     );
 }
 
-async function getBalance(
+export async function getBalance(
   accountAddress: MaybeHexString,
   coinName: string
 ): Promise<number> {
