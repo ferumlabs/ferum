@@ -1,7 +1,7 @@
 module ferum::pool {
     use ferum_std::fixed_point_64::{
         FixedPoint64, sub, add, multiply_round_up, multiply_trunc, divide_trunc, zero, is_zero,
-        new_u128, gt, gte, min, trunc_to_decimals, from_u128, from_u64, to_u64_round_up, to_u64_trunc, value};
+        new_u128, gt, gte, lt, lte, min, trunc_to_decimals, from_u128, from_u64, to_u64_round_up, to_u64_trunc, value};
     use aptos_framework::account::SignerCapability;
     use std::signer::address_of;
     use std::bcs;
@@ -17,7 +17,7 @@ module ferum::pool {
     use ferum_std::math;
 
     #[test_only]
-    use ferum_std::fixed_point_64::{eq, to_u64};
+    use ferum_std::fixed_point_64::{eq, to_u64, one};
     #[test_only]
     use ferum::coin_test_helpers::{create_fake_coins, register_fma_fmb, FMA, FMB, deposit_fma};
     #[test_only]
@@ -42,7 +42,8 @@ module ferum::pool {
     const ERR_POOL_DOES_NOT_EXIST: u64 = 110;
     const ERR_INVALID_POOL_TYPE: u64 = 111;
     const ERR_INVALID_COIN_DECIMALS: u64 = 112;
-    const ERR_MAX_COIN_AMT_REACHED: u64 = 113;
+    const ERR_MAX_POOL_COIN_AMT_REACHED: u64 = 113;
+    const ERR_MAX_LP_COIN_AMT_REACHED: u64 = 114;
 
     //
     // Constants
@@ -59,8 +60,11 @@ module ferum::pool {
     const INITIAL_LP_SUPPLY: u128 = 1000000000000;
     const POOL_RESOURCE_ACCOUNT_SEED: vector<u8> = b"ferum::pool::resource_account_seed";
     // The max number of coins a pool can store are chosen to ensure that all the operations when calculating price
-    // points can be performed. With 10 decimal places, ~1 billion coins can be in a pool, which seems like enough.
-    const MAX_POOL_COIN_COUNT: u128 = 10446744073709551615;
+    // points can be performed. ~1 billion coins can be in a pool, which seems like enough.
+    const MAX_POOL_COIN_COUNT: u128 = 1044674407;
+    // The max number of LP tokens that can exist are chosen to ensure that all the operations when calculating price
+    // points can be performed. ~1 billion coins can be in a pool, which seems like enough.
+    const MAX_LP_COINS: u128 = 1044674407;
 
     //
     // Enums
@@ -166,9 +170,6 @@ module ferum::pool {
 
         let coinIAmtFP = from_u64(coinIAmt, iDecimals);
         let coinQAmtFP = from_u64(coinQAmt, qDecimals);
-
-        assert!(value(coinIAmtFP) + value(pool.iSupply) <= MAX_POOL_COIN_COUNT, ERR_MAX_COIN_AMT_REACHED);
-        assert!(value(coinQAmtFP) + value(pool.qSupply) <= MAX_POOL_COIN_COUNT, ERR_MAX_COIN_AMT_REACHED);
 
         let (lpCoinsToMint, unusedICoin, unusedQCoin) = deposit_multi_asset(
             pool.lpCoinSupply,
@@ -409,9 +410,8 @@ module ferum::pool {
     //
     // Takes in and returns fixed points with 10 decimals places.
     fun price_after_constant_product_swap(x: u128, y: u128, xDelta: u128): u128 {
-        // FixedPoint64 enforces that all FixedPoint values can be multiplied by one another. Because of this, each
-        // value must be less than MAX_U64. In this situation, we are ok with exceeding that max for k because we know
-        // we will not multiply it with anything. So we bypass FixedPoint64 during this calculation.
+        // Not using FixedPoint64 here because at time of implementaation, FixedPoint64 didn't support holding numbers
+        // larger than MAX_U64. That's now changed but not enough time to refactor.
         let k = x * y / FP_EXP;
         let newX = x + xDelta;
         let newY = k * FP_EXP / newX;
@@ -425,10 +425,8 @@ module ferum::pool {
     //
     // Takes in and returns fixed points with 10 decimals places.
     fun price_after_stable_swap(x: u128, y: u128, xDelta: u128): u128 {
-        // FixedPoint64 enforces that all FixedPoint values can be multiplied by one another. Because of this, each
-        // value must be less than MAX_U64. In this situation, we are ok with exceeding that max when we compute
-        // squares of coin amounts because we know we will not multiply those values again.
-        // So we bypass FixedPoint64 during this calculation.
+        // Not using FixedPoint64 here because at time of implementaation, FixedPoint64 didn't support holding numbers
+        // larger than MAX_U64. That's now changed but not enough time to refactor.
         let d = x + y;
         let amp = d * 10;
         let newX = x + xDelta;
@@ -466,6 +464,9 @@ module ferum::pool {
     ): (FixedPoint64, FixedPoint64, FixedPoint64) {
         let zero = zero();
 
+        assert!(lte(add(xCoinAmt, xSupply), from_u128(MAX_POOL_COIN_COUNT, 0)), ERR_MAX_POOL_COIN_AMT_REACHED);
+        assert!(lte(add(yCoinAmt, ySupply), from_u128(MAX_POOL_COIN_COUNT, 0)), ERR_MAX_POOL_COIN_AMT_REACHED);
+
         if (is_zero(currentLPCoinSupply)) {
             // Can't initialize using a single asset.
             assert!(!is_zero(xCoinAmt) && !is_zero(yCoinAmt), ERR_INIT_WITH_ZERO_ASSET);
@@ -483,8 +484,10 @@ module ferum::pool {
         let yRatio = divide_trunc(yCoinAmt, ySupply);
         let (xUsed, yUsed) = if (gt(xRatio, yRatio)) {
             (multiply_round_up(yRatio, xSupply), yCoinAmt)
-        } else {
+        } else if (lt(xRatio, yRatio)) {
             (xCoinAmt, multiply_round_up(xRatio, ySupply))
+        } else {
+            (xCoinAmt, yCoinAmt)
         };
 
         let xToReturn = sub(xCoinAmt, xUsed);
@@ -504,6 +507,7 @@ module ferum::pool {
 
         let lpCoinsToMint = min(yLPCoins, xLPCoins);
         assert!(!is_zero(lpCoinsToMint), ERR_DEPOSIT_PRECISION_LOSS);
+        assert!(lte(add(lpCoinsToMint, currentLPCoinSupply), from_u128(MAX_LP_COINS, 0)), ERR_MAX_LP_COIN_AMT_REACHED);
 
         (
             lpCoinsToMint,
@@ -531,8 +535,8 @@ module ferum::pool {
         assert!(!is_zero(currentLPCoinSupply), ERR_INVALID_LP_TOKEN_SUPPLY);
         assert!(!is_zero(lpCoinsToBurn), ERR_INVALID_LP_TOKEN_AMT);
 
-        let xTokens = multiply_trunc(divide_trunc(xSupply, currentLPCoinSupply), lpCoinsToBurn);
-        let yTokens = multiply_trunc(divide_trunc(ySupply, currentLPCoinSupply), lpCoinsToBurn);
+        let xTokens = divide_trunc(multiply_trunc(lpCoinsToBurn, xSupply), currentLPCoinSupply);
+        let yTokens = divide_trunc(multiply_trunc(lpCoinsToBurn, ySupply), currentLPCoinSupply);
 
         (trunc_to_decimals(xTokens, xDecimals), trunc_to_decimals(yTokens, yDecimals))
     }
@@ -659,6 +663,62 @@ module ferum::pool {
         deposit_multi_asset(currentLPTokenSupply, xSupply, xAmt, 10, ySupply, yAmt, 10);
     }
 
+    #[test]
+    fun test_deposit_making_supply_and_lp_token_reach_max() {
+        let xSupply = from_u128(MAX_POOL_COIN_COUNT - 1, 0);
+        let ySupply = from_u128(MAX_POOL_COIN_COUNT - 1, 0);
+        let currentLPTokenSupply = from_u128(MAX_LP_COINS - 1, 0);
+
+        let (lpCoins, unusedX, unusedY) = deposit_multi_asset(
+            currentLPTokenSupply,
+            xSupply,
+            one(),
+            10,
+            ySupply,
+            one(),
+            10,
+        );
+        assert!(eq(lpCoins, from_u128(1, 0)), 0);
+        assert!(eq(unusedX, zero()), 0);
+        assert!(eq(unusedY, zero()), 0);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = 114)]
+    fun test_deposit_when_lp_token_is_at_max() {
+        let xSupply = from_u128(MAX_POOL_COIN_COUNT - 1, 0);
+        let ySupply = from_u128(MAX_POOL_COIN_COUNT - 1, 0);
+        let currentLPTokenSupply = from_u128(MAX_LP_COINS, 0);
+
+        deposit_multi_asset(
+            currentLPTokenSupply,
+            xSupply,
+            one(),
+            10,
+            ySupply,
+            one(),
+            10,
+        );
+    }
+
+    #[test]
+    #[expected_failure(abort_code = 113)]
+    fun test_deposit_when_adding_more_than_max_to_supply() {
+        let xSupply = from_u128(MAX_POOL_COIN_COUNT, 0);
+        let ySupply = from_u128(MAX_POOL_COIN_COUNT, 0);
+        let currentLPTokenSupply = from_u128(MAX_LP_COINS, 0);
+
+        deposit_multi_asset(
+            currentLPTokenSupply,
+            xSupply,
+            one(),
+            10,
+            ySupply,
+            one(),
+            10,
+        );
+    }
+
     //
     // Withdrawal Tests
     //
@@ -712,6 +772,64 @@ module ferum::pool {
         assert!(eq(yCoinsOut, yAmt), 0);
     }
 
+    #[test]
+    fun test_withdraw_multi_asset_pool_with_another_user() {
+        // Get some LP tokens.
+        let currentLPTokenSupply = from_u128(100, 0);
+        let xSupply = from_u128(500, 0);
+        let ySupply = from_u128(250, 0);
+        let xAmt = from_u128(250, 0);
+        let yAmt = from_u128(125, 0);
+        let (lpCoinsMinted1, _, _) = deposit_multi_asset(
+            currentLPTokenSupply, xSupply, xAmt, 10, ySupply, yAmt, 10);
+        assert!(eq(lpCoinsMinted1, from_u128(50, 0)), 0);
+
+        // Simulate another user adding LP tokens.
+        let newLPTokenSupply = from_u128(150, 0);
+        let newXSupply = from_u128(750, 0);
+        let newYSupply = from_u128(375, 0);
+        let xAmt2 = from_u128(100, 0);
+        let yAmt2 = from_u128(55, 0);
+        let (lpCoinsMinted2, unusedX, unusedY) = deposit_multi_asset(
+            newLPTokenSupply, newXSupply, xAmt2, 10, newYSupply, yAmt2, 10);
+        assert!(eq(lpCoinsMinted2, from_u128(19999999995, 9)), 0);
+        assert!(eq(unusedY, from_u128(50000000125, 10)), 0);
+        assert!(eq(unusedX, zero()), 0);
+
+        // Swap back minted tokens for pool assets.
+        let (xCoinsOut, yCoinsOut) = withdraw_multi_asset(
+            lpCoinsMinted1,
+            from_u128(169999999995, 9),
+            from_u128(850, 0),
+            10,
+            from_u128(4249999999875, 10),
+            10,
+        );
+        // Note that rounding error contribuutes to this not being exactly 250.
+        assert!(eq(xCoinsOut, from_u128(2500000000073, 10)), 0);
+        assert!(eq(yCoinsOut, from_u128(125, 0)), 0);
+    }
+
+    #[test]
+    fun test_withdraw_multi_asset_when_supply_and_lp_token_is_at_max() {
+        let xAmt = from_u128(MAX_POOL_COIN_COUNT, 0);
+        let yAmt = from_u128(MAX_POOL_COIN_COUNT, 0);
+        let xSupply = from_u128(MAX_POOL_COIN_COUNT, 0);
+        let ySupply = from_u128(MAX_POOL_COIN_COUNT, 0);
+        let currentLPTokenSupply = from_u128(MAX_LP_COINS, 0);
+
+        let (xCoinsOut, yCoinsOut) = withdraw_multi_asset(
+            currentLPTokenSupply,
+            currentLPTokenSupply,
+            xSupply,
+            10,
+            ySupply,
+            10,
+        );
+        assert!(eq(xCoinsOut, xAmt), 0);
+        assert!(eq(yCoinsOut, yAmt), 0);
+    }
+
     //
     // Price After Swap Tests.
     //
@@ -727,19 +845,19 @@ module ferum::pool {
         };
         {
             // When supply is at max value.
-            let iSupply = MAX_POOL_COIN_COUNT - 100 * FP_EXP; // Max value - 100.
-            let qSupply = MAX_POOL_COIN_COUNT;
+            let iSupply = (MAX_POOL_COIN_COUNT - 100) * FP_EXP;
+            let qSupply = MAX_POOL_COIN_COUNT * FP_EXP;
             let iCoinsToSwap = 100 * FP_EXP;
             let price = price_after_constant_product_swap(iSupply, qSupply, iCoinsToSwap);
             assert!(price == 9999999042, 0);
         };
         {
             // When supply is at max value, doing 10% of supply.
-            let iSupply = MAX_POOL_COIN_COUNT - MAX_POOL_COIN_COUNT / 10; // Max value * 10%.
-            let qSupply = MAX_POOL_COIN_COUNT;
-            let iCoinsToSwap = MAX_POOL_COIN_COUNT / 10;
+            let iSupply = MAX_POOL_COIN_COUNT * FP_EXP - MAX_POOL_COIN_COUNT * FP_EXP / 10; // Max value * 10%.
+            let qSupply = MAX_POOL_COIN_COUNT * FP_EXP;
+            let iCoinsToSwap = MAX_POOL_COIN_COUNT * FP_EXP / 10;
             let price = price_after_constant_product_swap(iSupply, qSupply, iCoinsToSwap);
-            assert!(price == 8999999999, 0);
+            assert!(price == 9000000000, 0);
         };
         {
             // Unevent initial ratio.
@@ -769,17 +887,17 @@ module ferum::pool {
         };
         {
             // When supply is at max value.
-            let iSupply = MAX_POOL_COIN_COUNT - 100 * FP_EXP; // Max value - 100.
-            let qSupply = MAX_POOL_COIN_COUNT;
+            let iSupply = MAX_POOL_COIN_COUNT * FP_EXP - 100 * FP_EXP; // Max value - 100.
+            let qSupply = MAX_POOL_COIN_COUNT * FP_EXP;
             let iCoinsToSwap = 100 * FP_EXP;
             let price = price_after_stable_swap(iSupply, qSupply, iCoinsToSwap);
             assert!(price == 9999999424, 0);
         };
         {
             // When supply is at max value, doing 10% of supply.
-            let iSupply = MAX_POOL_COIN_COUNT - MAX_POOL_COIN_COUNT / 10; // Max value * 10%.
-            let qSupply = MAX_POOL_COIN_COUNT;
-            let iCoinsToSwap = MAX_POOL_COIN_COUNT / 10;
+            let iSupply = MAX_POOL_COIN_COUNT * FP_EXP - MAX_POOL_COIN_COUNT * FP_EXP / 10; // Max value * 10%.
+            let qSupply = MAX_POOL_COIN_COUNT * FP_EXP;
+            let iCoinsToSwap = MAX_POOL_COIN_COUNT * FP_EXP / 10;
             let price = price_after_stable_swap(iSupply, qSupply, iCoinsToSwap);
             assert!(price == 9999999283, 0);
         };
@@ -1068,10 +1186,10 @@ module ferum::pool {
     fun test_withdraw_when_at_max(ferum: &signer, aptos: &signer, user: &signer) acquires Pool {
         setup_pool_test(ferum, aptos);
         account::create_account_for_test(address_of(user));
-        register_fma_fmb(ferum, user, (MAX_POOL_COIN_COUNT as u64));
+        register_fma_fmb(ferum, user, (MAX_POOL_COIN_COUNT * 100000000 as u64));
 
         create_pool_entry<FMA, FMB, ConstantProduct>(ferum);
-        deposit_entry<FMA, FMB, ConstantProduct>(user, 10446744073709, 1000000);
+        deposit_entry<FMA, FMB, ConstantProduct>(user, (MAX_POOL_COIN_COUNT * 10000 as u64), 1000000);
 
         withdraw_entry<FMA, FMB, ConstantProduct>(user, 1500000000);
         let lpCoinBalance = coin::balance<FerumLP<FMA, FMB, ConstantProduct>>(address_of(user));
@@ -1079,6 +1197,12 @@ module ferum::pool {
         let pool = borrow_global<Pool<FMA, FMB, ConstantProduct>>(address_of(ferum));
         assert!(eq(pool.lpCoinSupply, from_u128(85, 0)), 0);
     }
+
+    //
+    // Rebalance tests.
+    //
+
+
 
     #[test_only]
     fun setup_pool_test(ferum: &signer, aptos: &signer) {
