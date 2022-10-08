@@ -321,7 +321,10 @@ module ferum::market {
         assert!(exists<OrderBook<I, Q>>(bookAddr), ERR_BOOK_DOES_NOT_EXIST);
         let book = borrow_global_mut<OrderBook<I, Q>>(bookAddr);
 
-        assert!(table::contains(&book.signerToOrders, ownerAddr), ERR_SIGNER_NOT_IN_MAP);
+        if (!table::contains(&book.signerToOrders, ownerAddr)) {
+            // We can assume this means the user didn't place any orders so there is no work to do.
+            return
+        };
 
         let orderIDs = table::remove(&mut book.signerToOrders, ownerAddr);
         let ordersLength = vector::length(&orderIDs);
@@ -2539,7 +2542,7 @@ module ferum::market {
     }
 
     #[test_only]
-    fun get_order<I, Q>(book: &OrderBook<I, Q>, orderID: OrderID): &Order<I, Q> {
+    public fun get_order<I, Q>(book: &OrderBook<I, Q>, orderID: OrderID): &Order<I, Q> {
         let orderMap = &book.orderMap;
         let contains = table::contains(orderMap, orderID);
         if (contains) {
@@ -2547,6 +2550,26 @@ module ferum::market {
         } else {
             table::borrow(&book.finalizedOrderMap, orderID)
         }
+    }
+
+    #[test_only]
+    public fun get_order_metadatas_for_owner_external<I, Q>(signer: &signer): vector<OrderMetadata> acquires OrderBook {
+        let book = borrow_global<OrderBook<I, Q>>(get_market_addr<I, Q>());
+
+        if (!table::contains(&book.signerToOrders, address_of(signer))) {
+            return vector::empty()
+        };
+
+        let orderIDs = table::borrow(&book.signerToOrders, address_of(signer));
+        let orderIDsLength = vector::length(orderIDs);
+        let i = 0;
+        let out: vector<OrderMetadata> = vector::empty();
+        while (i < orderIDsLength) {
+            let id = *vector::borrow(orderIDs, i);
+            vector::push_back(&mut out, get_order(book, id).metadata);
+            i = i + 1;
+        };
+        out
     }
 
     #[test_only]
@@ -2567,5 +2590,24 @@ module ferum::market {
         assert!(table::contains(&book.finalizedOrderMap, orderID), 0);
         assert!(coin::value(&order.buyCollateral) == 0, 0);
         assert!(coin::value(&order.sellCollateral) == 0, 0);
+    }
+
+    //
+    // Test only accessors for external packages.
+    //
+
+    #[test_only]
+    public fun get_order_price(metadata: &OrderMetadata): FixedPoint64 {
+        metadata.price
+    }
+
+    #[test_only]
+    public fun get_order_side(metadata: &OrderMetadata): u8 {
+        metadata.side
+    }
+
+    #[test_only]
+    public fun get_order_original_qty(metadata: &OrderMetadata): FixedPoint64 {
+        metadata.originalQty
     }
 }

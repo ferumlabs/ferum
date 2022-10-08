@@ -1,7 +1,5 @@
 module ferum::pool {
-    use ferum_std::fixed_point_64::{
-        FixedPoint64, sub, add, multiply_round_up, multiply_trunc, divide_trunc, zero, is_zero,
-        new_u128, gt, gte, lt, lte, min, trunc_to_decimals, from_u128, from_u64, to_u64_round_up, to_u64_trunc, value};
+    use ferum_std::fixed_point_64::{FixedPoint64, sub, add, multiply_round_up, multiply_trunc, divide_trunc, zero, is_zero, new_u128, gt, gte, lt, lte, min, trunc_to_decimals, from_u128, from_u64, to_u64_round_up, to_u64_trunc, value, sqrt_approx, one};
     use aptos_framework::account::SignerCapability;
     use std::signer::address_of;
     use std::bcs;
@@ -17,11 +15,13 @@ module ferum::pool {
     use ferum_std::math;
 
     #[test_only]
-    use ferum_std::fixed_point_64::{eq, to_u64, one};
+    use ferum_std::fixed_point_64::{eq, to_u64};
     #[test_only]
     use ferum::coin_test_helpers::{create_fake_coins, register_fma_fmb, FMA, FMB, deposit_fma};
     #[test_only]
-    use aptos_framework::account::get_signer_capability_address;
+    use aptos_framework::account::{get_signer_capability_address, create_signer_with_capability};
+    #[test_only]
+    use ferum::market::{get_order_price, get_market_decimals, OrderMetadata, get_order_side, get_order_original_qty};
 
     //
     // Errors
@@ -264,69 +264,23 @@ module ferum::pool {
 
     fun rebalance_constant_product<I, Q, T>(pool: &Pool<I, Q, T>, poolSigner: &signer, iDecimals: u8, qDecimals: u8) {
         // Replace orders according to the constant product price invariant: xy.
-        // We simlulate the curve by returning 20 price points along the curve. The first 10 are buys,
-        // the last 10 are sells. Prices are in increasing order.
-        let tenPercent = from_u64(10, 2);
-        let buyQty = trunc_to_decimals(multiply_trunc(pool.qSupply, tenPercent), qDecimals);
-        let sellQty = trunc_to_decimals(multiply_trunc(pool.iSupply, tenPercent), iDecimals);
+        // We simlulate the curve by returning 12 price points along the curve. The first 6 are buys,
+        // the last 6 are sells. Prices are in decreasing order.
         let clientOrderID = string::utf8(b"ferum_constant_product_pool");
 
-        let iSupply = value(pool.iSupply);
-        let qSupply = value(pool.qSupply);
-        let pricePoints = vector<u128>[
-            // Buys Begin.
-            // Price after swap 9% of I supply.
-            price_after_constant_product_swap(iSupply, qSupply, iSupply * 9 / 100000000),
-            // Price after swap 8% of I supply.
-            price_after_constant_product_swap(iSupply, qSupply, iSupply * 8 / 100000000),
-            // Price after swap 7% of I supply.
-            price_after_constant_product_swap(iSupply, qSupply, iSupply * 7 / 100000000),
-            // Price after swap 6% of I supply.
-            price_after_constant_product_swap(iSupply, qSupply, iSupply * 6 / 100000000),
-            // Price after swap 5% of I supply.
-            price_after_constant_product_swap(iSupply, qSupply, iSupply * 5 / 100000000),
-            // Price after swap 4% of I supply.
-            price_after_constant_product_swap(iSupply, qSupply, iSupply * 4 / 100000000),
-            // Price after swap 3% of I supply.
-            price_after_constant_product_swap(iSupply, qSupply, iSupply * 3 / 100000000),
-            // Price after swap 2% of I supply.
-            price_after_constant_product_swap(iSupply, qSupply, iSupply * 2 / 100000000),
-            // Price after swap 1% of I supply.
-            price_after_constant_product_swap(iSupply, qSupply, iSupply * 1 / 100000000),
-            // Price after swap 0.1% of I supply.
-            price_after_constant_product_swap(iSupply, qSupply, iSupply * 1 / 1000000000),
-            // Sells Begin.
-            // Price after swap 0.1% of Q supply.
-            price_after_constant_product_swap(qSupply, iSupply, qSupply * 1 / 1000000000),
-            // Price after swap 1% of Q supply.
-            price_after_constant_product_swap(qSupply, iSupply, qSupply * 1 / 100000000),
-            // Price after swap 2% of Q supply.
-            price_after_constant_product_swap(qSupply, iSupply, qSupply * 2 / 100000000),
-            // Price after swap 3% of Q supply.
-            price_after_constant_product_swap(qSupply, iSupply, qSupply * 3 / 100000000),
-            // Price after swap 4% of Q supply.
-            price_after_constant_product_swap(qSupply, iSupply, qSupply * 4 / 100000000),
-            // Price after swap 5% of Q supply.
-            price_after_constant_product_swap(qSupply, iSupply, qSupply * 5 / 100000000),
-            // Price after swap 6% of Q supply.
-            price_after_constant_product_swap(qSupply, iSupply, qSupply * 6 / 100000000),
-            // Price after swap 7% of Q supply.
-            price_after_constant_product_swap(qSupply, iSupply, qSupply * 7 / 100000000),
-            // Price after swap 8% of Q supply.
-            price_after_constant_product_swap(qSupply, iSupply, qSupply * 8 / 100000000),
-            // Price after swap 9% of Q supply.
-            price_after_constant_product_swap(qSupply, iSupply, qSupply * 9 / 100000000),
-        ];
+        let pricePoints = get_constant_product_rebalance_prices(pool.iSupply, pool.qSupply, qDecimals);
+        let length = vector::length(&pricePoints);
+        let midpoint = length / 2;
         let i = 0;
-        while (i < 20) {
+        while (i < length) {
             let price = vector::pop_back(&mut pricePoints);
-            let (side, qty) = if (i < 10) {
-                (SIDE_SELL, sellQty)
+            let (side, qty) = if (i < midpoint) {
+                (SIDE_SELL, order_qty(pool.iSupply, pool.qSupply, price, SIDE_SELL, length, iDecimals))
             } else {
-                (SIDE_BUY, buyQty)
+                (SIDE_BUY, order_qty(pool.iSupply, pool.qSupply, price, SIDE_BUY, length, iDecimals))
             };
             // TODO: should use POST orders.
-            market::add_order<I, Q>(poolSigner, side, TYPE_RESTING, new_u128(price), qty, clientOrderID);
+            market::add_order<I, Q>(poolSigner, side, TYPE_RESTING, price, qty, clientOrderID);
             i = i + 1;
         };
     }
@@ -336,68 +290,133 @@ module ferum::pool {
         // We simlulate the curve by returning 20 price points along the curve. The first 10 are buys,
         // the last 10 are sells. Prices are in increasing order.
         let tenPercent = from_u64(10, 2);
-        let buyQty = trunc_to_decimals(multiply_trunc(pool.qSupply, tenPercent), qDecimals);
-        let sellQty = trunc_to_decimals(multiply_trunc(pool.iSupply, tenPercent), iDecimals);
         let clientOrderID = string::utf8(b"ferum_stable_swap_pool");
 
-        let iSupply = value(pool.iSupply);
-        let qSupply = value(pool.qSupply);
-        let pricePoints = vector<u128>[
-            // Buys Begin.
-            // Price after swap 9% of I supply.
-            price_after_stable_swap(iSupply, qSupply, iSupply * 9 / 100000000),
-            // Price after swap 8% of I supply.
-            price_after_stable_swap(iSupply, qSupply, iSupply * 8 / 100000000),
-            // Price after swap 7% of I supply.
-            price_after_stable_swap(iSupply, qSupply, iSupply * 7 / 100000000),
-            // Price after swap 6% of I supply.
-            price_after_stable_swap(iSupply, qSupply, iSupply * 6 / 100000000),
-            // Price after swap 5% of I supply.
-            price_after_stable_swap(iSupply, qSupply, iSupply * 5 / 100000000),
-            // Price after swap 4% of I supply.
-            price_after_stable_swap(iSupply, qSupply, iSupply * 4 / 100000000),
-            // Price after swap 3% of I supply.
-            price_after_stable_swap(iSupply, qSupply, iSupply * 3 / 100000000),
-            // Price after swap 2% of I supply.
-            price_after_stable_swap(iSupply, qSupply, iSupply * 2 / 100000000),
-            // Price after swap 1% of I supply.
-            price_after_stable_swap(iSupply, qSupply, iSupply * 1 / 100000000),
-            // Price after swap 0.1% of I supply.
-            price_after_stable_swap(iSupply, qSupply, iSupply * 1 / 1000000000),
-            // Sells Begin.
-            // Price after swap 0.1% of Q supply.
-            price_after_stable_swap(qSupply, iSupply, qSupply * 1 / 1000000000),
-            // Price after swap 1% of Q supply.
-            price_after_stable_swap(qSupply, iSupply, qSupply * 1 / 100000000),
-            // Price after swap 2% of Q supply.
-            price_after_stable_swap(qSupply, iSupply, qSupply * 2 / 100000000),
-            // Price after swap 3% of Q supply.
-            price_after_stable_swap(qSupply, iSupply, qSupply * 3 / 100000000),
-            // Price after swap 4% of Q supply.
-            price_after_stable_swap(qSupply, iSupply, qSupply * 4 / 100000000),
-            // Price after swap 5% of Q supply.
-            price_after_stable_swap(qSupply, iSupply, qSupply * 5 / 100000000),
-            // Price after swap 6% of Q supply.
-            price_after_stable_swap(qSupply, iSupply, qSupply * 6 / 100000000),
-            // Price after swap 7% of Q supply.
-            price_after_stable_swap(qSupply, iSupply, qSupply * 7 / 100000000),
-            // Price after swap 8% of Q supply.
-            price_after_stable_swap(qSupply, iSupply, qSupply * 8 / 100000000),
-            // Price after swap 9% of Q supply.
-            price_after_stable_swap(qSupply, iSupply, qSupply * 9 / 100000000),
-        ];
+        let pricePoints = get_stable_swap_prices(pool);
+        let length = vector::length(&pricePoints);
+        let midpoint = length / 2;
         let i = 0;
-        while (i < 20) {
-            let price = vector::pop_back(&mut pricePoints);
-            let (side, qty) = if (i < 10) {
+        while (i < length) {
+            let nonTruncatedPrice = new_u128(vector::pop_back(&mut pricePoints));
+            let price = trunc_to_decimals(nonTruncatedPrice, qDecimals);
+            let (side, qty) = if (i < midpoint) {
+                // We want to sell an even proportion of I for each order.
+                let sellQty = trunc_to_decimals(multiply_trunc(pool.iSupply, tenPercent), iDecimals);
                 (SIDE_SELL, sellQty)
             } else {
+                // We want to sell an even proportion of Q for each order. The quantity is how much I we can buy at the
+                // given price.
+                let qToSpend = multiply_trunc(pool.qSupply, tenPercent);
+                let buyQty = trunc_to_decimals(divide_trunc(qToSpend, nonTruncatedPrice), iDecimals);
                 (SIDE_BUY, buyQty)
             };
             // TODO: should use POST orders.
-            market::add_order<I, Q>(poolSigner, side, TYPE_RESTING, new_u128(price), qty, clientOrderID);
+            market::add_order<I, Q>(poolSigner, side, TYPE_RESTING, price, qty, clientOrderID);
             i = i + 1;
         };
+    }
+
+    fun get_constant_product_rebalance_prices(iSupply: FixedPoint64, qSupply: FixedPoint64, qDecimals: u8): vector<FixedPoint64> {
+        let minTick = from_u128(1, qDecimals);
+        let price = divide_trunc(qSupply, iSupply);
+        let deltaIStep = approx_delta_x_for_constant_product_target_price_change(iSupply, qSupply, sub(price, minTick));
+        let deltaQStep = approx_delta_y_for_constant_product_target_price_change(iSupply, qSupply, add(price, minTick));
+        let iSteps = divide_trunc(iSupply, deltaIStep);
+        let qSteps = divide_trunc(qSupply, deltaQStep);
+
+        let sellStep6 = multiply_trunc(multiply_trunc(iSteps, from_u128(6, 3)), deltaIStep);
+        let sellStep5 = multiply_trunc(multiply_trunc(iSteps, from_u128(5, 3)), deltaIStep);
+        let sellStep4 = multiply_trunc(multiply_trunc(iSteps, from_u128(4, 3)), deltaIStep);
+        let sellStep3 = multiply_trunc(multiply_trunc(iSteps, from_u128(3, 3)), deltaIStep);
+        let sellStep2 = multiply_trunc(multiply_trunc(iSteps, from_u128(2, 3)), deltaIStep);
+        let sellStep1 = multiply_trunc(multiply_trunc(iSteps, from_u128(1, 3)), deltaIStep);
+
+        let buyStep6 = multiply_trunc(multiply_trunc(qSteps, from_u128(6, 3)), deltaQStep);
+        let buyStep5 = multiply_trunc(multiply_trunc(qSteps, from_u128(5, 3)), deltaQStep);
+        let buyStep4 = multiply_trunc(multiply_trunc(qSteps, from_u128(4, 3)), deltaQStep);
+        let buyStep3 = multiply_trunc(multiply_trunc(qSteps, from_u128(3, 3)), deltaQStep);
+        let buyStep2 = multiply_trunc(multiply_trunc(qSteps, from_u128(2, 3)), deltaQStep);
+        let buyStep1 = multiply_trunc(multiply_trunc(qSteps, from_u128(1, 3)), deltaQStep);
+
+        vector<FixedPoint64>[
+            // Buys Begin.
+            // Price after swapping ~0.6% of Q supply.
+            trunc_to_decimals(price_after_constant_product_swap_y_to_x(iSupply, qSupply, buyStep6), qDecimals),
+            // Price after swapping ~0.5% of Q supply.
+            trunc_to_decimals(price_after_constant_product_swap_y_to_x(iSupply, qSupply, buyStep5), qDecimals),
+            // Price after swapping ~0.4% of Q supply.
+            trunc_to_decimals(price_after_constant_product_swap_y_to_x(iSupply, qSupply, buyStep4), qDecimals),
+            // Price after swapping ~0.3% of Q supply.
+            trunc_to_decimals(price_after_constant_product_swap_y_to_x(iSupply, qSupply, buyStep3), qDecimals),
+            // Price after swapping ~0.2% of Q supply.
+            trunc_to_decimals(price_after_constant_product_swap_y_to_x(iSupply, qSupply, buyStep2), qDecimals),
+            // Price after swapping ~0.1% of Q supply.
+            trunc_to_decimals(price_after_constant_product_swap_y_to_x(iSupply, qSupply, buyStep1), qDecimals),
+            // Sells Begin.
+            // Price after swapping ~0.1% of I supply.
+            trunc_to_decimals(price_after_constant_product_swap_x_to_y(iSupply, qSupply, sellStep1), qDecimals),
+            // Price after swapping ~0.2% of I supply.
+            trunc_to_decimals(price_after_constant_product_swap_x_to_y(iSupply, qSupply, sellStep2), qDecimals),
+            // Price after swapping ~0.3% of I supply.
+            trunc_to_decimals(price_after_constant_product_swap_x_to_y(iSupply, qSupply, sellStep3), qDecimals),
+            // Price after swapping ~0.4% of I supply.
+            trunc_to_decimals(price_after_constant_product_swap_x_to_y(iSupply, qSupply, sellStep4), qDecimals),
+            // Price after swapping ~0.5% of I supply.
+            trunc_to_decimals(price_after_constant_product_swap_x_to_y(iSupply, qSupply, sellStep5), qDecimals),
+            // Price after swapping ~0.6% of I supply.
+            trunc_to_decimals(price_after_constant_product_swap_x_to_y(iSupply, qSupply, sellStep6), qDecimals),
+        ]
+    }
+
+    fun get_stable_swap_prices<I, Q, T>(pool: &Pool<I, Q, T>): vector<u128> {
+        let iSupply = value(pool.iSupply);
+        let qSupply = value(pool.qSupply);
+        std::debug::print(&iSupply);
+        std::debug::print(&qSupply);
+        vector<u128>[
+            // Buys Begin.
+            // Price after swap 9% of Q supply.
+            price_after_stable_swap_y_to_x(iSupply, qSupply, qSupply * 9 / 100000000),
+            // Price after swap 8% of Q supply.
+            price_after_stable_swap_y_to_x(iSupply, qSupply, qSupply * 8 / 100000000),
+            // Price after swap 7% of Q supply.
+            price_after_stable_swap_y_to_x(iSupply, qSupply, qSupply * 7 / 100000000),
+            // Price after swap 6% of Q supply.
+            price_after_stable_swap_y_to_x(iSupply, qSupply, qSupply * 6 / 100000000),
+            // Price after swap 5% of Q supply.
+            price_after_stable_swap_y_to_x(iSupply, qSupply, qSupply * 5 / 100000000),
+            // Price after swap 4% of Q supply.
+            price_after_stable_swap_y_to_x(iSupply, qSupply, qSupply * 4 / 100000000),
+            // Price after swap 3% of Q supply.
+            price_after_stable_swap_y_to_x(iSupply, qSupply, qSupply * 3 / 100000000),
+            // Price after swap 2% of Q supply.
+            price_after_stable_swap_y_to_x(iSupply, qSupply, qSupply * 2 / 100000000),
+            // Price after swap 1% of Q supply.
+            price_after_stable_swap_y_to_x(iSupply, qSupply, qSupply * 1 / 100000000),
+            // Price after swap 0.1% of Q supply.
+            price_after_stable_swap_y_to_x(iSupply, qSupply, qSupply * 1 / 1000000000),
+            // Sells Begin.
+            // Price after swap 0.1% of I supply.
+            price_after_stable_swap_x_to_y(iSupply, qSupply, iSupply * 1 / 1000000000),
+            // Price after swap 1% of I supply.
+            price_after_stable_swap_x_to_y(iSupply, qSupply, iSupply * 1 / 100000000),
+            // Price after swap 2% of I supply.
+            price_after_stable_swap_x_to_y(iSupply, qSupply, iSupply * 2 / 100000000),
+            // Price after swap 3% of I supply.
+            price_after_stable_swap_x_to_y(iSupply, qSupply, iSupply * 3 / 100000000),
+            // Price after swap 4% of I supply.
+            price_after_stable_swap_x_to_y(iSupply, qSupply, iSupply * 4 / 100000000),
+            // Price after swap 5% of I supply.
+            price_after_stable_swap_x_to_y(iSupply, qSupply, iSupply * 5 / 100000000),
+            // Price after swap 6% of I supply.
+            price_after_stable_swap_x_to_y(iSupply, qSupply, iSupply * 6 / 100000000),
+            // Price after swap 7% of I supply.
+            price_after_stable_swap_x_to_y(iSupply, qSupply, iSupply * 7 / 100000000),
+            // Price after swap 8% of I supply.
+            price_after_stable_swap_x_to_y(iSupply, qSupply, iSupply * 8 / 100000000),
+            // Price after swap 9% of I supply.
+            price_after_stable_swap_x_to_y(iSupply, qSupply, iSupply * 9 / 100000000),
+        ]
     }
 
     fun validate_pool<I, Q, T>() {
@@ -406,16 +425,54 @@ module ferum::pool {
         admin::assert_market_inited<I, Q>();
     }
 
-    // Simulates a constant procuct swap and returns the price (X in terms of Y) of the pool after the swap.
+    // Computes the smallest amount of X that needs to be swapped to get at least the target price (Y/X).
+    fun approx_delta_x_for_constant_product_target_price_change(x: FixedPoint64, y: FixedPoint64, target: FixedPoint64): FixedPoint64 {
+        let xy = multiply_trunc(x, y);
+        let sqrtTerm = divide_trunc(xy, target);
+        let sqrt = sqrt_approx(sqrtTerm);
+        sub(sqrt, x)
+    }
+
+    // Computes the smallest amount of Y that needs to be swapped to get at least the target price (Y/X).
+    fun approx_delta_y_for_constant_product_target_price_change(x: FixedPoint64, y: FixedPoint64, target: FixedPoint64): FixedPoint64 {
+        let xy = multiply_trunc(x, y);
+        let sqrtTerm = divide_trunc(xy, target);
+        let sqrt = sqrt_approx(sqrtTerm);
+        sub(x, sqrt)
+    }
+
+    // Simulates a constant product swap from X to Y and returns the price (X in terms of Y) of the pool after the swap.
     //
     // Takes in and returns fixed points with 10 decimals places.
-    fun price_after_constant_product_swap(x: u128, y: u128, xDelta: u128): u128 {
-        // Not using FixedPoint64 here because at time of implementaation, FixedPoint64 didn't support holding numbers
-        // larger than MAX_U64. That's now changed but not enough time to refactor.
-        let k = x * y / FP_EXP;
-        let newX = x + xDelta;
-        let newY = k * FP_EXP / newX;
-        newY * FP_EXP / newX
+    fun price_after_constant_product_swap_x_to_y(
+        x: FixedPoint64,
+        y: FixedPoint64,
+        xDelta: FixedPoint64,
+    ): FixedPoint64 {
+        let (newX, newY) = supply_after_constant_product_swap(x, y, xDelta);
+        divide_trunc(newY, newX)
+    }
+
+    // Same as price_after_constant_product_swap_x_to_y but simulates a swap from Y to X.
+    fun price_after_constant_product_swap_y_to_x(
+        x: FixedPoint64,
+        y: FixedPoint64,
+        yDelta: FixedPoint64,
+    ): FixedPoint64 {
+        let (newY, newX) = supply_after_constant_product_swap(y, x, yDelta);
+        divide_trunc(newY, newX)
+    }
+
+    // Gets the supply of X and Y after performing a swap from X to Y.
+    fun supply_after_constant_product_swap(
+        x: FixedPoint64,
+        y: FixedPoint64,
+        xDelta: FixedPoint64,
+    ): (FixedPoint64, FixedPoint64) {
+        let k = multiply_trunc(x, y);
+        let newX = add(x, xDelta);
+        let newY = divide_trunc(k, newX);
+        (newX, newY)
     }
 
     // Simulates a stable swap and returns the price (X in terms of Y) of the pool after the swap. Uses the following
@@ -424,9 +481,8 @@ module ferum::pool {
     // behaves like a constant price curve. We set A = 10*D.
     //
     // Takes in and returns fixed points with 10 decimals places.
-    fun price_after_stable_swap(x: u128, y: u128, xDelta: u128): u128 {
-        // Not using FixedPoint64 here because at time of implementaation, FixedPoint64 didn't support holding numbers
-        // larger than MAX_U64. That's now changed but not enough time to refactor.
+    fun price_after_stable_swap_x_to_y(x: u128, y: u128, xDelta: u128): u128 {
+        // TODO: refactor to use FixedPoint64 since it now supports numbers > MAX_U64.
         let d = x + y;
         let amp = d * 10;
         let newX = x + xDelta;
@@ -438,6 +494,28 @@ module ferum::pool {
         let sqrtTerm = bSqrd + 4 * c;
         let sqrt = math::sqrt_u128(sqrtTerm);
         let newY = (sqrt + b) / 2;
+        // Compute and return new price.
+        let x2 = newX * newX / FP_EXP;
+        let y2 = newY * newY / FP_EXP;
+        let x2y2Ratio = y2 * FP_EXP / x2;
+        let sumRatio = (x2 + amp) * FP_EXP / (y2 + amp);
+        x2y2Ratio * sumRatio / FP_EXP
+    }
+
+    // Same as price_after_stable_swap_x_to_y but simulates a swap from Y to X.
+    fun price_after_stable_swap_y_to_x(x: u128, y: u128, yDelta: u128): u128 {
+        // TODO: refactor to use FixedPoint64 since it now supports numbers > MAX_U64.
+        let d = x + y;
+        let amp = d * 10;
+        let newY = y + yDelta;
+        // Compute new xSupply by solving for x in the invariant (uses quadratic formula).
+        let c = amp;
+        let aDivY = amp * FP_EXP / newY;
+        let b = d + aDivY - newY;
+        let bSqrd = b * b / FP_EXP;
+        let sqrtTerm = bSqrd + 4 * c;
+        let sqrt = math::sqrt_u128(sqrtTerm);
+        let newX = (sqrt + b) / 2;
         // Compute and return new price.
         let x2 = newX * newX / FP_EXP;
         let y2 = newY * newY / FP_EXP;
@@ -539,6 +617,26 @@ module ferum::pool {
         let yTokens = divide_trunc(multiply_trunc(lpCoinsToBurn, ySupply), currentLPCoinSupply);
 
         (trunc_to_decimals(xTokens, xDecimals), trunc_to_decimals(yTokens, yDecimals))
+    }
+
+    fun order_qty(
+        iSupply: FixedPoint64,
+        qSupply: FixedPoint64,
+        price: FixedPoint64,
+        side: u8,
+        numberOfOrders: u64,
+        iDecimals: u8,
+    ): FixedPoint64 {
+        let evenProportion = divide_trunc(one(), from_u64(numberOfOrders, 0));
+        if (side == SIDE_SELL) {
+            // We want to sell an even proportion of I for each order.
+            trunc_to_decimals(multiply_trunc(iSupply, evenProportion), iDecimals)
+        } else {
+            // We want to sell an even proportion of Q for each order. The quantity is how much I we can buy at the
+            // given price.
+            let qToSpend = multiply_trunc(qSupply, evenProportion);
+            trunc_to_decimals(divide_trunc(qToSpend, price), iDecimals)
+        }
     }
 
     //
@@ -831,41 +929,132 @@ module ferum::pool {
     }
 
     //
+    // Min Delta Tests.
+    //
+
+    #[test]
+    fun test_min_delta_x_constant_product() {
+        // Current price is 1.
+        let x = from_u128(666, 0);
+        let y = from_u128(666, 0);
+        let target = from_u128(9999, 4);
+        let deltaX = approx_delta_x_for_constant_product_target_price_change(x, y, target);
+        assert!(eq(deltaX, from_u128(333, 4)), 0);
+        let price = price_after_constant_product_swap_x_to_y(x, y, deltaX);
+        assert!(eq(price, from_u128(9999000074, 10)), 0);
+    }
+
+    #[test]
+    fun test_min_delta_x_constant_product_uneven() {
+        // Current price is 0.7507.
+        let x = from_u128(666, 0);
+        let y = from_u128(500, 0);
+        let target = from_u128(7506, 4);
+        let deltaX = approx_delta_x_for_constant_product_target_price_change(x, y, target);
+        assert!(eq(deltaX, from_u128(6687, 5)), 0);
+        let price = price_after_constant_product_swap_x_to_y(x, y, deltaX);
+        assert!(eq(price, from_u128(7506000145, 10)), 0);
+    }
+
+    #[test]
+    fun test_min_delta_y_constant_product() {
+        // Current price is 1.
+        let x = from_u128(666, 0);
+        let y = from_u128(666, 0);
+        let target = from_u128(10001, 4);
+        let deltaY = approx_delta_y_for_constant_product_target_price_change(x, y, target);
+        assert!(eq(deltaY, from_u128(333, 4)), 0);
+        let price = price_after_constant_product_swap_y_to_x(x, y, deltaY);
+        assert!(eq(price, from_u128(10001000025, 10)), 0);
+    }
+
+    #[test]
+    fun test_min_delta_y_constant_product_uneven() {
+        // Current price is 0.7507.
+        let x = from_u128(666, 0);
+        let y = from_u128(500, 0);
+        let target = from_u128(7508, 4);
+        let deltaY = approx_delta_y_for_constant_product_target_price_change(x, y, target);
+        assert!(eq(deltaY, from_u128(2185, 5)), 0);
+        let price = price_after_constant_product_swap_y_to_x(x, y, deltaY);
+        assert!(eq(price, from_u128(7508163678, 10)), 0);
+    }
+
+    //
     // Price After Swap Tests.
     //
 
     #[test]
-    fun test_price_after_constant_product_swap() {
+    fun test_price_after_constant_product_swap_x_to_y() {
         {
-            let iSupply = 500 * FP_EXP;
-            let qSupply = 500 * FP_EXP;
-            let iCoinsToSwap = 100 * FP_EXP;
-            let price = price_after_constant_product_swap(iSupply, qSupply, iCoinsToSwap);
-            assert!(price == 6944444444, 0);
+            let iSupply = from_u128(500, 0);
+            let qSupply = from_u128(500, 0);
+            let iCoinsToSwap = from_u128(100, 0);
+            let price = price_after_constant_product_swap_x_to_y(iSupply, qSupply, iCoinsToSwap);
+            assert!(value(price) == 6944444444, 0);
         };
         {
             // When supply is at max value.
-            let iSupply = (MAX_POOL_COIN_COUNT - 100) * FP_EXP;
-            let qSupply = MAX_POOL_COIN_COUNT * FP_EXP;
-            let iCoinsToSwap = 100 * FP_EXP;
-            let price = price_after_constant_product_swap(iSupply, qSupply, iCoinsToSwap);
-            assert!(price == 9999999042, 0);
+            let iSupply = from_u128(MAX_POOL_COIN_COUNT - 100, 0);
+            let qSupply = from_u128(MAX_POOL_COIN_COUNT, 0);
+            let iCoinsToSwap = from_u128(100, 0);
+            let price = price_after_constant_product_swap_x_to_y(iSupply, qSupply, iCoinsToSwap);
+            assert!(value(price) == 9999999042, 0);
         };
         {
             // When supply is at max value, doing 10% of supply.
-            let iSupply = MAX_POOL_COIN_COUNT * FP_EXP - MAX_POOL_COIN_COUNT * FP_EXP / 10; // Max value * 10%.
-            let qSupply = MAX_POOL_COIN_COUNT * FP_EXP;
-            let iCoinsToSwap = MAX_POOL_COIN_COUNT * FP_EXP / 10;
-            let price = price_after_constant_product_swap(iSupply, qSupply, iCoinsToSwap);
-            assert!(price == 9000000000, 0);
+            let maxCoins = from_u128(MAX_POOL_COIN_COUNT, 0);
+            let tenPercent = multiply_trunc(maxCoins, from_u128(1, 1));
+            let iSupply = sub(maxCoins, tenPercent);
+            let qSupply = from_u128(MAX_POOL_COIN_COUNT, 0);
+            let iCoinsToSwap = tenPercent;
+            let price = price_after_constant_product_swap_x_to_y(iSupply, qSupply, iCoinsToSwap);
+            assert!(value(price) == 9000000000, 0);
         };
         {
-            // Unevent initial ratio.
-            let iSupply = 4166666666667;
-            let qSupply = 600 * FP_EXP;
-            let iCoinsToSwap = 833333333333;
-            let price = price_after_constant_product_swap(iSupply, qSupply, iCoinsToSwap);
-            assert!(price == 1 * FP_EXP, 0);
+            // Uneven initial ratio.
+            let iSupply = from_u128(4166666666667, 10);
+            let qSupply = from_u128(600, 0);
+            let iCoinsToSwap = from_u128(833333333333, 10);
+            let price = price_after_constant_product_swap_x_to_y(iSupply, qSupply, iCoinsToSwap);
+            assert!(value(price) == 1 * FP_EXP, 0);
+        };
+    }
+
+    #[test]
+    fun test_price_after_constant_product_swap_y_to_x() {
+        {
+            let iSupply = from_u128(500, 0);
+            let qSupply = from_u128(500, 0);
+            let qCoinsToSwap = from_u128(100, 0);
+            let price = price_after_constant_product_swap_y_to_x(iSupply, qSupply, qCoinsToSwap);
+            assert!(eq(price, from_u128(144, 2)), 0);
+        };
+        {
+            // When supply is at max value.
+            let qSupply = from_u128(MAX_POOL_COIN_COUNT - 100, 0);
+            let iSupply = from_u128(MAX_POOL_COIN_COUNT, 0);
+            let qCoinsToSwap = from_u128(100, 0);
+            let price = price_after_constant_product_swap_y_to_x(iSupply, qSupply, qCoinsToSwap);
+            assert!(value(price) == 10000000957, 0);
+        };
+        {
+            // When supply is at max value, doing 10% of supply.
+            let maxCoins = from_u128(MAX_POOL_COIN_COUNT, 0);
+            let tenPercent = multiply_trunc(maxCoins, from_u128(1, 1));
+            let qSupply = sub(maxCoins, tenPercent);
+            let iSupply = from_u128(MAX_POOL_COIN_COUNT, 0);
+            let qCoinsToSwap = tenPercent;
+            let price = price_after_constant_product_swap_y_to_x(iSupply, qSupply, qCoinsToSwap);
+            assert!(value(price) == 11111111111, 0);
+        };
+        {
+            // Uneven initial ratio.
+            let qSupply = from_u128(4166666666667, 10);
+            let iSupply = from_u128(600, 0);
+            let qCoinsToSwap = from_u128(833333333333, 10);
+            let price = price_after_constant_product_swap_y_to_x(iSupply, qSupply, qCoinsToSwap);
+            assert!(value(price) == 1 * FP_EXP, 0);
         };
     }
 
@@ -875,14 +1064,14 @@ module ferum::pool {
             let iSupply = 5000000 * FP_EXP;
             let qSupply = 5000000 * FP_EXP;
             let iCoinsToSwap = 100 * FP_EXP;
-            let price = price_after_stable_swap(iSupply, qSupply, iCoinsToSwap);
+            let price = price_after_stable_swap_x_to_y(iSupply, qSupply, iCoinsToSwap);
             assert!(price == 9999879996, 0);
         };
         {
             let iSupply = 500 * FP_EXP;
             let qSupply = 500 * FP_EXP;
             let iCoinsToSwap = 100 * FP_EXP;
-            let price = price_after_stable_swap(iSupply, qSupply, iCoinsToSwap);
+            let price = price_after_stable_swap_x_to_y(iSupply, qSupply, iCoinsToSwap);
             assert!(price == 8353235099, 0);
         };
         {
@@ -890,7 +1079,7 @@ module ferum::pool {
             let iSupply = MAX_POOL_COIN_COUNT * FP_EXP - 100 * FP_EXP; // Max value - 100.
             let qSupply = MAX_POOL_COIN_COUNT * FP_EXP;
             let iCoinsToSwap = 100 * FP_EXP;
-            let price = price_after_stable_swap(iSupply, qSupply, iCoinsToSwap);
+            let price = price_after_stable_swap_x_to_y(iSupply, qSupply, iCoinsToSwap);
             assert!(price == 9999999424, 0);
         };
         {
@@ -898,7 +1087,7 @@ module ferum::pool {
             let iSupply = MAX_POOL_COIN_COUNT * FP_EXP - MAX_POOL_COIN_COUNT * FP_EXP / 10; // Max value * 10%.
             let qSupply = MAX_POOL_COIN_COUNT * FP_EXP;
             let iCoinsToSwap = MAX_POOL_COIN_COUNT * FP_EXP / 10;
-            let price = price_after_stable_swap(iSupply, qSupply, iCoinsToSwap);
+            let price = price_after_stable_swap_x_to_y(iSupply, qSupply, iCoinsToSwap);
             assert!(price == 9999999283, 0);
         };
     }
@@ -1199,10 +1388,123 @@ module ferum::pool {
     }
 
     //
-    // Rebalance tests.
+    // Price Curve Tests.
     //
 
+    #[test]
+    fun test_constant_product_rebalance_price_points() {
+        let iSupply = from_u128(100, 0);
+        let qSupply = from_u128(100, 0);
+        let prices = get_constant_product_rebalance_prices(iSupply, qSupply, 3);
+        assert_price_curve(3, prices, vector<u128>[
+            1012,
+            1010,
+            1008,
+            1006,
+            1004,
+            1002,
+             998,
+             996,
+             994,
+             992,
+             990,
+             988,
+        ]);
+    }
 
+    #[test]
+    fun test_constant_product_rebalance_price_points_uneven() {
+        let iSupply = from_u128(1424416975452989, 9);
+        let qSupply = from_u128(468210945, 1);
+        let prices = get_constant_product_rebalance_prices(iSupply, qSupply, 3);
+        assert_price_curve(3, prices, vector<u128>[
+            33265,
+            33199,
+            33133,
+            33067,
+            33001,
+            32936,
+            32804,
+            32739,
+            32674,
+            32608,
+            32544,
+            32479,
+        ]);
+    }
+
+    //
+    // Rebalance Tests.
+    //
+
+    #[test(ferum = @ferum, aptos = @0x1, user = @0x3)]
+    fun test_rebalance_constant_product(ferum: &signer, aptos: &signer, user: &signer) acquires Pool {
+        setup_pool_test(ferum, aptos);
+        account::create_account_for_test(address_of(user));
+        register_fma_fmb(ferum, user, 1000000000);
+        create_pool_entry<FMA, FMB, ConstantProduct>(ferum);
+        deposit_entry<FMA, FMB, ConstantProduct>(ferum, 1000000, 900000);
+        let (fmaDecimals, fmbDecimals) = get_market_decimals<FMA, FMB>();
+        let fmaSupply = from_u128(1000000000000, 10);
+        let fmbSupply = from_u128(900000000000, 10);
+
+        rebalance_entry<FMA, FMB, ConstantProduct>(user);
+
+        // Verify that orders were placed to the market correctly.
+        let pool = borrow_global<Pool<FMA, FMB, ConstantProduct>>(address_of(ferum));
+        let poolSigner = &create_signer_with_capability(&pool.signerCap);
+        let orderInfos = market::get_order_metadatas_for_owner_external<FMA, FMB>(poolSigner);
+        assert!(vector::length(&orderInfos) == 12, 0);
+        let expectedPrices = get_constant_product_rebalance_prices(fmaSupply, fmbSupply, fmbDecimals);
+        assert_orders_placed_correctly(fmaSupply, fmbSupply, orderInfos, expectedPrices, fmaDecimals);
+    }
+
+    #[test_only]
+    fun assert_orders_placed_correctly(
+        fmaSupply: FixedPoint64,
+        fmbSupply: FixedPoint64,
+        orderInfos: vector<OrderMetadata>,
+        prices: vector<FixedPoint64>,
+        fmaDecimals: u8,
+    ) {
+        let totalOrders = vector::length(&orderInfos);
+        let i = totalOrders;
+        while (i > 0) {
+            let metadata = vector::pop_back(&mut orderInfos);
+            let price = get_order_price(&metadata);
+            let originalQty = get_order_original_qty(&metadata);
+            let side = get_order_side(&metadata);
+
+            let (found, idx) = vector::index_of(&prices, &price);
+            assert!(found, 0);
+            vector::remove(&mut prices, idx);
+
+            let expectedQty = order_qty(fmaSupply, fmbSupply, price, side, totalOrders, fmaDecimals);
+            assert!(eq(originalQty, expectedQty), 0);
+
+            i = i - 1;
+        };
+    }
+
+    #[test_only]
+    fun assert_price_curve(decimals: u8, actual: vector<FixedPoint64>, expected: vector<u128>) {
+        let expectedFP = prices_to_fixed_points(expected, decimals);
+        assert!(vectors_eq(&actual, &expectedFP), 0);
+    }
+
+    #[test_only]
+    fun prices_to_fixed_points(prices: vector<u128>, decimals: u8): vector<FixedPoint64> {
+        let out = vector::empty<FixedPoint64>();
+        let i = 0;
+        let length = vector::length(&prices);
+        while (i < length) {
+            let price = vector::pop_back(&mut prices);
+            vector::push_back(&mut out, from_u128(price, decimals));
+            i = i + 1;
+        };
+        vector::reverse(&mut out);
+        out
+    }
 
     #[test_only]
     fun setup_pool_test(ferum: &signer, aptos: &signer) {
@@ -1217,5 +1519,25 @@ module ferum::pool {
     fun pool_with_initial_liquidity(ferum: &signer, coinIAmt: u64, coinQAmt: u64) acquires Pool {
         create_pool_entry<FMA, FMB, ConstantProduct>(ferum);
         deposit_entry<FMA, FMB, ConstantProduct>(ferum, coinIAmt, coinQAmt);
+    }
+
+    #[test_only]
+    fun vectors_eq<T>(a: &vector<T>, b: &vector<T>): bool {
+        let aLength = vector::length(a);
+        let bLength = vector::length(b);
+        if (aLength != bLength) {
+            return false
+        };
+
+        let i = 0;
+        while (i < aLength) {
+            let aVal = vector::borrow(a, i);
+            let bVal = vector::borrow(b, i);
+            if (aVal != bVal) {
+                return false
+            };
+            i = i + 1;
+        };
+        true
     }
 }
