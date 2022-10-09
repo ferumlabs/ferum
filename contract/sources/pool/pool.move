@@ -1,7 +1,7 @@
 module ferum::pool {
     use ferum_std::fixed_point_64::{
         FixedPoint64, sub, add, multiply_round_up, multiply_trunc, divide_trunc, zero, is_zero,
-        new_u128, gt, gte, lt, lte, min, trunc_to_decimals, from_u128, from_u64, to_u64_round_up, to_u64_trunc, value,
+        new_u128, gt, gte, lt, lte, min, trunc_to_decimals, from_u128, from_u64, to_u64_round_up, to_u64_trunc,
         sqrt_approx};
     use aptos_framework::account::SignerCapability;
     use std::signer::address_of;
@@ -17,7 +17,7 @@ module ferum::pool {
     use aptos_framework::coin::{BurnCapability, MintCapability};
 
     #[test_only]
-    use ferum_std::fixed_point_64::{eq, to_u64, one};
+    use ferum_std::fixed_point_64::{eq, to_u64, one, value};
     #[test_only]
     use ferum::coin_test_helpers::{create_fake_coins, register_fma_fmb, FMA, FMB, deposit_fma};
     #[test_only]
@@ -138,8 +138,6 @@ module ferum::pool {
         let typeInfo = type_info::type_of<T>();
         let poolType = if (typeInfo == type_info::type_of<ConstantProduct>()) {
             POOL_TYPE_CONSTANT_PRODUCT
-        } else if (typeInfo == type_info::type_of<StableSwap>()) {
-            POOL_TYPE_STABLE_SWAP
         } else {
             abort ERR_INVALID_POOL_TYPE
         };
@@ -276,8 +274,6 @@ module ferum::pool {
         let pricePoints = if (pool.type == POOL_TYPE_CONSTANT_PRODUCT) {
             // Replace orders according to the constant product price invariant: xy.
             get_constant_product_rebalance_prices(pool.iSupply, pool.qSupply, qDecimals)
-        } else if (pool.type == POOL_TYPE_STABLE_SWAP) {
-            get_stable_swap_rebalance_prices(pool.iSupply, pool.qSupply, qDecimals)
         } else {
             abort ERR_INVALID_POOL_TYPE
         };
@@ -326,6 +322,10 @@ module ferum::pool {
         if (lt(price, minTick)) {
             return vector::empty()
         };
+
+
+
+
         let deltaIStep = approx_delta_i_for_constant_product_price_change(iSupply, qSupply, sub(price, minTick));
         if (lt(deltaIStep, minValue)) {
             deltaIStep = minValue;
@@ -380,65 +380,6 @@ module ferum::pool {
         ]
     }
 
-    fun get_stable_swap_rebalance_prices(iSupply: FixedPoint64, qSupply: FixedPoint64, qDecimals: u8): vector<FixedPoint64> {
-        let minValue = from_u64(1, MAX_DECIMAL_PLACES);
-
-        let minTick = from_u128(1, qDecimals);
-        let price = get_pool_price(POOL_TYPE_CONSTANT_PRODUCT, iSupply, qSupply, qDecimals);
-        let deltaIStep = approx_delta_i_for_constant_product_price_change(iSupply, qSupply, sub(price, minTick));
-        if (lt(deltaIStep, minValue)) {
-            deltaIStep = minValue;
-        };
-        let deltaQStep = approx_delta_q_for_constant_product_price_change(iSupply, qSupply, add(price, minTick));
-        if (lt(deltaQStep, minValue)) {
-            deltaIStep = minValue;
-        };
-
-        let iSteps = divide_trunc(iSupply, deltaIStep);
-        let sellStep6 = multiply_trunc(multiply_trunc(iSteps, from_u128(6, 3)), deltaIStep);
-        let sellStep5 = multiply_trunc(multiply_trunc(iSteps, from_u128(5, 3)), deltaIStep);
-        let sellStep4 = multiply_trunc(multiply_trunc(iSteps, from_u128(4, 3)), deltaIStep);
-        let sellStep3 = multiply_trunc(multiply_trunc(iSteps, from_u128(3, 3)), deltaIStep);
-        let sellStep2 = multiply_trunc(multiply_trunc(iSteps, from_u128(2, 3)), deltaIStep);
-        let sellStep1 = multiply_trunc(multiply_trunc(iSteps, from_u128(1, 3)), deltaIStep);
-
-        let qSteps = divide_trunc(qSupply, deltaQStep);
-        let buyStep6 = multiply_trunc(multiply_trunc(qSteps, from_u128(6, 3)), deltaQStep);
-        let buyStep5 = multiply_trunc(multiply_trunc(qSteps, from_u128(5, 3)), deltaQStep);
-        let buyStep4 = multiply_trunc(multiply_trunc(qSteps, from_u128(4, 3)), deltaQStep);
-        let buyStep3 = multiply_trunc(multiply_trunc(qSteps, from_u128(3, 3)), deltaQStep);
-        let buyStep2 = multiply_trunc(multiply_trunc(qSteps, from_u128(2, 3)), deltaQStep);
-        let buyStep1 = multiply_trunc(multiply_trunc(qSteps, from_u128(1, 3)), deltaQStep);
-
-        vector<FixedPoint64>[
-            // Price after swapping ~0.6% of Q supply.
-            price_after_stable_swap_q_to_i(iSupply, qSupply, buyStep6, qDecimals),
-            // Price after swapping ~0.5% of Q supply.
-            price_after_stable_swap_q_to_i(iSupply, qSupply, buyStep5, qDecimals),
-            // Price after swapping ~0.4% of Q supply.
-            price_after_stable_swap_q_to_i(iSupply, qSupply, buyStep4, qDecimals),
-            // Price after swapping ~0.3% of Q supply.
-            price_after_stable_swap_q_to_i(iSupply, qSupply, buyStep3, qDecimals),
-            // Price after swapping ~0.2% of Q supply.
-            price_after_stable_swap_q_to_i(iSupply, qSupply, buyStep2, qDecimals),
-            // Price after swapping ~0.1% of Q supply.
-            price_after_stable_swap_q_to_i(iSupply, qSupply, buyStep1, qDecimals),
-
-            // Price after swapping ~0.1% of I supply.
-            price_after_stable_swap_i_to_q(iSupply, qSupply, sellStep1, qDecimals),
-            // Price after swapping ~0.2% of I supply.
-            price_after_stable_swap_i_to_q(iSupply, qSupply, sellStep2, qDecimals),
-            // Price after swapping ~0.3% of I supply.
-            price_after_stable_swap_i_to_q(iSupply, qSupply, sellStep3, qDecimals),
-            // Price after swapping ~0.4% of I supply.
-            price_after_stable_swap_i_to_q(iSupply, qSupply, sellStep4, qDecimals),
-            // Price after swapping ~0.5% of I supply.
-            price_after_stable_swap_i_to_q(iSupply, qSupply, sellStep5, qDecimals),
-            // Price after swapping ~0.6% of I supply.
-            price_after_stable_swap_i_to_q(iSupply, qSupply, sellStep6, qDecimals),
-        ]
-    }
-
     fun validate_pool<I, Q, T>() {
         assert!(exists<Pool<I, Q, T>>(@ferum), ERR_POOL_DOES_NOT_EXIST);
         // Also validate that the corresponding market exists.
@@ -467,36 +408,6 @@ module ferum::pool {
             return zero()
         };
         sub(i, sqrt)
-    }
-
-    // Computes the approx smallest amount of I that needs to be swapped to get at least the target price for a
-    // stable swap curve (price of I in terms of Q).
-    fun approx_delta_i_for_stable_swap_price_change(i: FixedPoint64, q: FixedPoint64, target: FixedPoint64): FixedPoint64 {
-        // Get price change after swapping min amount.
-        let minValue = from_u64(1, MAX_DECIMAL_PLACES);
-        let newI = add(i, minValue); // It's ok if I is at the max coin count.
-        let price = get_pool_price(POOL_TYPE_STABLE_SWAP, newI, q, MAX_DECIMAL_PLACES);
-        let delta = if (lt(target, price)) {
-            sub(price, target)
-        } else {
-            sub(target, price)
-        };
-        trunc_to_decimals(delta, MAX_DECIMAL_PLACES)
-    }
-
-    // Computes the approx smallest amount of Q that needs to be swapped to get at least the target price for a
-    // stable swap curve (price of I in terms of Q).
-    fun approx_delta_q_for_stable_swap_price_change(i: FixedPoint64, q: FixedPoint64, target: FixedPoint64): FixedPoint64 {
-        // Get price change after swapping min amount.
-        let minValue = from_u64(1, MAX_DECIMAL_PLACES);
-        let newQ = add(q, minValue); // It's ok if Q is at the max coin count.
-        let price = get_pool_price(POOL_TYPE_STABLE_SWAP, i, newQ, MAX_DECIMAL_PLACES);
-        let delta = if (lt(target, price)) {
-            sub(price, target)
-        } else {
-            sub(target, price)
-        };
-        trunc_to_decimals(delta, MAX_DECIMAL_PLACES)
     }
 
     // Simulates a constant product swap from I to Q and returns the price (I in terms of Q) of the pool after the swap.
@@ -540,50 +451,6 @@ module ferum::pool {
         let k = multiply_trunc(i, q);
         let newI = add(i, delta);
         let newQ = divide_trunc(k, newI);
-        (newI, newQ)
-    }
-
-    // Simulates a stable swap from I to Q and returns the price (I in terms of Q) of the pool after the swap.
-    // The max allowed to swap is MAX_POOL_COIN_COUNT. Supply amounts must be > 0.
-    // Returns 0 if inputs are invalid.
-    fun price_after_stable_swap_i_to_q(i: FixedPoint64, q: FixedPoint64, delta: FixedPoint64, qDecimals: u8): FixedPoint64 {
-        let maxSwap = from_u128(MAX_POOL_COIN_COUNT, 0);
-        if (is_zero(i) || is_zero(q) || gt(delta, maxSwap)) {
-            return zero()
-        };
-        std::debug::print(&666);
-        let (newI, newQ) = supply_after_stable_swap(i, q, delta);
-        std::debug::print(&667);
-        get_pool_price(POOL_TYPE_STABLE_SWAP, newI, newQ, qDecimals)
-    }
-
-    // Same as price_after_stable_swap_i_to_q but simulates a swap from Q to I.
-    fun price_after_stable_swap_q_to_i(i: FixedPoint64, q: FixedPoint64, delta: FixedPoint64, qDecimals: u8): FixedPoint64 {
-        let maxSwap = from_u128(MAX_POOL_COIN_COUNT, 0);
-        if (is_zero(i) || is_zero(q) || gt(delta, maxSwap)) {
-            return zero()
-        };
-        let (newQ, newI) = supply_after_stable_swap(q, i, delta);
-        get_pool_price(POOL_TYPE_STABLE_SWAP, newI, newQ, qDecimals)
-    }
-
-    // Simulates a stable swap and returns supply (I, Q) of the pool after the swap. Uses the following
-    // invariant: x - A/x + y - A/y = D, where A is an amplification factor and D is the number of coins in the pool.
-    // The larger A is, the more the curve behaves like a constant product curve. The smaller A is, the more the curve
-    // behaves like a constant price curve. We set A = 10*D.
-    fun supply_after_stable_swap(i: FixedPoint64, q: FixedPoint64, delta: FixedPoint64): (FixedPoint64, FixedPoint64) {
-        let d = add(i, q);
-        let amp = multiply_trunc(d, from_u64(10, 0));
-        let newI = add(i, delta);
-        // Compute new ySupply by solving for y in the invariant (uses quadratic formula).
-        let c = amp;
-        let aDivI = divide_trunc(amp, newI);
-        let dPlusADivI = add(d, aDivI);
-        let b = sub(dPlusADivI, newI);
-        let bSqrd = multiply_trunc(b, b);
-        let sqrtTerm = add(bSqrd, multiply_trunc(c, from_u64(4, 0)));
-        let sqrt = sqrt_approx(sqrtTerm);
-        let newQ = divide_trunc(add(sqrt, b), from_u64(2, 0));
         (newI, newQ)
     }
 
@@ -692,17 +559,6 @@ module ferum::pool {
         if (type == POOL_TYPE_CONSTANT_PRODUCT) {
             // Derivative of price curve simplifies to Q/I.
             trunc_to_decimals(divide_trunc(qSupply, iSupply), decimals)
-        } else if (type == POOL_TYPE_STABLE_SWAP) {
-            // Derivative of price curve simplifies to ((I^2*Q^2)+AQ^2)/((I^2*Q^2)+AI^2).
-            // We calculate the above by computing (Q^2)/(I^2) * (I^2 + A)/(Q^2 + A)
-            // to avoid overflowing because I^2*Q^2 can be too large of a number.
-            let d = add(iSupply, qSupply);
-            let amp = multiply_trunc(d, from_u128(10, 0));
-            let i2 = multiply_trunc(iSupply, iSupply);
-            let q2 = multiply_trunc(qSupply, qSupply);
-            let q2i2Ratio = divide_trunc(q2, i2);
-            let sumRatio = divide_trunc(add(i2, amp), add(q2, amp));
-            trunc_to_decimals(multiply_trunc(q2i2Ratio, sumRatio), decimals)
         } else {
             abort ERR_INVALID_POOL_TYPE
         }
@@ -1144,32 +1000,6 @@ module ferum::pool {
         assert!(eq(price, from_u128(40000000000, 10)), 0);
     }
 
-    #[test]
-    fun test_approx_delta_i_stable_swap_max() {
-        // Current price is 1.
-        let x = from_u128(MAX_POOL_COIN_COUNT, 0);
-        let y = from_u128(MAX_POOL_COIN_COUNT, 0);
-        let target = from_u128(9999, 4);
-        let delta = approx_delta_i_for_stable_swap_price_change(x, y, target);
-        assert!(eq(delta, from_u128(900000, 10)), 0);
-        let price = price_after_stable_swap_i_to_q(x, y, delta, 10);
-        assert!(eq(price, from_u128(9999999998, 10)), 0);
-    }
-
-    #[test]
-    fun test_approx_delta_i_stable_swap_min() {
-        // Current price is 1.
-        let x = from_u128(1, MAX_DECIMAL_PLACES);
-        let y = from_u128(1, MAX_DECIMAL_PLACES);
-        let target = from_u128(9999, 4);
-        let delta = approx_delta_i_for_stable_swap_price_change(x, y, target);
-        std::debug::print(&delta);
-        assert!(eq(delta, from_u128(7499000000, 10)), 0);
-        let price = price_after_stable_swap_i_to_q(x, y, delta, 10);
-        std::debug::print(&price);
-        assert!(eq(price, from_u128(9999999998, 10)), 0);
-    }
-
     //
     // Price After Swap Tests.
     //
@@ -1340,40 +1170,6 @@ module ferum::pool {
         };
     }
 
-    // #[test]
-    // fun test_price_after_stable_swap() {
-    //     {
-    //         let iSupply = 5000000 * FP_EXP;
-    //         let qSupply = 5000000 * FP_EXP;
-    //         let iCoinsToSwap = 100 * FP_EXP;
-    //         let price = price_after_stable_swap_i_to_q(iSupply, qSupply, iCoinsToSwap);
-    //         assert!(price == 9999879996, 0);
-    //     };
-    //     {
-    //         let iSupply = 500 * FP_EXP;
-    //         let qSupply = 500 * FP_EXP;
-    //         let iCoinsToSwap = 100 * FP_EXP;
-    //         let price = price_after_stable_swap_i_to_q(iSupply, qSupply, iCoinsToSwap);
-    //         assert!(price == 8353235099, 0);
-    //     };
-    //     {
-    //         // When supply is at max value.
-    //         let iSupply = MAX_POOL_COIN_COUNT * FP_EXP - 100 * FP_EXP; // Max value - 100.
-    //         let qSupply = MAX_POOL_COIN_COUNT * FP_EXP;
-    //         let iCoinsToSwap = 100 * FP_EXP;
-    //         let price = price_after_stable_swap_i_to_q(iSupply, qSupply, iCoinsToSwap);
-    //         assert!(price == 9999999424, 0);
-    //     };
-    //     {
-    //         // When supply is at max value, doing 10% of supply.
-    //         let iSupply = MAX_POOL_COIN_COUNT * FP_EXP - MAX_POOL_COIN_COUNT * FP_EXP / 10; // Max value * 10%.
-    //         let qSupply = MAX_POOL_COIN_COUNT * FP_EXP;
-    //         let iCoinsToSwap = MAX_POOL_COIN_COUNT * FP_EXP / 10;
-    //         let price = price_after_stable_swap_i_to_q(iSupply, qSupply, iCoinsToSwap);
-    //         assert!(price == 9999999283, 0);
-    //     };
-    // }
-
     //
     // Entry Function tests
     //
@@ -1386,11 +1182,6 @@ module ferum::pool {
         let pool = borrow_global<Pool<FMA, FMB, ConstantProduct>>(address_of(ferum));
         assert!(pool.type == POOL_TYPE_CONSTANT_PRODUCT, 0);
         assert!(coin::is_coin_initialized<FerumLP<FMA, FMB, ConstantProduct>>(), 0);
-
-        create_pool_entry<FMA, FMB, StableSwap>(ferum);
-        let pool = borrow_global<Pool<FMA, FMB, StableSwap>>(address_of(ferum));
-        assert!(pool.type == POOL_TYPE_STABLE_SWAP, 0);
-        assert!(coin::is_coin_initialized<FerumLP<FMA, FMB, StableSwap>>(), 0);
     }
 
     #[test(ferum = @ferum, aptos = @0x1)]
@@ -1722,54 +1513,6 @@ module ferum::pool {
         let q = sub(from_u128(MAX_POOL_COIN_COUNT, 0), from_u128(1, MAX_DECIMAL_PLACES));
 
         let price = get_pool_price(POOL_TYPE_CONSTANT_PRODUCT, i, q, MAX_DECIMAL_PLACES);
-        assert!(eq(price, from_u128(1, 0)), 0);
-    }
-
-    #[test]
-    fun test_get_pool_price_stable_swap_max() {
-        let i = from_u128(MAX_POOL_COIN_COUNT, 0);
-        let q = from_u128(MAX_POOL_COIN_COUNT, 0);
-
-        let price = get_pool_price(POOL_TYPE_STABLE_SWAP, i, q, 4);
-        assert!(eq(price, from_u128(1, 0)), 0);
-
-        let price = get_pool_price(POOL_TYPE_STABLE_SWAP, i, q, 0);
-        assert!(eq(price, from_u128(1, 0)), 0);
-
-        let price = get_pool_price(POOL_TYPE_STABLE_SWAP, i, q, 10);
-        assert!(eq(price, from_u128(1, 0)), 0);
-    }
-
-    #[test]
-    fun test_get_pool_price_stable_swap_max_plus_min_tick() {
-        let minTick = from_u64(1, MAX_DECIMAL_PLACES);
-        let i = add(from_u128(MAX_POOL_COIN_COUNT, 0), minTick);
-        let q = add(from_u128(MAX_POOL_COIN_COUNT, 0), minTick);
-
-        let price = get_pool_price(POOL_TYPE_STABLE_SWAP, i, q, 4);
-        assert!(eq(price, from_u128(1, 0)), 0);
-
-        let price = get_pool_price(POOL_TYPE_STABLE_SWAP, i, q, 0);
-        assert!(eq(price, from_u128(1, 0)), 0);
-
-        let price = get_pool_price(POOL_TYPE_STABLE_SWAP, i, q, 10);
-        assert!(eq(price, from_u128(1, 0)), 0);
-    }
-
-    #[test]
-    fun test_get_pool_price_stable_swap_min() {
-        let i = from_u128(1, MAX_DECIMAL_PLACES);
-        let q = from_u128(1, MAX_DECIMAL_PLACES);
-        let price = get_pool_price(POOL_TYPE_STABLE_SWAP, i, q, MAX_DECIMAL_PLACES);
-        assert!(eq(price, from_u128(1, 0)), 0);
-    }
-
-    #[test]
-    fun test_get_pool_price_stale_swap_max_with_max_decimals() {
-        let i = sub(from_u128(MAX_POOL_COIN_COUNT, 0), from_u128(1, MAX_DECIMAL_PLACES));
-        let q = sub(from_u128(MAX_POOL_COIN_COUNT, 0), from_u128(1, MAX_DECIMAL_PLACES));
-
-        let price = get_pool_price(POOL_TYPE_STABLE_SWAP, i, q, MAX_DECIMAL_PLACES);
         assert!(eq(price, from_u128(1, 0)), 0);
     }
 
