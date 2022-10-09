@@ -319,65 +319,69 @@ module ferum::pool {
 
         let minTick = from_u128(1, qDecimals);
         let price = get_pool_price(POOL_TYPE_CONSTANT_PRODUCT, iSupply, qSupply, qDecimals);
-        if (lt(price, minTick)) {
+
+        let sells = if (lt(price, minTick)) {
             return vector::empty()
+        } else {
+            let deltaIStep = approx_delta_i_for_constant_product_price_change(iSupply, qSupply, sub(price, minTick));
+            if (lt(deltaIStep, minValue)) {
+                deltaIStep = minValue;
+            };
+            let iSteps = divide_trunc(iSupply, deltaIStep);
+            let sellStep6 = multiply_trunc(multiply_trunc(iSteps, from_u128(6, 3)), deltaIStep);
+            let sellStep5 = multiply_trunc(multiply_trunc(iSteps, from_u128(5, 3)), deltaIStep);
+            let sellStep4 = multiply_trunc(multiply_trunc(iSteps, from_u128(4, 3)), deltaIStep);
+            let sellStep3 = multiply_trunc(multiply_trunc(iSteps, from_u128(3, 3)), deltaIStep);
+            let sellStep2 = multiply_trunc(multiply_trunc(iSteps, from_u128(2, 3)), deltaIStep);
+            let sellStep1 = multiply_trunc(multiply_trunc(iSteps, from_u128(1, 3)), deltaIStep);
+
+            vector<FixedPoint64>[
+                // Price after swapping ~0.1% of I supply.
+                price_after_constant_product_swap_i_to_q(iSupply, qSupply, sellStep1, qDecimals),
+                // Price after swapping ~0.2% of I supply.
+                price_after_constant_product_swap_i_to_q(iSupply, qSupply, sellStep2, qDecimals),
+                // Price after swapping ~0.3% of I supply.
+                price_after_constant_product_swap_i_to_q(iSupply, qSupply, sellStep3, qDecimals),
+                // Price after swapping ~0.4% of I supply.
+                price_after_constant_product_swap_i_to_q(iSupply, qSupply, sellStep4, qDecimals),
+                // Price after swapping ~0.5% of I supply.
+                price_after_constant_product_swap_i_to_q(iSupply, qSupply, sellStep5, qDecimals),
+                // Price after swapping ~0.6% of I supply.
+                price_after_constant_product_swap_i_to_q(iSupply, qSupply, sellStep6, qDecimals),
+            ]
         };
 
+        let buys = {
+            let deltaQStep = approx_delta_q_for_constant_product_price_change(iSupply, qSupply, add(price, minTick));
+            if (lt(deltaQStep, minValue)) {
+                deltaQStep = minValue;
+            };
+            let qSteps = divide_trunc(qSupply, deltaQStep);
+            let buyStep6 = multiply_trunc(multiply_trunc(qSteps, from_u128(6, 3)), deltaQStep);
+            let buyStep5 = multiply_trunc(multiply_trunc(qSteps, from_u128(5, 3)), deltaQStep);
+            let buyStep4 = multiply_trunc(multiply_trunc(qSteps, from_u128(4, 3)), deltaQStep);
+            let buyStep3 = multiply_trunc(multiply_trunc(qSteps, from_u128(3, 3)), deltaQStep);
+            let buyStep2 = multiply_trunc(multiply_trunc(qSteps, from_u128(2, 3)), deltaQStep);
+            let buyStep1 = multiply_trunc(multiply_trunc(qSteps, from_u128(1, 3)), deltaQStep);
 
-
-
-        let deltaIStep = approx_delta_i_for_constant_product_price_change(iSupply, qSupply, sub(price, minTick));
-        if (lt(deltaIStep, minValue)) {
-            deltaIStep = minValue;
+            vector<FixedPoint64>[
+                // Price after swapping ~0.6% of Q supply.
+                price_after_constant_product_swap_q_to_i(iSupply, qSupply, buyStep6, qDecimals),
+                // Price after swapping ~0.5% of Q supply.
+                price_after_constant_product_swap_q_to_i(iSupply, qSupply, buyStep5, qDecimals),
+                // Price after swapping ~0.4% of Q supply.
+                price_after_constant_product_swap_q_to_i(iSupply, qSupply, buyStep4, qDecimals),
+                // Price after swapping ~0.3% of Q supply.
+                price_after_constant_product_swap_q_to_i(iSupply, qSupply, buyStep3, qDecimals),
+                // Price after swapping ~0.2% of Q supply.
+                price_after_constant_product_swap_q_to_i(iSupply, qSupply, buyStep2, qDecimals),
+                // Price after swapping ~0.1% of Q supply.
+                price_after_constant_product_swap_q_to_i(iSupply, qSupply, buyStep1, qDecimals),
+            ]
         };
-        let deltaQStep = approx_delta_q_for_constant_product_price_change(iSupply, qSupply, add(price, minTick));
-        if (lt(deltaQStep, minValue)) {
-            deltaIStep = minValue;
-        };
 
-        let iSteps = divide_trunc(iSupply, deltaIStep);
-        let sellStep6 = multiply_trunc(multiply_trunc(iSteps, from_u128(6, 3)), deltaIStep);
-        let sellStep5 = multiply_trunc(multiply_trunc(iSteps, from_u128(5, 3)), deltaIStep);
-        let sellStep4 = multiply_trunc(multiply_trunc(iSteps, from_u128(4, 3)), deltaIStep);
-        let sellStep3 = multiply_trunc(multiply_trunc(iSteps, from_u128(3, 3)), deltaIStep);
-        let sellStep2 = multiply_trunc(multiply_trunc(iSteps, from_u128(2, 3)), deltaIStep);
-        let sellStep1 = multiply_trunc(multiply_trunc(iSteps, from_u128(1, 3)), deltaIStep);
-
-        let qSteps = divide_trunc(qSupply, deltaQStep);
-        let buyStep6 = multiply_trunc(multiply_trunc(qSteps, from_u128(6, 3)), deltaQStep);
-        let buyStep5 = multiply_trunc(multiply_trunc(qSteps, from_u128(5, 3)), deltaQStep);
-        let buyStep4 = multiply_trunc(multiply_trunc(qSteps, from_u128(4, 3)), deltaQStep);
-        let buyStep3 = multiply_trunc(multiply_trunc(qSteps, from_u128(3, 3)), deltaQStep);
-        let buyStep2 = multiply_trunc(multiply_trunc(qSteps, from_u128(2, 3)), deltaQStep);
-        let buyStep1 = multiply_trunc(multiply_trunc(qSteps, from_u128(1, 3)), deltaQStep);
-
-        vector<FixedPoint64>[
-            // Price after swapping ~0.6% of Q supply.
-            price_after_constant_product_swap_q_to_i(iSupply, qSupply, buyStep6, qDecimals),
-            // Price after swapping ~0.5% of Q supply.
-            price_after_constant_product_swap_q_to_i(iSupply, qSupply, buyStep5, qDecimals),
-            // Price after swapping ~0.4% of Q supply.
-            price_after_constant_product_swap_q_to_i(iSupply, qSupply, buyStep4, qDecimals),
-            // Price after swapping ~0.3% of Q supply.
-            price_after_constant_product_swap_q_to_i(iSupply, qSupply, buyStep3, qDecimals),
-            // Price after swapping ~0.2% of Q supply.
-            price_after_constant_product_swap_q_to_i(iSupply, qSupply, buyStep2, qDecimals),
-            // Price after swapping ~0.1% of Q supply.
-            price_after_constant_product_swap_q_to_i(iSupply, qSupply, buyStep1, qDecimals),
-
-            // Price after swapping ~0.1% of I supply.
-            price_after_constant_product_swap_i_to_q(iSupply, qSupply, sellStep1, qDecimals),
-            // Price after swapping ~0.2% of I supply.
-            price_after_constant_product_swap_i_to_q(iSupply, qSupply, sellStep2, qDecimals),
-            // Price after swapping ~0.3% of I supply.
-            price_after_constant_product_swap_i_to_q(iSupply, qSupply, sellStep3, qDecimals),
-            // Price after swapping ~0.4% of I supply.
-            price_after_constant_product_swap_i_to_q(iSupply, qSupply, sellStep4, qDecimals),
-            // Price after swapping ~0.5% of I supply.
-            price_after_constant_product_swap_i_to_q(iSupply, qSupply, sellStep5, qDecimals),
-            // Price after swapping ~0.6% of I supply.
-            price_after_constant_product_swap_i_to_q(iSupply, qSupply, sellStep6, qDecimals),
-        ]
+        vector::append(&mut buys, sells);
+        buys
     }
 
     fun validate_pool<I, Q, T>() {
