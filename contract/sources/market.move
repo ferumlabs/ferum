@@ -9,7 +9,7 @@ module ferum::market {
     use std::string::{Self, String};
     use std::vector;
 
-    use ferum::admin::{register_market, get_market_addr};
+    use ferum::admin;
     use ferum::platform::{UserIdentifier, is_user_identifier_valid, sentinal_user_identifier};
     use ferum_std::math::min_u8;
     use ferum::order_tree::{Self, Tree, is_empty, max_key, min_key, first_value_at};
@@ -270,7 +270,7 @@ module ferum::market {
             priceUpdateEvents,
         };
         move_to(owner, book);
-        register_market<I, Q>(ownerAddr);
+        admin::register_market<I, Q>(ownerAddr);
     }
 
     public entry fun add_order_entry<I, Q>(
@@ -430,17 +430,23 @@ module ferum::market {
                 fixed_point_64::multiply_round_up(price, qty),
                 fixed_point_64::zero(),
             )
-        } else {
+        } else if (side == SIDE_SELL) {
             (
                 fixed_point_64::zero(),
                 qty,
             )
+        } else {
+            abort ERR_INVALID_SIDE
         }
     }
 
     public fun get_market_decimals<I, Q>(): (u8, u8) acquires OrderBook {
         let book = borrow_global<OrderBook<I, Q>>(get_market_addr<I, Q>());
         (book.iDecimals, book.qDecimals)
+    }
+
+    public fun get_market_addr<I, Q>(): address {
+        admin::get_market_addr<I, Q>()
     }
 
     //

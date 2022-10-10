@@ -10,6 +10,9 @@ module ferum::admin {
     #[test_only]
     use aptos_framework::account;
 
+    friend ferum::market;
+    friend ferum::slv;
+
     //
     // Enums
     //
@@ -227,11 +230,11 @@ module ferum::admin {
     // Public functions.
     //
 
-    public fun assert_ferum_inited() {
+    public(friend) fun assert_ferum_inited() {
         assert!(exists<FerumInfo>(@ferum), ERR_NOT_ALLOWED);
     }
 
-    public fun register_market<I, Q>(marketAddr: address) acquires FerumInfo {
+    public(friend) fun register_market<I, Q>(marketAddr: address) acquires FerumInfo {
         assert_ferum_inited();
         let info = borrow_global_mut<FerumInfo>(@ferum);
         let key = market_key<I, Q>();
@@ -241,7 +244,7 @@ module ferum::admin {
         table::add(&mut info.marketMap, key, marketAddr);
     }
 
-    public fun get_market_addr<I, Q>(): address acquires FerumInfo {
+    public(friend) fun get_market_addr<I, Q>(): address acquires FerumInfo {
         assert_ferum_inited();
         let info = borrow_global<FerumInfo>(@ferum);
         let key = market_key<I, Q>();
@@ -249,7 +252,7 @@ module ferum::admin {
         *table::borrow(&info.marketMap, key)
     }
 
-    public fun assert_market_inited<I, Q>() acquires FerumInfo {
+    public(friend) fun assert_market_inited<I, Q>() acquires FerumInfo {
         assert_ferum_inited();
         get_market_addr<I, Q>();
     }

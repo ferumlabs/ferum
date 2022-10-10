@@ -1,6 +1,8 @@
 module ferum::platform {
     use std::signer::address_of;
 
+    friend ferum::market;
+
     //
     // Errors
     //
@@ -28,10 +30,6 @@ module ferum::platform {
     // Public functions.
     //
 
-    public fun is_address_valid(addr: address): bool {
-        return addr != @0x0
-    }
-
     public fun register_protocol(owner: &signer): ProtocolCapability {
         let ownerAddr = address_of(owner);
         assert!(!exists<ProtocolInfo>(ownerAddr), ERR_PROTOCOL_ALREADY_REGISTERED);
@@ -41,21 +39,6 @@ module ferum::platform {
         ProtocolCapability{
             protocolAddress: ownerAddr,
         }
-    }
-
-    public fun get_protocol_address(cap: &ProtocolCapability): address {
-        return cap.protocolAddress
-    }
-
-    public fun sentinal_user_identifier(): UserIdentifier {
-        UserIdentifier {
-            protocolAddress: @0x0,
-            userAddress: @0x0,
-        }
-    }
-
-    public fun is_user_identifier_valid(identifier: &UserIdentifier): bool {
-        is_address_valid(identifier.protocolAddress) && is_address_valid(identifier.userAddress)
     }
 
     public fun get_user_identifier(user: &signer, protocolCap: &ProtocolCapability): UserIdentifier {
@@ -68,8 +51,27 @@ module ferum::platform {
         }
     }
 
+    public(friend) fun is_address_valid(addr: address): bool {
+        return addr != @0x0
+    }
+
+    public(friend) fun get_protocol_address(cap: &ProtocolCapability): address {
+        return cap.protocolAddress
+    }
+
+    public(friend) fun sentinal_user_identifier(): UserIdentifier {
+        UserIdentifier {
+            protocolAddress: @0x0,
+            userAddress: @0x0,
+        }
+    }
+
+    public(friend) fun is_user_identifier_valid(identifier: &UserIdentifier): bool {
+        is_address_valid(identifier.protocolAddress) && is_address_valid(identifier.userAddress)
+    }
+
     // Returns (protocolAddress, userAddress)
-    public fun get_addresses_from_user_identifier(id: &UserIdentifier): (address, address) {
+    public(friend) fun get_addresses_from_user_identifier(id: &UserIdentifier): (address, address) {
         (id.protocolAddress, id.userAddress)
     }
 
