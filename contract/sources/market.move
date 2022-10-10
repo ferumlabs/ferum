@@ -10,7 +10,7 @@ module ferum::market {
     use std::vector;
 
     use ferum::admin::{register_market, get_market_addr};
-    use ferum::platform::{UserIdentifier, is_user_identifier_valid, sentinal_user_identifier, register_protocol, get_user_identifier};
+    use ferum::platform::{UserIdentifier, is_user_identifier_valid, sentinal_user_identifier};
     use ferum_std::math::min_u8;
     use ferum::order_tree::{Self, Tree, is_empty, max_key, min_key, first_value_at};
     use ferum_std::fixed_point_64::{Self, FixedPoint64, from_u64};
