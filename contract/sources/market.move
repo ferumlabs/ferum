@@ -17,6 +17,8 @@ module ferum::market {
     use ferum_std::linked_list;
 
     #[test_only]
+    use ferum::platform::{get_user_identifier, register_protocol};
+    #[test_only]
     use ferum::admin::{init_ferum};
     #[test_only]
     use ferum::coin_test_helpers::{FMA, FMB, setup_fake_coins, register_fmb, register_fma, create_fake_coins, register_fma_fmb};
