@@ -1,9 +1,11 @@
 import { exec, execSync } from "child_process";
 import { AptosAccount } from "aptos";
-import { replaceFerumAddresses } from "./move-file-utils";
+import { updateMoveTOMLForDeploy } from "./move-file-utils";
+import { Env } from "../config";
 
 /** Publishes a move module the aptos CLI under the hood */
 export function publishModuleUsingCLI(
+  env: Env,
   rpcUrl: string,
   accountFrom: AptosAccount,
   moduleDir: string,
@@ -16,12 +18,15 @@ export function publishModuleUsingCLI(
   const urlFlag = `--url ${rpcUrl}`;
   const addrFlag = `--named-addresses ferum=${accountFrom.address()}`;
   const artifactsFlag = `--included-artifacts none`;
+  const gasUnitPriceFlag = `--gas-unit-price 200`;
 
-  const restoreMoveFile = replaceFerumAddresses(moduleDir);
+  console.log(`aptos move publish --assume-yes ${gasUnitPriceFlag} ${maxGasFlag} ${pkeyFlag} ${dirFlag} ${urlFlag} ${addrFlag} ${artifactsFlag}`);
+
+  const restoreMoveFile = updateMoveTOMLForDeploy(env, moduleDir);
 
   return new Promise((resolve, reject) => {
     exec(
-      `aptos move publish ${maxGasFlag} ${pkeyFlag} ${dirFlag} ${urlFlag} ${addrFlag} ${artifactsFlag}`, 
+      `aptos move publish --assume-yes ${gasUnitPriceFlag} ${maxGasFlag} ${pkeyFlag} ${dirFlag} ${urlFlag} ${addrFlag} ${artifactsFlag}`,
       (err, stdout, stderr) => {
         if (stderr) {
           console.warn(stderr);

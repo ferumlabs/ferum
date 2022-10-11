@@ -65,20 +65,32 @@ export async function cancelOrder(
   return await sendSignedTransactionWithAccount(signerAccount, entryFunction)
 }
 
-export function addLimitTxnPayload(
+export function addOrderTxnPayload(
   signerAccount: AptosAccount,
   instrumentCoin: string,
   quoteCoin: string,
   side: 'buy' | 'sell',
+  type: 'resting' | 'ioc' | 'fok' | 'post',
   price: number,
   quantity: number,
 ) {
+  let typ = 0;
+  if (type === 'resting') {
+    typ = 1;
+  } else if (type === 'post') {
+    typ = 2;
+  } else if (type === 'ioc') {
+    typ = 3;
+  } else if (type === 'fok') {
+    typ = 4;
+  }
   return TxnBuilderTypes.EntryFunction.natural(
     `${signerAccount.address()}::market`,
     "add_limit_order_entry",
     coinTypeTags(instrumentCoin, quoteCoin),
     [
       BCS.bcsSerializeU8(side === 'buy' ? 2 : 1),
+      BCS.bcsSerializeU8(typ),
       BCS.bcsSerializeUint64(price),
       BCS.bcsSerializeUint64(quantity),
       BCS.bcsSerializeStr(""),
@@ -86,36 +98,15 @@ export function addLimitTxnPayload(
   );
 }
 
-export async function addLimitOrder(
+export async function addOrder(
   signerAccount: AptosAccount,
   instrumentCoin: string,
   quoteCoin: string,
   side: 'buy' | 'sell',
+  type: 'resting' | 'ioc' | 'fok' | 'post',
   price: number,
   quantity: number,
 ) {
-  const entryFn = addLimitTxnPayload(signerAccount, instrumentCoin, quoteCoin, side, price, quantity);
+  const entryFn = addOrderTxnPayload(signerAccount, instrumentCoin, quoteCoin, side, type, price, quantity);
   return await sendSignedTransactionWithAccount(signerAccount, entryFn);
-}
-
-export async function addMarketOrder(
-  signerAccount: AptosAccount,
-  instrumentCoin: string,
-  quoteCoin: string,
-  side: 'buy' | 'sell',
-  quantity: number,
-  maxCollateral: number,
-) {
-  const entryFunction = TxnBuilderTypes.EntryFunction.natural(
-    `${signerAccount.address()}::market`,
-    "add_market_order_entry",
-    coinTypeTags(instrumentCoin, quoteCoin),
-    [
-      BCS.bcsSerializeU8(side === 'buy' ? 2 : 1),
-      BCS.bcsSerializeUint64(quantity),
-      BCS.bcsSerializeUint64(maxCollateral),
-      BCS.bcsSerializeStr(""),
-    ]
-  );
-  return await sendSignedTransactionWithAccount(signerAccount, entryFunction)
 }

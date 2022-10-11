@@ -3,14 +3,17 @@ import { assert } from "console";
 import fs from "fs";
 import log from "loglevel";
 import { getFaucetClient } from "./aptos-client";
+import { assertUnreachable } from "./utils/types";
 
 type Profile = AptosAccountObject;
+
+export type Env = 'devnet' | 'testnet';
 
 type Config = {
   TypeAliases: { [key: string]: string },
   Profiles: { [key: string]: Profile },
   CurrentProfile: string | null,
-  FerumAddress: string | null,
+  Env: Env,
 }
 
 export const CONFIG_PATH = `${process.env.HOME}/.ferum_config`;
@@ -18,7 +21,7 @@ let ConfigCache: Config = {
   TypeAliases: {},
   CurrentProfile: null,
   Profiles: {},
-  FerumAddress: null,
+  Env: 'testnet',
 };
 
 if (!fs.existsSync(CONFIG_PATH)) {
@@ -28,6 +31,7 @@ if (!fs.existsSync(CONFIG_PATH)) {
 }
 
 function syncConfig() {
+  fs.rmSync(CONFIG_PATH);
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(ConfigCache, null, 2));
 }
 
@@ -42,13 +46,24 @@ function addAddressIfNecessary(address: string | null, type: string): string {
 }
 
 export default {
-  setFerumAddress: function (address: string) {
-    ConfigCache.FerumAddress = address;
-    syncConfig()
+  setEnv: function (env: Env) {
+    ConfigCache.Env = env;
+    syncConfig();
   },
 
-  getFerumAddress: function () {
-    return ConfigCache.FerumAddress
+  getEnv: function(): Env {
+    return ConfigCache.Env;
+  },
+
+  getFerumAddress: function (): string {
+    let env = ConfigCache.Env;
+    switch (env) {
+      case 'devnet':
+      case 'testnet':
+        return ConfigCache.Profiles[env].address;
+      default:
+        assertUnreachable(env);
+    }
   },
 
   getProfileAccount: function (name: string): AptosAccount {
@@ -67,14 +82,13 @@ export default {
     syncConfig()
   },
 
-  importExistingProfile: async function (name: string, privateKey: string, ferumAccount: string) {
+  importExistingProfile: async function (name: string, privateKey: string) {
     const privateKeyHex = Uint8Array.from(Buffer.from(privateKey, "hex"));
     const account = new AptosAccount(privateKeyHex)
     if (name in ConfigCache.Profiles) {
       log.debug(`Overwriting profile ${name}`);
     }
     ConfigCache.Profiles[name] = account.toPrivateKeyObject();
-    this.setFerumAddress(ferumAccount);
     syncConfig()
   },
 
@@ -94,7 +108,7 @@ export default {
     assert(this.getFerumAddress(), "Ferum address not set!")
     if (maybeAlias in ConfigCache['TypeAliases']) {
       return addAddressIfNecessary(
-        ConfigCache.FerumAddress,
+        this.getFerumAddress(),
         ConfigCache['TypeAliases'][maybeAlias],
       );
     }

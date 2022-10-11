@@ -1,9 +1,11 @@
 import { exec } from "child_process";
 import { AptosAccount } from "aptos";
-import { replaceFerumAddresses } from "./move-file-utils";
+import { updateMoveTOMLForDeploy } from "./move-file-utils";
+import { Env } from "../config";
 
 /** Tests a move module the aptos CLI under the hood */
 export function testModuleUsingCLI(
+  env: Env,
   rpcUrl: string,
   accountFrom: AptosAccount,
   moduleDir: string,
@@ -11,7 +13,7 @@ export function testModuleUsingCLI(
   const dirFlag = `--package-dir ${moduleDir}`;
   const addrFlag = `--named-addresses ferum=${accountFrom.address()}`;
 
-  const restoreMoveFile = replaceFerumAddresses(moduleDir);
+  const restoreMoveFile = updateMoveTOMLForDeploy(env, moduleDir);
 
   return new Promise((resolve, reject) => {
     exec(

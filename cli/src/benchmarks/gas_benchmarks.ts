@@ -2,7 +2,7 @@ import { AptosAccount } from 'aptos';
 import log from "loglevel";
 
 import { getClient, getFaucetClient, getNodeURL } from '../aptos-client';
-import { addLimitOrder, initializeFerum, initializeMarket, addLimitTxnPayload } from '../market';
+import { addOrder, initializeFerum, initializeMarket, addLimitTxnPayload } from '../market';
 import { initializeUSDF, mintUSDF } from '../usdf';
 import { setEnv } from '../utils/env';
 import { publishModuleUsingCLI } from "../utils/module-publish-utils";
@@ -52,7 +52,7 @@ async function main() {
   const midPrice = ORDER_COUNT * 10000;
   for (let i = 0; i < ORDER_COUNT; i++) {
     promises.push(new Promise<void>(async resolve => {
-      await addLimitOrder(
+      await addOrder(
         account, 
         '0x1::aptos_coin::AptosCoin',
         `${account.address()}::test_coins::USDF`,
@@ -66,7 +66,7 @@ async function main() {
   }
   for (let i = 0; i < ORDER_COUNT; i++) {
     promises.push(new Promise<void>(async resolve => {
-      await addLimitOrder(
+      await addOrder(
         account, 
         '0x1::aptos_coin::AptosCoin',
         `${account.address()}::test_coins::USDF`,

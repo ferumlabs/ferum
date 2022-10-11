@@ -4,14 +4,13 @@ import { program } from "commander";
 import log from "loglevel";
 import util from "util";
 import { createTestCoin, getTestCoinBalance, TestCoinSymbol, TEST_COINS, getBalance } from "./test-coins";
-import { initializeFerum, initializeMarket, addLimitOrder, addMarketOrder, cancelOrder } from "./market";
-import { AptosAccount, HexString } from "aptos";
+import { initializeFerum, initializeMarket, addOrder, cancelOrder } from "./market";
+import { AptosAccount } from "aptos";
 import { Types } from "aptos";
 import { publishModuleUsingCLI } from "./utils/module-publish-utils";
 import { getClient, getFaucetClient, getNodeURL } from './aptos-client';
-import { setEnv } from './utils/env';
 import Config, { CONFIG_PATH } from './config';
-import { initializeUSDF, registerUSDF, mintUSDF } from './usdf';
+import { initializeUSDF } from './usdf';
 import { testModuleUsingCLI } from "./utils/module-testing-utils";
 
 const DEFAULT_CONTRACT_DIR = "../contract"
@@ -23,30 +22,12 @@ for (let symbol in TEST_COINS) {
 
 log.setLevel("info");
 
-setEnv('devnet');
-
 program.version("1.1.0", undefined, "Output the version number.");
 
 program.option("-l, --log-level <string>", "Log level")
   .hook('preAction', (cmd, subCmd) => {
     const { logLevel } = cmd.opts();
     setLogLevel(logLevel);
-  });
-
-program.option("-e, --env <string>", "Environment to use. Valid options are devnet or testnet")
-  .hook('preAction', (cmd, subCmd) => {
-    const { env } = cmd.opts();
-    if (!env) {
-      return
-    }
-    if (env === 'devnet') {
-      setEnv(env);
-    } else if (env === 'testnet') {
-      setEnv(env);
-    } else {
-      log.error('Invalid environment')
-      throw new Error();
-    }
   });
 
 program.command("init-account")
@@ -94,10 +75,9 @@ program.command("import-existing-profile")
   .description('Imports an existing profile.')
   .requiredOption('-n, --name <string>', 'Name for profile')
   .requiredOption("-pk, --private-key [string]", "Private key assoicated with the existing profile.")
-  .requiredOption("-fa, --ferumAccount [string]", "Address of the published ferum module.")
   .action(async (_, cmd) => {
-    const { name, privateKey, ferumAccount } = cmd.opts();
-    await Config.importExistingProfile(name, privateKey, ferumAccount);
+    const { name, privateKey } = cmd.opts();
+    await Config.importExistingProfile(name, privateKey);
     Config.setCurrentProfile(name);
     log.info(`Added profile ${name} and selected it as the current one`);
   });
@@ -149,6 +129,29 @@ program.command("set-type-alias")
     log.info(`Set symbol for coin type ${type} to ${alias}.`);
   });
 
+program.command("set-env")
+  .description('Set the environment. Should be either devnet or testnet')
+  .requiredOption(
+    "-e, --env <string>",
+    `Environment to set`
+  )
+  .action(async (_, cmd) => {
+    const { env } = cmd.opts();
+    if (env === 'devnet' || env === 'testnet') {
+      Config.setEnv(env);
+      log.info(`Env set to ${env}`);
+      return;
+    } else {
+      throw new Error('Unsupported env. Valid choices are devnet or testnet')
+    };
+  });
+
+program.command("get-env")
+  .description('Get the currently set environment')
+  .action(async (_, cmd) => {
+    console.log(`The current environment is set to ${Config.getEnv()}`);
+  });
+
 program.command("clear-type-alias")
   .description('Clear a type alias.')
   .requiredOption("-a, --alias <string>", "Name of type alias.")
@@ -168,19 +171,46 @@ program.command("get-address")
     log.info(`Address: ${account.address().toString()}`);
   });
 
-signedCmd("publish-ferum")
+signedCmd("publish-ferum-current-profile")
+  .description("Publishes ferum to the current profile")
   .requiredOption("-m, --module-path <string>", "Module path.", DEFAULT_CONTRACT_DIR)
   .option("-g, --max-gas [number]", "Max gas used for transaction. Optional. Defaults to 10000.", "10000")
   .action(async (_, cmd) => {
     const { account, modulePath, maxGas } = cmd.opts();
     const maxGasNum = parseNumber(maxGas, 'max-gas');
-    log.info('Publishing modules under account', account.address().toString());
+    log.info(`Publishing modules to environment ${Config.getEnv()} under account`, account.address().toString());
     try {
-      await publishModuleUsingCLI(getNodeURL(), account, modulePath, maxGasNum);
-      Config.setFerumAddress((account as AptosAccount).address().toString());
+      await publishModuleUsingCLI(Config.getEnv(), getNodeURL(), account, modulePath, maxGasNum);
     }
     catch {
       console.error('Unable to publish module.');
+    }
+  });
+
+program.command("deploy-dev")
+  .description("Deploys ferum to all dev/test environments")
+  .requiredOption("-m, --module-path <string>", "Module path.", DEFAULT_CONTRACT_DIR)
+  .option("-g, --max-gas [number]", "Max gas used for transaction. Optional. Defaults to 10000.", "10000")
+  .action(async (_, cmd) => {
+    const { modulePath, maxGas } = cmd.opts();
+    const maxGasNum = parseNumber(maxGas, 'max-gas');
+
+    let oldEnv = Config.getEnv();
+
+    let publish = async function() {
+      let env = Config.getEnv();
+      let account = Config.getProfileAccount(env);
+      log.info(`Publishing modules to environment ${Config.getEnv()} under account`, account.address().toString());
+      await publishModuleUsingCLI(Config.getEnv(), getNodeURL(), account, modulePath, maxGasNum);
+    };
+
+    try {
+      Config.setEnv('testnet');
+      await publish();
+    } catch {
+      console.error('Unable to publish module.');
+    } finally {
+      Config.setEnv(oldEnv);
     }
   });
 
@@ -190,7 +220,7 @@ signedCmd("test-ferum")
     const { account, modulePath } = cmd.opts();
     log.info('Testing modules under account', account.address().toString());
     try {
-      await testModuleUsingCLI(getNodeURL(), account, modulePath);
+      await testModuleUsingCLI(Config.getEnv(), getNodeURL(), account, modulePath);
     }
     catch {
       console.error('Unable to publish module.');
@@ -215,18 +245,16 @@ signedCmd("create-usdf")
     prettyPrint(transactionStatusMessage(txResult), txResult)
   });
 
-
 signedCmd("apt-balance")
-.description('Get APT coin balance for the current profile.')
-.action(async (_, cmd) => {
-  const { account } = cmd.opts();
-  let balance = await getBalance(
-    account.address(),
-    "0x1::aptos_coin::AptosCoin",
-  );
-  prettyPrint("Coin balance:", balance);
-});
-
+  .description('Get APT coin balance for the current profile.')
+  .action(async (_, cmd) => {
+    const { account } = cmd.opts();
+    let balance = await getBalance(
+      account.address(),
+      "0x1::aptos_coin::AptosCoin",
+    );
+    prettyPrint("Coin balance:", balance);
+  });
 
 signedCmd("test-coin-balances")
   .description('Get FakeMoneyA (FMA) and FakeMoneyB (FMB) balances for the signing account.')
@@ -286,7 +314,7 @@ signedCmd("init-market")
     prettyPrint(transactionStatusMessage(txResult), txResult)
   });
 
-signedCmd("add-limit-order")
+signedCmd("add-order")
   .requiredOption(
     "-ic, --instrument-coin-type <string>",
     "Instrument CoinType. Must be a fully qualified type (address::module::CoinType) or an alias."
@@ -307,48 +335,18 @@ signedCmd("add-limit-order")
     "-s, --side <buy | sell>",
     "Side for the order, either buy or sell.",
   )
+  .requiredOption(
+    "-t, --type <resting | fok | ioc | post>",
+    "Type of the order, one of resting, fok, ioc, or post.",
+  )
   .action(async (_, cmd) => {
-    const { account, price, quantity, side } = cmd.opts();
+    const { account, price, quantity, side, type } = cmd.opts();
     let { quoteCoinType, instrumentCoinType } = cmd.opts();
 
     quoteCoinType = Config.tryResolveAlias(quoteCoinType);
     instrumentCoinType = Config.tryResolveAlias(instrumentCoinType);
 
-    const txHash = await addLimitOrder(account, instrumentCoinType, quoteCoinType, side, price, quantity)
-    log.info(`Started pending transaction: ${txHash}.`)
-    const txResult = await getClient().waitForTransactionWithResult(txHash) as Types.UserTransaction;
-    prettyPrint(transactionStatusMessage(txResult), txResult)
-  });
-
-signedCmd("add-market-order")
-  .requiredOption(
-    "-ic, --instrument-coin-type <string>",
-    "Instrument CoinType. Must be a fully qualified type (address::module::CoinType) or an alias."
-  )
-  .requiredOption(
-    "-qc, --quote-coin-type <string>",
-    "Quote CoinType. Must be a fully qualified type (address::module::CoinType) or an alias."
-  )
-  .requiredOption(
-    "-q, --quantity <number>",
-    "Quantity for the order, in terms of coin::Coin<InstrumentCoinType>",
-  )
-  .requiredOption(
-    "-s, --side <buy | sell>",
-    "Side for the order, either buy or sell.",
-  )
-  .requiredOption(
-    "-c, --max-collateral [number]",
-    "Only required for a buy order. Max amount of coin::Coin<QuoteCoinType> allowed to be spent.",
-  )
-  .action(async (_, cmd) => {
-    const { account, side, quantity, maxCollateral } = cmd.opts();
-    let { quoteCoinType, instrumentCoinType } = cmd.opts();
-
-    quoteCoinType = Config.tryResolveAlias(quoteCoinType);
-    instrumentCoinType = Config.tryResolveAlias(instrumentCoinType);
-
-    const txHash = await addMarketOrder(account, instrumentCoinType, quoteCoinType, side, quantity, maxCollateral)
+    const txHash = await addOrder(account, instrumentCoinType, quoteCoinType, side, type, price, quantity)
     log.info(`Started pending transaction: ${txHash}.`)
     const txResult = await getClient().waitForTransactionWithResult(txHash) as Types.UserTransaction;
     prettyPrint(transactionStatusMessage(txResult), txResult)
