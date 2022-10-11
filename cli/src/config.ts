@@ -74,7 +74,6 @@ export default {
 
   createNewProfile: async function (name: string) {
     const account = new AptosAccount();
-    await getFaucetClient().fundAccount(account.address(), 20000);
     if (name in ConfigCache.Profiles) {
       log.debug(`Overwriting profile ${name}`);
     }
