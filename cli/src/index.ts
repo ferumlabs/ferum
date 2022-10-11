@@ -30,37 +30,6 @@ program.option("-l, --log-level <string>", "Log level")
     setLogLevel(logLevel);
   });
 
-program.command("init-account")
-  .description('Initializes an aptos account.')
-  .requiredOption('-pk, --private-key <string>', 'Private key of the account')
-  .requiredOption('-a, --address <string>', 'Address of the account')
-  .action(async (_, cmd) => {
-    const { address, privateKey } = cmd.opts();
-    const account = AptosAccount.fromAptosAccountObject({
-      privateKeyHex: privateKey,
-      address,
-    });
-    await getFaucetClient().fundAccount(account.address(), 2_000_000_00000000);
-    log.info(`Created account ${account.address()}`);
-  });
-
-program.command("fund-account")
-  .description('Funds the specified account with 2,000,000 APT.')
-  .option('-a, --address <string>', 'Address of the account')
-  .action(async (_, cmd) => {
-    let { address } = cmd.opts();
-    if (!address) {
-      const profile = Config.getCurrentProfileName();
-      if (!profile) {
-        log.error('Need to specify an address or have a profile set.');
-        throw new Error('No address to fund');
-      }
-      address = Config.getProfileAccount(profile).address();
-    } 
-    await getFaucetClient().fundAccount(address, 2_000_000_00000000);
-    log.info(`Funded account ${address} with 2,000,000 APT`);
-  });
-
 program.command("create-profile")
   .description('Initializes a profile.')
   .requiredOption('-n, --name <string>', 'Name for profile')

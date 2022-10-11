@@ -2,7 +2,7 @@ import { AptosAccount, AptosAccountObject, } from "aptos";
 import { assert } from "console";
 import fs from "fs";
 import log from "loglevel";
-import { getFaucetClient } from "./aptos-client";
+import {getClient, getFaucetClient} from "./aptos-client";
 import { assertUnreachable } from "./utils/types";
 
 type Profile = AptosAccountObject;
