@@ -6,14 +6,15 @@ import { Env } from "../config";
 /** Tests a move module the aptos CLI under the hood */
 export function testModuleUsingCLI(
   env: Env,
+  moduleName: string,
   rpcUrl: string,
   accountFrom: AptosAccount,
   moduleDir: string,
 ): Promise<number> {
   const dirFlag = `--package-dir ${moduleDir}`;
-  const addrFlag = `--named-addresses ferum=${accountFrom.address()}`;
+  const addrFlag = `--named-addresses ${moduleName}=${accountFrom.address()}`;
 
-  const restoreMoveFile = updateMoveTOMLForDeploy(env, moduleDir);
+  const restoreMoveFile = updateMoveTOMLForDeploy(env, moduleName, moduleDir);
 
   return new Promise((resolve, reject) => {
     exec(

@@ -149,7 +149,7 @@ signedCmd("publish-ferum-current-profile")
     const maxGasNum = parseNumber(maxGas, 'max-gas');
     log.info(`Publishing modules to environment ${Config.getEnv()} under account`, account.address().toString());
     try {
-      await publishModuleUsingCLI(Config.getEnv(), getNodeURL(), account, modulePath, maxGasNum);
+      await publishModuleUsingCLI(Config.getEnv(), "ferum", getNodeURL(), account, modulePath, maxGasNum);
     }
     catch {
       console.error('Unable to publish module.');
@@ -170,7 +170,7 @@ program.command("deploy-dev")
       let env = Config.getEnv();
       let account = Config.getProfileAccount(env);
       log.info(`Publishing modules to environment ${Config.getEnv()} under account`, account.address().toString());
-      await publishModuleUsingCLI(Config.getEnv(), getNodeURL(), account, modulePath, maxGasNum);
+      await publishModuleUsingCLI(Config.getEnv(), "ferum", getNodeURL(), account, modulePath, maxGasNum);
     };
 
     try {
@@ -189,7 +189,7 @@ signedCmd("test-ferum")
     const { account, modulePath } = cmd.opts();
     log.info('Testing modules under account', account.address().toString());
     try {
-      await testModuleUsingCLI(Config.getEnv(), getNodeURL(), account, modulePath);
+      await testModuleUsingCLI(Config.getEnv(), "ferum", getNodeURL(), account, modulePath);
     }
     catch {
       console.error('Unable to publish module.');

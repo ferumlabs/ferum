@@ -7,7 +7,7 @@ import { assertUnreachable } from "./utils/types";
 
 type Profile = AptosAccountObject;
 
-export type Env = 'devnet' | 'testnet';
+export type Env = 'devnet' | 'testnet' | 'local';
 
 type Config = {
   TypeAliases: { [key: string]: string },
@@ -60,6 +60,7 @@ export default {
     switch (env) {
       case 'devnet':
       case 'testnet':
+      case 'local':
         return ConfigCache.Profiles[env].address;
       default:
         assertUnreachable(env);
@@ -81,8 +82,8 @@ export default {
     syncConfig()
   },
 
-  importExistingProfile: async function (name: string, privateKey: string) {
-    const privateKeyHex = Uint8Array.from(Buffer.from(privateKey, "hex"));
+  importExistingProfile: function (name: string, privateKey: string) {
+    const privateKeyHex = Uint8Array.from(Buffer.from(privateKey.replace("0x", ""), "hex"));
     const account = new AptosAccount(privateKeyHex)
     if (name in ConfigCache.Profiles) {
       log.debug(`Overwriting profile ${name}`);

@@ -4,7 +4,7 @@ import {
   BCS,
 } from "aptos";
 
-import { sendSignedTransactionWithAccount } from  "./utils/transaction-utils";
+import {sendSignedTransactionWithAccount, TxOptions} from "./utils/transaction-utils";
 
 function coinTypeTags(instrumentCoin: string, quoteCoin: string) {
   const instrumentCoinTypeTag = new TxnBuilderTypes.TypeTagStruct(
@@ -24,9 +24,14 @@ export async function initializeFerum(
     `${signerAccount.address()}::admin`,
     "init_ferum",
     [],
-    []
+    [
+      BCS.bcsSerializeU128(0),
+      BCS.bcsSerializeU128(0),
+      BCS.bcsSerializeU128(0),
+      BCS.bcsSerializeU128(0),
+    ]
   );
-  return await sendSignedTransactionWithAccount(signerAccount, entryFunction)
+  return await sendSignedTransactionWithAccount(signerAccount, entryFunction, {maxGas: 20000})
 }
 
 export async function initializeMarket(
@@ -86,7 +91,7 @@ export function addOrderTxnPayload(
   }
   return TxnBuilderTypes.EntryFunction.natural(
     `${signerAccount.address()}::market`,
-    "add_limit_order_entry",
+    "add_order_entry",
     coinTypeTags(instrumentCoin, quoteCoin),
     [
       BCS.bcsSerializeU8(side === 'buy' ? 2 : 1),
@@ -106,7 +111,8 @@ export async function addOrder(
   type: 'resting' | 'ioc' | 'fok' | 'post',
   price: number,
   quantity: number,
+  opts?: TxOptions,
 ) {
   const entryFn = addOrderTxnPayload(signerAccount, instrumentCoin, quoteCoin, side, type, price, quantity);
-  return await sendSignedTransactionWithAccount(signerAccount, entryFn);
+  return await sendSignedTransactionWithAccount(signerAccount, entryFn, opts);
 }

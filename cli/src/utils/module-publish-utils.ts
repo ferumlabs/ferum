@@ -6,6 +6,7 @@ import { Env } from "../config";
 /** Publishes a move module the aptos CLI under the hood */
 export function publishModuleUsingCLI(
   env: Env,
+  moduleName: string,
   rpcUrl: string,
   accountFrom: AptosAccount,
   moduleDir: string,
@@ -16,13 +17,13 @@ export function publishModuleUsingCLI(
   const maxGasFlag = `--max-gas ${maxGas}`;
   const dirFlag = `--package-dir ${moduleDir}`;
   const urlFlag = `--url ${rpcUrl}`;
-  const addrFlag = `--named-addresses ferum=${accountFrom.address()}`;
+  const addrFlag = `--named-addresses ${moduleName}=${accountFrom.address()}`;
   const artifactsFlag = `--included-artifacts none`;
   const gasUnitPriceFlag = `--gas-unit-price 200`;
 
   console.log(`aptos move publish --assume-yes ${gasUnitPriceFlag} ${maxGasFlag} ${pkeyFlag} ${dirFlag} ${urlFlag} ${addrFlag} ${artifactsFlag}`);
 
-  const restoreMoveFile = updateMoveTOMLForDeploy(env, moduleDir);
+  const restoreMoveFile = updateMoveTOMLForDeploy(env, moduleName, moduleDir);
 
   return new Promise((resolve, reject) => {
     exec(
