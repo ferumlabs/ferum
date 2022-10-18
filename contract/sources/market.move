@@ -12,7 +12,7 @@ module ferum::market {
     use ferum::admin;
     use ferum::platform::{UserIdentifier, is_user_identifier_valid, sentinal_user_identifier};
     use ferum_std::math::min_u8;
-    use ferum::order_tree::{Self, Tree, is_empty, max_key, min_key, first_value_at};
+    use ferum::order_store::{Self, Tree, is_empty, max_key, min_key, first_value_at};
     use ferum_std::fixed_point_64::{Self, FixedPoint64, from_u64};
     use ferum_std::linked_list;
 
@@ -256,8 +256,8 @@ module ferum::market {
         let priceUpdateEvents = new_event_handle<PriceUpdateEvent>(owner);
 
         let book = OrderBook<I, Q>{
-            sells: order_tree::new<OrderID>(),
-            buys: order_tree::new<OrderID>(),
+            sells: order_store::new<OrderID>(),
+            buys: order_store::new<OrderID>(),
             orderMap: table::new<OrderID, Order<I, Q>>(),
             finalizedOrderMap: table::new<OrderID, Order<I, Q>>(),
             signerToOrders: table::new<address, vector<OrderID>>(),
@@ -352,7 +352,7 @@ module ferum::market {
             } else {
                 abort ERR_INVALID_SIDE
             };
-            order_tree::delete_value(orderTree, fixed_point_64::value(order.metadata.price), order.id);
+            order_store::delete_value(orderTree, fixed_point_64::value(order.metadata.price), order.id);
             table::add(&mut book.finalizedOrderMap, order.id, order);
 
             i = i + 1;
@@ -572,7 +572,7 @@ module ferum::market {
         } else {
             abort ERR_INVALID_SIDE
         };
-        order_tree::delete_value(orderTree, fixed_point_64::value(order.metadata.price), order.id);
+        order_store::delete_value(orderTree, fixed_point_64::value(order.metadata.price), order.id);
 
         let signerOrderIDs = table::borrow_mut(&mut book.signerToOrders, order.id.owner);
         let (exists, orderIDIdx) = vector::index_of(signerOrderIDs, &order.id);
@@ -661,7 +661,7 @@ module ferum::market {
                 } else {
                     abort ERR_INVALID_SIDE
                 };
-                order_tree::insert(orderTree, fixed_point_64::value(order.metadata.price), order.id);
+                order_store::insert(orderTree, fixed_point_64::value(order.metadata.price), order.id);
                 let orderMap = &mut book.orderMap;
                 table::add(orderMap, order.id, order);
             } else {
@@ -717,7 +717,7 @@ module ferum::market {
                     let bookOrder = table::remove(orderMap, bookOrderID);
                     settle_unsettled_collateral(&mut bookOrder);
                     table::add(finalizedOrderMap, bookOrder.id, bookOrder);
-                    order_tree::delete_value(sellTree, minAskKey, bookOrderID);
+                    order_store::delete_value(sellTree, minAskKey, bookOrderID);
                 };
 
                 if (orderFinalized) {
@@ -748,7 +748,7 @@ module ferum::market {
                     let bookOrder = table::remove(orderMap, bookOrderID);
                     settle_unsettled_collateral(&mut bookOrder);
                     table::add(finalizedOrderMap, bookOrder.id, bookOrder);
-                    order_tree::delete_value(buyTree, maxBidKey, bookOrderID);
+                    order_store::delete_value(buyTree, maxBidKey, bookOrderID);
                 };
 
                 if (orderFinalized) {
@@ -861,7 +861,7 @@ module ferum::market {
         price: FixedPoint64,
     ): FixedPoint64 {
         let sum = fixed_point_64::zero();
-        let ordersList = order_tree::values_at_list(orderTree, fixed_point_64::value(price));
+        let ordersList = order_store::values_at_list(orderTree, fixed_point_64::value(price));
         let ordersListIterator = linked_list::iterator(ordersList);
         while (linked_list::has_next(&ordersListIterator)) {
             let orderID = linked_list::get_next(ordersList,&mut ordersListIterator);
