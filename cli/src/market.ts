@@ -58,6 +58,7 @@ export async function cancelOrder(
   orderID: number,
   instrumentCoinType: string,
   quoteCoinType: string,
+  opts?: TxOptions,
 ) {
   const entryFunction = TxnBuilderTypes.EntryFunction.natural(
     `${signerAccount.address()}::market`,
@@ -67,7 +68,7 @@ export async function cancelOrder(
       BCS.bcsSerializeU128(orderID),
     ]
   );
-  return await sendSignedTransactionWithAccount(signerAccount, entryFunction)
+  return await sendSignedTransactionWithAccount(signerAccount, entryFunction, opts)
 }
 
 export function addOrderTxnPayload(
