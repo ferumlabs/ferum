@@ -40,3 +40,14 @@ Probably something happening in `Move.toml`.
 
 1. Check that you're not mixing `testnet` vs. `devent`, and that you're consistent i.e. if you're publishing to testnet, all dependencies must be on testnet as well.
 2. Make sure that any custom dependencies are published to testnet / devnet. 
+
+
+### EMODULE_MISSING
+
+```
+{
+  "Error": "API error: Unknown error Transaction committed on chain, but failed execution: Move abort in 0x1::code: EMODULE_MISSING(0x4): Cannot delete a module that was published in the same package"
+}
+```
+
+Contracts are upgradable, but they are [heavily restricted](https://aptos.dev/guides/move-guides/upgrading-move-code/). So if you deleted a public function or a module, you will need to publish to a new account. 
