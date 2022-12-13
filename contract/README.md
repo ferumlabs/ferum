@@ -2,6 +2,14 @@
 
 Easiest way to interact with Ferum is through the Aptos CLI, and the easiest way to get the CLI is by downloading the latest & greatest 
 
+
+### Publish
+
+ aptos move publish \
+    --private-key <...> \
+    --max-gas 100000 --url https://fullnode.testnet.aptoslabs.com/v1 \
+    --included-artifacts none
+ 
 ### Add an order
 
 ```
@@ -12,3 +20,18 @@ aptos move run \
   --url https://fullnode.testnet.aptoslabs.com/v1 \
   --private-key <…>   
 ```
+
+## Troubleshooting 
+
+### EPACKAGE_DEP_MISSING
+
+```
+{
+  "Error": "API error: Unknown error Transaction committed on chain, but failed execution: Move abort in 0x1::code: EPACKAGE_DEP_MISSING(0x60005): Dependency could not be resolved to any published package."
+}
+```
+
+Probably something happening in `Move.toml`. 
+
+1. Check that you're not mixing `testnet` vs. `devent`, and that you're consistent i.e. if you're publishing to testnet, all dependencies must be on testnet as well.
+2. Make sure that any custom dependencies are published to testnet / devnet. 
