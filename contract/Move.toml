@@ -3,8 +3,8 @@ name = "ferum"
 version = "0.1.0"
 
 [dependencies]
-AptosFramework = { git = "https://github.com/aptos-labs/aptos-core.git", subdir = "aptos-move/framework/aptos-framework/", rev = "devnet" }
-FerumSTD = { git = "https://github.com/ferum-dex/ferum-std.git", rev = "devnet" }
+AptosFramework = { git = "https://github.com/aptos-labs/aptos-core.git", subdir = "aptos-move/framework/aptos-framework/", rev = "testnet" }
+FerumSTD = { git = "https://github.com/ferum-dex/ferum-std.git", rev = "testnet" }
 
 [addresses]
-ferum="0xdcd166a8422c44369b232d1a27fa4bd57fa428fe59af01f5bfa345be65c43358"
+ferum="0xb9a9606eeeb416eef9cd8650c34c0d16b7a650f207830a22d77e743c53d9902a"
