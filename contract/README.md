@@ -1,15 +1,20 @@
 # Ferum Contracts
 
-Easiest way to interact with Ferum is through the Aptos CLI, and the easiest way to get the CLI is by downloading the latest & greatest 
 
+## Commands
+
+Easiest way to interact with Ferum is through the Aptos CLI, and the easiest way to get the CLI is by downloading the latest & greatest 
 
 ### Publish
 
+```
  aptos move publish \
     --private-key <...> \
     --max-gas 100000 --url https://fullnode.testnet.aptoslabs.com/v1 \
     --included-artifacts none
  
+```
+
 ### Add an order
 
 ```
