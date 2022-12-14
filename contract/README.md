@@ -22,8 +22,43 @@ A couple of quick steps you can follow to publish to a new acccount.
     --private-key <...> \
     --max-gas 100000 --url https://fullnode.testnet.aptoslabs.com/v1 \
     --included-artifacts none
- 
+    --private-key <..> 
 ```
+
+### Initialize
+
+```
+aptos move run \
+  --function-id 0xb9a9606eeeb416eef9cd8650c34c0d16b7a650f207830a22d77e743c53d9902a::admin::init_ferum \
+  --args u128:0 u128:0 u128:0 u128:0 \
+  --url https://fullnode.testnet.aptoslabs.com/v1 \
+  --private-key <..>
+```
+
+### Register
+
+**APT / USDF**
+
+```
+aptos move run \
+  --function-id 0xb9a9606eeeb416eef9cd8650c34c0d16b7a650f207830a22d77e743c53d9902a::admin::init_market_entry \
+  --type-args 0x1::aptos_coin::AptosCoin 0xb9a9606eeeb416eef9cd8650c34c0d16b7a650f207830a22d77e743c53d9902a::test_coins::USDF \
+  --args u8:4 u8:4 \
+  --url https://fullnode.testnet.aptoslabs.com/v1 \
+  --private-key <..>
+```
+
+**APT / ETHF**
+
+```
+aptos move run \
+  --function-id 0xb9a9606eeeb416eef9cd8650c34c0d16b7a650f207830a22d77e743c53d9902a::market::init_market_entry \
+  --type-args 0x1::aptos_coin::AptosCoin 0xb9a9606eeeb416eef9cd8650c34c0d16b7a650f207830a22d77e743c53d9902a::test_coins::ETHF \
+  --args u8:4 u8:4 \
+  --url https://fullnode.testnet.aptoslabs.com/v1 \
+  --private-key <..>
+```
+
 
 ### Add an order
 
@@ -33,13 +68,13 @@ aptos move run \
   --type-args 0x1::aptos_coin::AptosCoin 0xc4a97809df332af8bb20ebe1c60f47b7121648c5896f29dc37b4d2e60944e20d::test_coins::USDF \
   --args u8:1 u8:1 u64:220000 u64:40000 string: \
   --url https://fullnode.testnet.aptoslabs.com/v1 \
-  --private-key <…>   
+  --private-key <..>
 ```
 
 ### Mint Fake Coins 
 
 
-Create USDF:
+**USDF**
 
 ```
 aptos move run \
@@ -48,7 +83,6 @@ aptos move run \
   --private-key <..>
 ```
 
-Mint USDF:
 
 ```
 aptos move run \
@@ -58,7 +92,7 @@ aptos move run \
   --private-key <..>
 ```
 
-Create ETHF:
+**ETHF**
 
 ```
 aptos move run \
@@ -66,8 +100,6 @@ aptos move run \
   --url https://fullnode.testnet.aptoslabs.com/v1 \
   --private-key <..>
 ```
-
-Mint ETHF:
 
 ```
 aptos move run \
@@ -80,7 +112,6 @@ aptos move run \
 ## Troubleshooting 
 
 ### EPACKAGE_DEP_MISSING
-
 ```
 {
   "Error": "API error: Unknown error Transaction committed on chain, but failed execution: Move abort in 0x1::code: EPACKAGE_DEP_MISSING(0x60005): Dependency could not be resolved to any published package."
@@ -94,7 +125,6 @@ Probably something happening in `Move.toml`.
 
 
 ### EMODULE_MISSING
-
 ```
 {
   "Error": "API error: Unknown error Transaction committed on chain, but failed execution: Move abort in 0x1::code: EMODULE_MISSING(0x4): Cannot delete a module that was published in the same package"
@@ -104,7 +134,6 @@ Probably something happening in `Move.toml`.
 Contracts are upgradable, but they are [heavily restricted](https://aptos.dev/guides/move-guides/upgrading-move-code/). So if you deleted a public function or a module, you will need to publish to a new account. See **Publish to New Account** above.
 
 ### EXCEEDED_MAX_TRANSACTION_SIZE
-
 ```
 {
   "Error": "API error: API error Error(VmError): Invalid transaction: Type: Validation Code: EXCEEDED_MAX_TRANSACTION_SIZE"
@@ -114,11 +143,27 @@ Contracts are upgradable, but they are [heavily restricted](https://aptos.dev/gu
 There is a rule around how large the module can be in Aptos; forgot the exact reason why, but until we wait for them to increase it, use `--included-artifacts none` to shave down non-binary shit that gets uploaded.
 
 ### ECOIN_STORE_NOT_PUBLISHED
-
 ```
 {
   "Error": "Simulation failed with status: Move abort in 0x1::coin: ECOIN_STORE_NOT_PUBLISHED(0x60005): Account hasn't registered `CoinStore` for `CoinType`"
 }
 ```
+You forgot to call `coin::register<type>(destination);` remember that in Aptos/Move, address need to register to receive a particular asset.
 
-You forgot to call `coin::register<type>(destination)`; remember that in Aptos/Move, address need to register to receive a particular asset.
+### AccountNotFound
+```
+{
+  "Error": "API error: API error Error(AccountNotFound): Account not found by Address(0x753285d1314620bf3abd9819d10c148cf2526b18620190b42303a62930b47c53) and Ledger version(386010360)"
+}
+```
+
+Check that you're using the right private key; it's probably mapping to an account that doesn't exist.
+
+
+### FUNCTION_RESOLUTION_FAILURE
+```
+{
+  "Error": "Simulation failed with status: Transaction Executed and Committed with Error FUNCTION_RESOLUTION_FAILURE"
+}
+```
+Check that your module name is correct i.e. `market::function` vs. `admin::function`.
