@@ -7477,7 +7477,7 @@ module ferum::market {
         list: vector<CacheNode<T>>,
     }
 
-    fun new_cache<T: drop + store>(type: u8): Cache<T> {
+    inline fun new_cache<T: drop + store>(type: u8): Cache<T> {
         assert!(type == SIDE_BUY || type == SIDE_SELL, ERR_CACHE_INVALID_TYPE);
         Cache {
             side: type,
@@ -7487,7 +7487,7 @@ module ferum::market {
 
     // Inserts the price in order into the list cache. If a buy cache, will insert items in increasing order. If a sell
     // cache, will insert in decreasing order.
-    fun cache_insert<T: drop + store>(cache: &mut Cache<T>, key: u64, value: T) {
+    inline fun cache_insert<T: drop + store>(cache: &mut Cache<T>, key: u64, value: T) {
         // Find insert index.
         let size = vector::length(&cache.list);
         let i = size;
@@ -7520,7 +7520,7 @@ module ferum::market {
         };
     }
 
-    fun cache_remove<T: drop + store>(cache: &mut Cache<T>, key: u64): T {
+    inline fun cache_remove<T: drop + store>(cache: &mut Cache<T>, key: u64): T {
         let size = vector::length(&cache.list);
         let i = size;
         while (i > 0) {
@@ -7544,7 +7544,7 @@ module ferum::market {
         value
     }
 
-    fun cache_remove_idx<T: drop + store>(cache: &mut Cache<T>, idx: u64): T {
+    inline fun cache_remove_idx<T: drop + store>(cache: &mut Cache<T>, idx: u64): T {
         let size = vector::length(&cache.list);
         let i = idx;
         while (i < size - 1) {
@@ -7558,6 +7558,7 @@ module ferum::market {
         value
     }
 
+    // TODO: inline when bug is fixed (https://github.com/aptos-foundation/AIPs/issues/33#issuecomment-1399213932)
     fun cache_find<T: drop + store>(cache: &Cache<T>, key: u64): vector<u64> {
         let size = vector::length(&cache.list);
         let i = size;
