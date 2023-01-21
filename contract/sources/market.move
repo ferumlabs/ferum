@@ -1630,7 +1630,7 @@ module ferum::market {
         }
     }
 
-    fun validate_coins<I, Q>(): (u8, u8) {
+    inline fun validate_coins<I, Q>(): (u8, u8) {
         let iDecimals = coin::decimals<I>();
         let qDecimals = coin::decimals<Q>();
         assert!(coin::is_coin_initialized<Q>(), ERR_COIN_UNINITIALIZED);
@@ -7974,63 +7974,76 @@ module ferum::market {
         };
         vector::pop_back(&mut node.data);
         size = size - 1;
-        // Merge node with sibling node if current falls below half the desired capacity.
-        if (size == 0) {
+        // Remove node if it falls below the desired capacity. If there are elements in the node, add them to a
+        // sibling node.
+        let nextNodeID = node.next;
+        let reversedNodeData = vector[];
+        if (size == 0 || (size <= (list.nodeSize as u64)/2 && (nextNodeID != 0 || prevNodeID != 0))) {
+            // Create a reversed copy of the data in the node.
+            if (size > 0) {
+                let j = 0;
+                while (j < size) {
+                    vector::push_back(&mut reversedNodeData, vector::pop_back(&mut node.data));
+                    j = j + 1;
+                };
+            };
             // Remove node and add it to the reuse stack.
             if (list.tail == nodeID) {
                 list.tail = prevNodeID;
             };
             if (list.head == nodeID) {
-                list.head = node.next;
+                list.head = nextNodeID;
             };
             node.next = list.unusedNodeStack;
             list.unusedNodeStack = nodeID;
-        } else if (size <= (list.nodeSize as u64)/2 && (prevNodeID != 0 || node.next != 0)) {
-            // Create a reversed copy of the data in the node.
-            let reversedNodeData = vector[];
-            let j = 0;
-            while (j < size) {
-                vector::push_back(&mut reversedNodeData, vector::pop_back(&mut node.data));
-                j = j + 1;
-            };
-            let nextNodeID = node.next;
-            if (nextNodeID != 0) {
-                // Merge with the next node if the previous node doesn't exist.
-                let nextNode = table::borrow_mut(&mut list.nodes, nextNodeID);
-                // Reverse original node data.
-                j = 0;
-                while (j < size / 2) {
-                    vector::swap(&mut reversedNodeData, j, size - j - 1);
-                    j = j + 1;
-                };
-                // Reverse next node data.
-                j = 0;
-                let nextNodeSize = vector::length(&nextNode.data);
-                while (j < nextNodeSize) {
-                    vector::swap(&mut nextNode.data, j, nextNodeSize - j - 1);
-                    j = j + 1;
-                };
-                // Add elements of original node to the next node.
-                j = 0;
-                while (j < size) {
-                    vector::push_back(&mut nextNode.data, vector::pop_back(&mut reversedNodeData));
-                    j = j + 1;
-                };
-                // Reverse merged data.
-                j = 0;
-                let totalSize = nextNodeSize + size;
-                while (j < nextNodeSize) {
-                    vector::swap(&mut nextNode.data, j, totalSize - j - 1);
-                    j = j + 1;
-                };
-            } else if (prevNodeID != 0) {
+            // Update prev node.
+            if (prevNodeID != 0) {
                 let prevNode = table::borrow_mut(&mut list.nodes, prevNodeID);
                 prevNode.next = nextNodeID;
-                // Otherwise, merge with the previous node.
-                j = 0;
-                while (j < size) {
-                    vector::push_back(&mut prevNode.data, vector::pop_back(&mut reversedNodeData));
-                    j = j + 1;
+            };
+            // If any elements from the node were removed, add them to a sibling.
+            if (size > 0) {
+                // Put elements into sibling node.
+                if (prevNodeID != 0) {
+                    // Merge with the prev node if is exists.
+                    let prevNode = table::borrow_mut(&mut list.nodes, prevNodeID);
+                    let j = 0;
+                    while (j < size) {
+                        vector::push_back(&mut prevNode.data, vector::pop_back(&mut reversedNodeData));
+                        j = j + 1;
+                    };
+                } else if (nextNodeID != 0) {
+                    // Otherwise, merge with the next node.
+                    let nextNode = table::borrow_mut(&mut list.nodes, nextNodeID);
+                    // Reverse original node data.
+                    let j = 0;
+                    let sizeHalf = size/2;
+                    while (j < sizeHalf) {
+                        vector::swap(&mut reversedNodeData, j, size - j - 1);
+                        j = j + 1;
+                    };
+                    // Reverse next node data.
+                    j = 0;
+                    let nextNodeSize = vector::length(&nextNode.data);
+                    let nextNodeSizeHalf = nextNodeSize/2;
+                    while (j < nextNodeSizeHalf) {
+                        vector::swap(&mut nextNode.data, j, nextNodeSize - j - 1);
+                        j = j + 1;
+                    };
+                    // Add elements of original node to the next node.
+                    j = 0;
+                    while (j < size) {
+                        vector::push_back(&mut nextNode.data, vector::pop_back(&mut reversedNodeData));
+                        j = j + 1;
+                    };
+                    // Reverse merged data.
+                    j = 0;
+                    let totalSize = nextNodeSize + size;
+                    let totalSizeHalf = totalSize / 2;
+                    while (j < totalSizeHalf) {
+                        vector::swap(&mut nextNode.data, j, totalSize - j - 1);
+                        j = j + 1;
+                    };
                 };
             };
         };
@@ -8206,6 +8219,80 @@ module ferum::market {
     }
 
     #[test]
+    fun test_list_remove_from_middle_node_merge_prev() {
+        let list = list_from_vector(5,
+            vector[
+                1, 2, 3, 4, 5,
+                6, 7, 8, 9, 10,
+                11, 12, 13, 14, 15,
+                16, 17, 18, 19, 20,
+            ],
+        );
+        list_remove_elem(&mut list, 6);
+        list_remove_elem(&mut list, 7);
+        list_remove_elem(&mut list, 8);
+        assert_list(&list, vector[1, 2, 3, 4, 5, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]);
+        assert_list_nodes(&list, vector[
+            vector[1, 2, 3, 4, 5, 9, 10],
+            vector[11, 12, 13, 14, 15],
+            vector[16, 17, 18, 19, 20],
+        ]);
+        destroy_list(list);
+    }
+
+    #[test]
+    fun test_list_remove_from_end_node_merge_prev() {
+        let list = list_from_vector(5,
+            vector[
+                1, 2, 3, 4, 5,
+                6, 7, 8, 9, 10,
+                11, 12, 13, 14, 15,
+                16, 17, 18, 19, 20,
+            ],
+        );
+        let oldTail = list.tail;
+        let oldHead = list.head;
+        list_remove_elem(&mut list, 18);
+        list_remove_elem(&mut list, 20);
+        list_remove_elem(&mut list, 19);
+        assert_list(&list, vector[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]);
+        assert_list_nodes(&list, vector[
+            vector[1, 2, 3, 4, 5],
+            vector[6, 7, 8, 9, 10],
+            vector[11, 12, 13, 14, 15, 16, 17],
+        ]);
+        assert!(oldTail != list.tail, 0);
+        assert!(oldHead == list.head, 0);
+        destroy_list(list);
+    }
+
+    #[test]
+    fun test_list_remove_node_merge_next() {
+        let list = list_from_vector(5,
+            vector[
+                1, 2, 3, 4, 5,
+                6, 7, 8, 9, 10,
+                11, 12, 13, 14, 15,
+                16, 17, 18, 19, 20,
+            ],
+        );
+        let oldTail = list.tail;
+        let oldHead = list.head;
+        list_remove_elem(&mut list, 1);
+        list_remove_elem(&mut list, 3);
+        list_remove_elem(&mut list, 4);
+        assert_list(&list, vector[2, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]);
+        assert_list_nodes(&list, vector[
+            vector[2, 5, 6, 7, 8, 9, 10],
+            vector[11, 12, 13, 14, 15],
+            vector[16, 17, 18, 19, 20],
+        ]);
+        assert!(oldTail == list.tail, 0);
+        assert!(oldHead != list.head, 0);
+        destroy_list(list);
+    }
+
+    #[test]
     fun test_list_nodes() {
         let list = new_list<u16>(2);
         list_push(&mut list, 3);
@@ -8349,6 +8436,19 @@ module ferum::market {
     }
 
     #[test_only]
+    fun assert_list_nodes<T: store + copy + drop>(list: &NodeList<T>, expected: vector<vector<T>>) {
+        let currNodeID = list.head;
+        let i = 0;
+        while (currNodeID != 0) {
+            let node = table::borrow(&list.nodes, currNodeID);
+            ftu::assert_vector_equal(&node.data, vector::borrow(&expected, i));
+            currNodeID = node.next;
+            i = i + 1;
+        };
+        assert!(i == vector::length(&expected), 0);
+    }
+
+    #[test_only]
     fun list_to_vector<T: store + copy + drop>(list: &NodeList<T>): vector<T> {
         let out = vector[];
         let it = list_iterate(list);
@@ -8356,6 +8456,32 @@ module ferum::market {
             vector::push_back(&mut out, *list_get_next(list, &mut it));
         };
         out
+    }
+
+    #[test_only]
+    fun list_remove_elem<T: store + copy + drop>(list: &mut NodeList<T>, target: T) {
+        let it = list_iterate(list);
+        while (it.nodeID != 0) {
+            let elem = *list_peek(list, &it);
+            if (elem == target) {
+                list_remove(list, it);
+                return
+            };
+            list_next(list, &mut it);
+        };
+    }
+
+    #[test_only]
+    fun list_from_vector<T: drop + store + copy>(capacity: u8, vec: vector<T>): NodeList<T> {
+        let list = new_list(capacity);
+        let i = 0;
+        let size = vector::length(&vec);
+        while (i < size) {
+            let elem = *vector::borrow(&vec, i);
+            list_push(&mut list, elem);
+            i = i + 1;
+        };
+        list
     }
 
     // </editor-fold>
