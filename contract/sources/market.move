@@ -1142,7 +1142,7 @@ module ferum::market {
         };
     }
 
-    fun emit_finalized_event<I, Q>(
+    inline fun emit_finalized_event<I, Q>(
         marketAddr: address,
         accountIdentifier: UserIdentifier,
         price: u64,
@@ -1565,7 +1565,7 @@ module ferum::market {
         };
     }
 
-    fun get_or_create_order<I, Q>(table: &mut OrderReuseTable<I, Q>): u32 {
+    inline fun get_or_create_order<I, Q>(table: &mut OrderReuseTable<I, Q>): u32 {
         if (table.unusedStack == 0) {
             prealloc_orders(table, 1)
         };
@@ -1576,7 +1576,7 @@ module ferum::market {
         orderID
     }
 
-    public fun prealloc_orders<I, Q>(table: &mut OrderReuseTable<I, Q>, count: u8) {
+    public inline fun prealloc_orders<I, Q>(table: &mut OrderReuseTable<I, Q>, count: u8) {
         let i = 0;
         while (i < count) {
             let order = Order<I, Q>{
@@ -1604,7 +1604,7 @@ module ferum::market {
         }
     }
 
-    fun get_or_create_price_level(table: &mut PriceLevelReuseTable): u16 {
+    inline fun get_or_create_price_level(table: &mut PriceLevelReuseTable): u16 {
         if (table.unusedStack == 0) {
             prealloc_price_levels(table, 1)
         };
@@ -1615,7 +1615,7 @@ module ferum::market {
         priceLevelID
     }
 
-    public fun prealloc_price_levels(table: &mut PriceLevelReuseTable, count: u8) {
+    public inline fun prealloc_price_levels(table: &mut PriceLevelReuseTable, count: u8) {
         let i = 0;
         while (i < count) {
             let priceLevel = PriceLevel {
@@ -1644,7 +1644,7 @@ module ferum::market {
     // buyTreeMax/sellTreeMin might point to a price level whose entire qty might be used and pending a crank turn.
     // If this returns false, than an order with `price` can't execute against the tree. Otherwise, an order with
     // `price` might execute against the tree.
-    fun can_maybe_execute_against_tree(summary: &MarketSummary, orderSide: u8, price: u64): bool {
+    inline fun can_maybe_execute_against_tree(summary: &MarketSummary, orderSide: u8, price: u64): bool {
         if (orderSide == SIDE_SELL) {
             // Will execute against buy tree.
             price == 0 || (summary.buyTreeMax != 0 && price <= summary.buyTreeMax)
@@ -1655,7 +1655,7 @@ module ferum::market {
     }
 
     // Returns true if a new price should be inserted into the cache.
-    fun should_insert_in_cache(summary: &MarketSummary, maxCacheSize: u8, side: u8, price: u64): bool {
+    inline fun should_insert_in_cache(summary: &MarketSummary, maxCacheSize: u8, side: u8, price: u64): bool {
         if (side == SIDE_BUY) {
             summary.buyCacheSize < maxCacheSize && (summary.buyTreeMax == 0 || price > summary.buyTreeMax) ||
                 summary.buyCacheSize >= maxCacheSize && (summary.buyCacheMin != 0 && price >= summary.buyCacheMin)
@@ -1666,7 +1666,7 @@ module ferum::market {
     }
 
     // Given a price that already exists in the price store, returns true if the price is in the cache.
-    fun is_price_store_elem_in_cache(summary: &MarketSummary, side: u8, price: u64): bool {
+    inline fun is_price_store_elem_in_cache(summary: &MarketSummary, side: u8, price: u64): bool {
         if (side == SIDE_BUY) {
             summary.buyTreeMax == 0 || price > summary.buyTreeMax ||
                 (summary.buyCacheMin != 0 && price >= summary.buyCacheMin)
@@ -1677,7 +1677,7 @@ module ferum::market {
     }
 
     // Returns true if the order can no longer be executed.
-    fun no_qty_to_be_executed<I, Q>(order: &Order<I, Q>, makerPendingCrankQty: u64): bool {
+    inline fun no_qty_to_be_executed<I, Q>(order: &Order<I, Q>, makerPendingCrankQty: u64): bool {
         let marketBuyAndCannotExecute = order.metadata.price == 0 &&
             order.metadata.side == SIDE_BUY &&
             order.metadata.marketBuyRemainingCollateral == 0;
@@ -1686,7 +1686,7 @@ module ferum::market {
 
     // Returns true if the order is finalized. To be finalized means the order can no longer be executed any more and
     // there is no pending qty remaining.
-    fun is_finalized<I, Q>(order: &Order<I, Q>): bool {
+    inline fun is_finalized<I, Q>(order: &Order<I, Q>): bool {
         let marketBuyAndCannotExecute = order.metadata.price == 0 &&
             order.metadata.side == SIDE_BUY &&
             order.metadata.marketBuyRemainingCollateral == 0;
