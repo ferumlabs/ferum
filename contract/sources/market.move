@@ -1,3 +1,32 @@
+// Todos
+// Permissions
+// Quote price publishing
+// Fees implementation
+// Rebalancing node cache + test
+// Code clean up and organization
+// Documentation updates
+//
+// Tests:
+// - Deposit and withdrawal permissions
+//   - User can withdraw from non protocol market accounts
+//   - Random protocol cant withdraw from a non protocol market account
+//   - Protocol can withdraw for user from protocol market accounts
+//   - User cannot withdraw from a protocol market account
+// - Order cancel permissions
+//   - User can cancel an order for a non protocol market accounts
+//   - Random protocol cant cancel an order for a non protocol market account
+//   - Protocol can cancel an order for user from protocol market accounts
+//   - User cannot cancel an order from a protocol market account
+// - Order placement permissions
+//   - User can add an order for a non protocol market accounts
+//   - Random protocol cant add an order for a non protocol market account
+//   - Protocol can add an order for user from protocol market accounts
+//   - User cannot add an order from a protocol market account
+// - Order types
+//   - fok
+//   - ioc
+//   - post
+
 module ferum::market {
     use aptos_framework::coin;
     // use aptos_std::event::{EventHandle, emit_event};
@@ -396,17 +425,6 @@ module ferum::market {
         open_market_account<I, Q>(owner, platform::get_user_identifier(owner))
     }
 
-    public fun open_market_account<I, Q>(owner: &signer, userIdentifier: UserIdentifier) acquires Orderbook {
-        assert!(address_of(owner) == platform::get_user_address(&userIdentifier), ERR_NOT_OWNER);
-        let marketAddr = admin::get_market_addr<I, Q>();
-        let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
-        table::add(&mut book.marketAccounts, userIdentifier, MarketAccount<I, Q>{
-            activeOrders: vector[],
-            instrumentBalance: coin::zero(),
-            quoteBalance: coin::zero(),
-        });
-    }
-
     public entry fun deposit_to_market_account_entry<I, Q>(
         owner: &signer,
         coinIAmt: u64,
@@ -415,27 +433,39 @@ module ferum::market {
         deposit_to_market_account<I, Q>(owner, platform::get_user_identifier(owner), coinIAmt, coinQAmt)
     }
 
-    public fun deposit_to_market_account<I, Q>(
-        owner: &signer,
-        userIdentifier: UserIdentifier,
-        coinIAmt: u64,
-        coinQAmt: u64,
-    ) acquires Orderbook {
+    public entry fun rebalance_cache_entry<I, Q>(_owner: &signer, limit: u8)
+        acquires Orderbook, MarketSellCache, MarketSellTree, MarketBuyCache, MarketBuyTree
+    {
         let marketAddr = admin::get_market_addr<I, Q>();
         let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
-        assert!(table::contains(&book.marketAccounts, userIdentifier), ERR_NO_MARKET_ACCOUNT);
-        let marketAcc = table::borrow_mut(&mut book.marketAccounts, userIdentifier);
-        if (coinIAmt > 0) {
-            let coinIDecimals = coin::decimals<I>();
-            let coinAmt = coin::withdraw<I>(owner, utils::fp_convert(coinIAmt, coinIDecimals, FP_NO_PRECISION_LOSS));
-            coin::merge(&mut marketAcc.instrumentBalance, coinAmt);
+
+        if (book.summary.buyCacheSize < book.maxCacheSize) {
+            rebalance_cache(
+                book,
+                SIDE_BUY,
+                &mut borrow_global_mut<MarketBuyCache<I, Q>>(marketAddr).cache,
+                &mut borrow_global_mut<MarketBuyTree<I, Q>>(marketAddr).tree,
+                limit,
+            );
         };
-        if (coinQAmt > 0) {
-            let coinQDecimals = coin::decimals<Q>();
-            let coinAmt = coin::withdraw<Q>(owner, utils::fp_convert(coinQAmt, coinQDecimals, FP_NO_PRECISION_LOSS));
-            coin::merge(&mut marketAcc.quoteBalance, coinAmt);
+        if (book.summary.sellCacheSize < book.maxCacheSize) {
+            rebalance_cache(
+                book,
+                SIDE_SELL,
+                &mut borrow_global_mut<MarketSellCache<I, Q>>(marketAddr).cache,
+                &mut borrow_global_mut<MarketSellTree<I, Q>>(marketAddr).tree,
+                limit,
+            );
         };
     }
+
+    // public entry fun withdraw_from_market_account_entry<I, Q>(
+    //     owner: &signer,
+    //     coinIAmt: u64,
+    //     coinQAmt: u64,
+    // ) acquires Orderbook {
+    //     // TODO: implement
+    // }
 
     public entry fun crank<I, Q>(limit: u8)
         acquires Orderbook, EventQueue, IndexingEventHandles, MarketBuyTree, MarketBuyCache, MarketSellTree, MarketSellCache
@@ -480,6 +510,41 @@ module ferum::market {
         update_cache_max_min(&mut book.summary, sellCache);
         update_tree_max_min(&mut book.summary, buyTree, SIDE_BUY);
         update_tree_max_min(&mut book.summary, sellTree, SIDE_SELL);
+    }
+
+    // Public functions.
+
+    public fun open_market_account<I, Q>(owner: &signer, userIdentifier: UserIdentifier) acquires Orderbook {
+        assert!(address_of(owner) == platform::get_user_address(&userIdentifier), ERR_NOT_OWNER);
+        let marketAddr = admin::get_market_addr<I, Q>();
+        let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
+        table::add(&mut book.marketAccounts, userIdentifier, MarketAccount<I, Q>{
+            activeOrders: vector[],
+            instrumentBalance: coin::zero(),
+            quoteBalance: coin::zero(),
+        });
+    }
+
+    public fun deposit_to_market_account<I, Q>(
+        owner: &signer,
+        userIdentifier: UserIdentifier,
+        coinIAmt: u64,
+        coinQAmt: u64,
+    ) acquires Orderbook {
+        let marketAddr = admin::get_market_addr<I, Q>();
+        let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
+        assert!(table::contains(&book.marketAccounts, userIdentifier), ERR_NO_MARKET_ACCOUNT);
+        let marketAcc = table::borrow_mut(&mut book.marketAccounts, userIdentifier);
+        if (coinIAmt > 0) {
+            let coinIDecimals = coin::decimals<I>();
+            let coinAmt = coin::withdraw<I>(owner, utils::fp_convert(coinIAmt, coinIDecimals, FP_NO_PRECISION_LOSS));
+            coin::merge(&mut marketAcc.instrumentBalance, coinAmt);
+        };
+        if (coinQAmt > 0) {
+            let coinQDecimals = coin::decimals<Q>();
+            let coinAmt = coin::withdraw<Q>(owner, utils::fp_convert(coinQAmt, coinQDecimals, FP_NO_PRECISION_LOSS));
+            coin::merge(&mut marketAcc.quoteBalance, coinAmt);
+        };
     }
 
     fun processExecEvent<I, Q>(
@@ -735,6 +800,45 @@ module ferum::market {
         orderID
     }
 
+    // Private functions.
+
+    fun rebalance_cache<I, Q>(
+        book: &mut Orderbook<I, Q>,
+        side: u8,
+        cache: &mut Cache<PriceStoreElem>,
+        tree: &mut Tree<PriceStoreElem>,
+        limit: u8,
+    ) {
+        let i = 0;
+        while (i < limit) {
+            let cacheSize = if (side == SIDE_BUY) {
+                book.summary.buyCacheSize
+            } else {
+                book.summary.sellCacheSize
+            };
+            if (cacheSize >= book.maxCacheSize) {
+                break
+            };
+            if (tree.treeSize == 0) {
+                break
+            };
+            // Pop from tree.
+            let (price, elem) = if (side == SIDE_BUY) {
+                tree_pop_max(tree)
+            } else {
+                tree_pop_min(tree)
+            };
+            let qty = elem.qty;
+            update_tree_max_min(&mut book.summary, tree, side);
+            // Push into cache.
+            cache_insert(cache, price, elem);
+            update_cache_max_min(&mut book.summary, cache);
+            update_cache_size_and_qty(&mut book.summary, cache, 0, qty);
+
+            i = i + 1;
+        }
+    }
+
     fun update_cache_size_and_qty(
         summary: &mut MarketSummary,
         cache: &Cache<PriceStoreElem>,
@@ -875,8 +979,12 @@ module ferum::market {
         // <editor-fold defaultstate="collapsed" desc="Order Behaviour Checks">
         if (behaviour == BEHAVIOUR_IOC && price != 0 && !crossesSpread) {
             // Cancel limit IOC orders that don't cross the spread because they won't execute.
+            emit_finalized_event<I, Q>(marketAddr, accountIdentifier, price, qty);
+            return 0
         } else if (behaviour == BEHAVIOUR_POST && crossesSpread) {
             // Cancel POST orders that cross the spread because we can't guarantee that they will be makers.
+            emit_finalized_event<I, Q>(marketAddr, accountIdentifier, price, qty);
+            return 0
         } else if (behaviour == BEHAVIOUR_FOK) {
             // Check to make sure a FOK order can be filled by orders on the book. Otherwise, cancel it.
             let remainingQty = qty;
@@ -1374,7 +1482,6 @@ module ferum::market {
         qtyRemoved
     }
 
-    // TODO: unit tests.
     fun match_against_cache<I, Q>(
         execs: &mut vector<ExecutionQueueEvent>,
         cache: &mut Cache<PriceStoreElem>,
@@ -1467,7 +1574,6 @@ module ferum::market {
         qty: u64,
     }
 
-    // TODO: unit tests.
     fun match_against_tree<I, Q>(
         execs: &mut vector<ExecutionQueueEvent>,
         tree: &mut Tree<PriceStoreElem>,
@@ -1699,6 +1805,404 @@ module ferum::market {
     }
 
     // <editor-fold defaultstate="collapsed" desc="Market tests">
+
+    // <editor-fold defaultstate="collapsed" desc="Rebalance">
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_rebalance(
+        aptos: &signer,
+        ferum: &signer,
+        user: &signer,
+    )
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup sell side.
+        let orderID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        cancel_order<FMA, FMB>(user, orderID);
+        assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.9 qty: 3, crankQty: 0)"),
+            s(b"(0.8 qty: 4, crankQty: 0)"),
+            s(b"(0.7 qty: 5, crankQty: 0)"),
+        ], vector[
+            s(b"(0.6 qty: 8, crankQty: 0)"),
+        ]);
+        let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
+        assert!(book.summary.sellCacheMax == 6000000000, 0);
+        assert!(book.summary.sellCacheMin == 6000000000, 0);
+        assert!(book.summary.sellCacheQty == 80000000000, 0);
+        assert!(book.summary.sellCacheSize == 1, 0);
+        assert!(book.summary.sellTreeMin == 7000000000, 0);
+        // Setup buy side.
+        let orderID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5500000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 4000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 3000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 2000000000, 30000000000);
+        cancel_order<FMA, FMB>(user, orderID);
+        assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.2 qty: 3, crankQty: 0)"),
+            s(b"(0.3 qty: 4, crankQty: 0)"),
+            s(b"(0.4 qty: 5, crankQty: 0)"),
+        ], vector[
+            s(b"(0.5 qty: 8, crankQty: 0)"),
+        ]);
+        let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
+        assert!(book.summary.buyCacheMax == 5000000000, 0);
+        assert!(book.summary.buyCacheMin == 5000000000, 0);
+        assert!(book.summary.buyCacheQty == 80000000000, 0);
+        assert!(book.summary.buyCacheSize == 1, 0);
+        assert!(book.summary.buyTreeMax == 4000000000, 0);
+
+        rebalance_cache_entry<FMA, FMB>(user, 1);
+
+        assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.9 qty: 3, crankQty: 0)"),
+            s(b"(0.8 qty: 4, crankQty: 0)"),
+        ], vector[
+            s(b"(0.7 qty: 5, crankQty: 0)"),
+            s(b"(0.6 qty: 8, crankQty: 0)"),
+        ]);
+        assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.2 qty: 3, crankQty: 0)"),
+            s(b"(0.3 qty: 4, crankQty: 0)"),
+        ], vector[
+            s(b"(0.4 qty: 5, crankQty: 0)"),
+            s(b"(0.5 qty: 8, crankQty: 0)"),
+        ]);
+        let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
+        assert!(book.summary.buyCacheMax == 5000000000, 0);
+        assert!(book.summary.buyCacheMin == 4000000000, 0);
+        assert!(book.summary.buyCacheQty == 130000000000, 0);
+        assert!(book.summary.buyCacheSize == 2, 0);
+        assert!(book.summary.buyTreeMax == 3000000000, 0);
+        assert!(book.summary.sellCacheMax == 7000000000, 0);
+        assert!(book.summary.sellCacheMin == 6000000000, 0);
+        assert!(book.summary.sellCacheQty == 130000000000, 0);
+        assert!(book.summary.sellCacheSize == 2, 0);
+        assert!(book.summary.sellTreeMin == 8000000000, 0);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_rebalance_empty_tree(
+        aptos: &signer,
+        ferum: &signer,
+        user: &signer,
+    )
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup sell side.
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 50000000000);
+        assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
+        ], vector[
+            s(b"(0.6 qty: 8, crankQty: 0)"),
+        ]);
+        let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
+        assert!(book.summary.sellCacheMax == 6000000000, 0);
+        assert!(book.summary.sellCacheMin == 6000000000, 0);
+        assert!(book.summary.sellCacheQty == 80000000000, 0);
+        assert!(book.summary.sellCacheSize == 1, 0);
+        assert!(book.summary.sellTreeMin == 0, 0);
+        // Setup buy side.
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 50000000000);
+        assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
+        ], vector[
+            s(b"(0.5 qty: 8, crankQty: 0)"),
+        ]);
+        let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
+        assert!(book.summary.buyCacheMax == 5000000000, 0);
+        assert!(book.summary.buyCacheMin == 5000000000, 0);
+        assert!(book.summary.buyCacheQty == 80000000000, 0);
+        assert!(book.summary.buyCacheSize == 1, 0);
+        assert!(book.summary.buyTreeMax == 0, 0);
+
+        rebalance_cache_entry<FMA, FMB>(user, 1);
+
+        assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
+        ], vector[
+            s(b"(0.6 qty: 8, crankQty: 0)"),
+        ]);
+        assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
+        ], vector[
+            s(b"(0.5 qty: 8, crankQty: 0)"),
+        ]);
+        let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
+        assert!(book.summary.buyCacheMax == 5000000000, 0);
+        assert!(book.summary.buyCacheMin == 5000000000, 0);
+        assert!(book.summary.buyCacheQty == 80000000000, 0);
+        assert!(book.summary.buyCacheSize == 1, 0);
+        assert!(book.summary.buyTreeMax == 0, 0);
+        assert!(book.summary.sellCacheMax == 6000000000, 0);
+        assert!(book.summary.sellCacheMin == 6000000000, 0);
+        assert!(book.summary.sellCacheQty == 80000000000, 0);
+        assert!(book.summary.sellCacheSize == 1, 0);
+        assert!(book.summary.sellTreeMin == 0, 0);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_rebalance_full_cache(
+        aptos: &signer,
+        ferum: &signer,
+        user: &signer,
+    )
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup sell side.
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5600000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.9 qty: 3, crankQty: 0)"),
+            s(b"(0.8 qty: 4, crankQty: 0)"),
+            s(b"(0.7 qty: 5, crankQty: 0)"),
+        ], vector[
+            s(b"(0.6 qty: 8, crankQty: 0)"),
+            s(b"(0.56 qty: 3, crankQty: 0)"),
+        ]);
+        let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
+        assert!(book.summary.sellCacheMax == 6000000000, 0);
+        assert!(book.summary.sellCacheMin == 5600000000, 0);
+        assert!(book.summary.sellCacheQty == 110000000000, 0);
+        assert!(book.summary.sellCacheSize == 2, 0);
+        assert!(book.summary.sellTreeMin == 7000000000, 0);
+        // Setup buy side.
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5500000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 4000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 3000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 2000000000, 30000000000);
+        assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.2 qty: 3, crankQty: 0)"),
+            s(b"(0.3 qty: 4, crankQty: 0)"),
+            s(b"(0.4 qty: 5, crankQty: 0)"),
+        ], vector[
+            s(b"(0.5 qty: 8, crankQty: 0)"),
+            s(b"(0.55 qty: 3, crankQty: 0)"),
+        ]);
+        let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
+        assert!(book.summary.buyCacheMax == 5500000000, 0);
+        assert!(book.summary.buyCacheMin == 5000000000, 0);
+        assert!(book.summary.buyCacheQty == 110000000000, 0);
+        assert!(book.summary.buyCacheSize == 2, 0);
+        assert!(book.summary.buyTreeMax == 4000000000, 0);
+
+        rebalance_cache_entry<FMA, FMB>(user, 1);
+
+        assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.9 qty: 3, crankQty: 0)"),
+            s(b"(0.8 qty: 4, crankQty: 0)"),
+            s(b"(0.7 qty: 5, crankQty: 0)"),
+        ], vector[
+            s(b"(0.6 qty: 8, crankQty: 0)"),
+            s(b"(0.56 qty: 3, crankQty: 0)"),
+        ]);
+        assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.2 qty: 3, crankQty: 0)"),
+            s(b"(0.3 qty: 4, crankQty: 0)"),
+            s(b"(0.4 qty: 5, crankQty: 0)"),
+        ], vector[
+            s(b"(0.5 qty: 8, crankQty: 0)"),
+            s(b"(0.55 qty: 3, crankQty: 0)"),
+        ]);
+        let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
+        assert!(book.summary.buyCacheMax == 5500000000, 0);
+        assert!(book.summary.buyCacheMin == 5000000000, 0);
+        assert!(book.summary.buyCacheQty == 110000000000, 0);
+        assert!(book.summary.buyCacheSize == 2, 0);
+        assert!(book.summary.buyTreeMax == 4000000000, 0);
+        assert!(book.summary.sellCacheMax == 6000000000, 0);
+        assert!(book.summary.sellCacheMin == 5600000000, 0);
+        assert!(book.summary.sellCacheQty == 110000000000, 0);
+        assert!(book.summary.sellCacheSize == 2, 0);
+        assert!(book.summary.sellTreeMin == 7000000000, 0);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_rebalance_multiple_items(
+        aptos: &signer,
+        ferum: &signer,
+        user: &signer,
+    )
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 4);
+
+        // Setup sell side.
+        let orderID1 = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5600000000, 30000000000);
+        let orderID2 = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 10000000000, 30000000000);
+        cancel_order<FMA, FMB>(user, orderID1);
+        cancel_order<FMA, FMB>(user, orderID2);
+        assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(1 qty: 3, crankQty: 0)"),
+            s(b"(0.9 qty: 3, crankQty: 0)"),
+        ], vector[
+            s(b"(0.8 qty: 4, crankQty: 0)"),
+            s(b"(0.7 qty: 5, crankQty: 0)"),
+        ]);
+        let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
+        assert!(book.summary.sellCacheMax == 8000000000, 0);
+        assert!(book.summary.sellCacheMin == 7000000000, 0);
+        assert!(book.summary.sellCacheQty == 90000000000, 0);
+        assert!(book.summary.sellCacheSize == 2, 0);
+        assert!(book.summary.sellTreeMin == 9000000000, 0);
+        // Setup buy side.
+        let orderID1 = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5500000000, 30000000000);
+        let orderID2 = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 4000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 3000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 2000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 1000000000, 30000000000);
+        cancel_order<FMA, FMB>(user, orderID1);
+        cancel_order<FMA, FMB>(user, orderID2);
+        assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.1 qty: 3, crankQty: 0)"),
+            s(b"(0.2 qty: 3, crankQty: 0)"),
+        ], vector[
+            s(b"(0.3 qty: 4, crankQty: 0)"),
+            s(b"(0.4 qty: 5, crankQty: 0)"),
+        ]);
+        let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
+        assert!(book.summary.buyCacheMax == 4000000000, 0);
+        assert!(book.summary.buyCacheMin == 3000000000, 0);
+        assert!(book.summary.buyCacheQty == 90000000000, 0);
+        assert!(book.summary.buyCacheSize == 2, 0);
+        assert!(book.summary.buyTreeMax == 2000000000, 0);
+
+        rebalance_cache_entry<FMA, FMB>(user, 2);
+
+        assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
+        ], vector[
+            s(b"(1 qty: 3, crankQty: 0)"),
+            s(b"(0.9 qty: 3, crankQty: 0)"),
+            s(b"(0.8 qty: 4, crankQty: 0)"),
+            s(b"(0.7 qty: 5, crankQty: 0)"),
+        ]);
+        assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
+        ], vector[
+            s(b"(0.1 qty: 3, crankQty: 0)"),
+            s(b"(0.2 qty: 3, crankQty: 0)"),
+            s(b"(0.3 qty: 4, crankQty: 0)"),
+            s(b"(0.4 qty: 5, crankQty: 0)"),
+        ]);
+        let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
+        assert!(book.summary.buyCacheMax == 4000000000, 0);
+        assert!(book.summary.buyCacheMin == 1000000000, 0);
+        assert!(book.summary.buyCacheQty == 150000000000, 0);
+        assert!(book.summary.buyCacheSize == 4, 0);
+        assert!(book.summary.buyTreeMax == 0, 0);
+        assert!(book.summary.sellCacheMax == 10000000000, 0);
+        assert!(book.summary.sellCacheMin == 7000000000, 0);
+        assert!(book.summary.sellCacheQty == 150000000000, 0);
+        assert!(book.summary.sellCacheSize == 4, 0);
+        assert!(book.summary.sellTreeMin == 0, 0);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_rebalance_limit(
+        aptos: &signer,
+        ferum: &signer,
+        user: &signer,
+    )
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 4);
+
+        // Setup sell side.
+        let orderID1 = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5600000000, 30000000000);
+        let orderID2 = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 10000000000, 30000000000);
+        cancel_order<FMA, FMB>(user, orderID1);
+        cancel_order<FMA, FMB>(user, orderID2);
+        assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(1 qty: 3, crankQty: 0)"),
+            s(b"(0.9 qty: 3, crankQty: 0)"),
+        ], vector[
+            s(b"(0.8 qty: 4, crankQty: 0)"),
+            s(b"(0.7 qty: 5, crankQty: 0)"),
+        ]);
+        let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
+        assert!(book.summary.sellCacheMax == 8000000000, 0);
+        assert!(book.summary.sellCacheMin == 7000000000, 0);
+        assert!(book.summary.sellCacheQty == 90000000000, 0);
+        assert!(book.summary.sellCacheSize == 2, 0);
+        assert!(book.summary.sellTreeMin == 9000000000, 0);
+        // Setup buy side.
+        let orderID1 = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5500000000, 30000000000);
+        let orderID2 = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 4000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 3000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 2000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 1000000000, 30000000000);
+        cancel_order<FMA, FMB>(user, orderID1);
+        cancel_order<FMA, FMB>(user, orderID2);
+        assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.1 qty: 3, crankQty: 0)"),
+            s(b"(0.2 qty: 3, crankQty: 0)"),
+        ], vector[
+            s(b"(0.3 qty: 4, crankQty: 0)"),
+            s(b"(0.4 qty: 5, crankQty: 0)"),
+        ]);
+        let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
+        assert!(book.summary.buyCacheMax == 4000000000, 0);
+        assert!(book.summary.buyCacheMin == 3000000000, 0);
+        assert!(book.summary.buyCacheQty == 90000000000, 0);
+        assert!(book.summary.buyCacheSize == 2, 0);
+        assert!(book.summary.buyTreeMax == 2000000000, 0);
+
+        rebalance_cache_entry<FMA, FMB>(user, 1);
+
+        assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(1 qty: 3, crankQty: 0)"),
+        ], vector[
+            s(b"(0.9 qty: 3, crankQty: 0)"),
+            s(b"(0.8 qty: 4, crankQty: 0)"),
+            s(b"(0.7 qty: 5, crankQty: 0)"),
+        ]);
+        assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.1 qty: 3, crankQty: 0)"),
+        ], vector[
+            s(b"(0.2 qty: 3, crankQty: 0)"),
+            s(b"(0.3 qty: 4, crankQty: 0)"),
+            s(b"(0.4 qty: 5, crankQty: 0)"),
+        ]);
+        let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
+        assert!(book.summary.buyCacheMax == 4000000000, 0);
+        assert!(book.summary.buyCacheMin == 2000000000, 0);
+        assert!(book.summary.buyCacheQty == 120000000000, 0);
+        assert!(book.summary.buyCacheSize == 3, 0);
+        assert!(book.summary.buyTreeMax == 1000000000, 0);
+        assert!(book.summary.sellCacheMax == 9000000000, 0);
+        assert!(book.summary.sellCacheMin == 7000000000, 0);
+        assert!(book.summary.sellCacheQty == 120000000000, 0);
+        assert!(book.summary.sellCacheSize == 3, 0);
+        assert!(book.summary.sellTreeMin == 10000000000, 0);
+    }
+
+    // </editor-fold>
 
     // <editor-fold defaultstate="collapsed" desc="Market order tests">
 
@@ -6918,27 +7422,6 @@ module ferum::market {
 
     // </editor-fold>
 
-    // To Test
-    // - Deposit and withdrawal permissions
-    //   - User can withdraw from non protocol market accounts
-    //   - Random protocol cant withdraw from a non protocol market account
-    //   - Protocol can withdraw for user from protocol market accounts
-    //   - User cannot withdraw from a protocol market account
-    // - Order cancel permissions
-    //   - User can cancel an order for a non protocol market accounts
-    //   - Random protocol cant cancel an order for a non protocol market account
-    //   - Protocol can cancel an order for user from protocol market accounts
-    //   - User cannot cancel an order from a protocol market account
-    // - Order placement permissions
-    //   - User can add an order for a non protocol market accounts
-    //   - Random protocol cant add an order for a non protocol market account
-    //   - Protocol can add an order for user from protocol market accounts
-    //   - User cannot add an order from a protocol market account
-    // - Order types
-    //   - fok
-    //   - ioc
-    //   - post
-
     // <editor-fold defaultstate="collapsed" desc="Test utils">
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
@@ -7454,7 +7937,7 @@ module ferum::market {
         open_market_account<I, Q>(user, userIdentifier);
         deposit_to_market_account<I, Q>(user, userIdentifier, 1000000000000, 1000000000000);
         let marketAddr = admin::get_market_addr<I, Q>();
-        // Premptive borrows so test signatures are consistent.
+        // Pre-emptive borrows so test signatures are consistent.
         borrow_global<IndexingEventHandles<I, Q>>(marketAddr);
         borrow_global<MarketSellCache<I, Q>>(marketAddr);
         borrow_global<MarketSellTree<I, Q>>(marketAddr);
@@ -8588,9 +9071,6 @@ module ferum::market {
     //       - 3rd child of node has elements in (node.elems[1], node.elems[2]]
     //       - mth child of node has elements in (node.elems[m-1], inf)
     //   7. All data is stored in leaf nodes and each leaf node is connected to one another in order
-    //
-    //
-    //
     struct Tree<T: copy + store + drop> has store {
         root: u16,
         nodes: table::Table<u16, TreeNode<T>>,
@@ -9360,6 +9840,26 @@ module ferum::market {
         (elem.key, vector::borrow(&elem.value, 0))
     }
 
+    inline fun tree_pop_max<T: copy + store + drop>(tree: &mut Tree<T>): (u64, T) {
+        let node = table::borrow(&tree.nodes, tree.max);
+        let elem = vector::borrow(&node.elements, vector::length(&node.elements) - 1);
+        assert!(vector::length(&elem.value) > 0, ERR_ELEM_DOES_NOT_EXIST);
+        let price = elem.key;
+        let elem = *vector::borrow(&elem.value, 0);
+        tree_delete(tree, price);
+        (price, elem)
+    }
+
+    inline fun tree_pop_min<T: copy + store + drop>(tree: &mut Tree<T>): (u64, T) {
+        let node = table::borrow(&tree.nodes, tree.min);
+        let elem = vector::borrow(&node.elements, 0);
+        assert!(vector::length(&elem.value) > 0, ERR_ELEM_DOES_NOT_EXIST);
+        let price = elem.key;
+        let elem = *vector::borrow(&elem.value, 0);
+        tree_delete(tree, price);
+        (price, elem)
+    }
+
     inline fun tree_next<T: copy + store + drop>(tree: &Tree<T>, it: &mut TreeIterator) {
         assert!(it.pos.nodeID != 0, ERR_EMPTY_ITERATOR);
         let node = table::borrow(&tree.nodes, it.pos.nodeID);
@@ -9644,6 +10144,116 @@ module ferum::market {
     // </editor-fold>
 
     // Specific Tests.
+
+    #[test]
+    fun test_tree_pop_max() {
+        let tree = tree_from_strs(4, vector[
+            s(b"(3 Keys:[ 50 70 100 ] Children:[ 4 5 6 7 ] Leaf:f Prev:0 Next:0)"),
+            s(b"(4 Keys:[ 10 40 ] Children:[ 8 9 10 ] Leaf:f Prev:0 Next:0)"),
+            s(b"(5 Keys:[ 56 65 ] Children:[ 11 12 13 ] Leaf:f Prev:0 Next:0)"),
+            s(b"(6 Keys:[ 85 95 ] Children:[ 14 15 16 ] Leaf:f Prev:0 Next:0)"),
+            s(b"(7 Keys:[ 105 120 ] Children:[ 17 18 19 ] Leaf:f Prev:0 Next:0)"),
+
+            s(b"(8 Keys:[ 5 6 7 ] Values:[ 7 6 5 ] Children:[ 0 0 0 0 ] Leaf:t Prev:0 Next:9)"),
+            s(b"(9 Keys:[ 11 12 13 ] Values:[ 13 12 11 ] Children:[ 0 0 0 0 ] Leaf:t Prev:8 Next:10)"),
+            s(b"(10 Keys:[ 41 42 43 ] Values:[ 43 42 41 ] Children:[ 0 0 0 0 ] Leaf:t Prev:9 Next:11)"),
+            s(b"(11 Keys:[ 54 55 56 ] Values:[ 56 55 54 ] Children:[ 0 0 0 0 ] Leaf:t Prev:10 Next:12)"),
+            s(b"(12 Keys:[ 57 58 59 ] Values:[ 59 58 57 ] Children:[ 0 0 0 0 ] Leaf:t Prev:11 Next:13)"),
+            s(b"(13 Keys:[ 66 67 68 ] Values:[ 68 67 66 ] Children:[ 0 0 0 0 ] Leaf:t Prev:12 Next:14)"),
+            s(b"(14 Keys:[ 76 77 78 ] Values:[ 78 77 76 ] Children:[ 0 0 0 0 ] Leaf:t Prev:13 Next:15)"),
+            s(b"(15 Keys:[ 86 87 88 ] Values:[ 88 87 86 ] Children:[ 0 0 0 0 ] Leaf:t Prev:14 Next:16)"),
+            s(b"(16 Keys:[ 96 97 98 ] Values:[ 98 97 96 ] Children:[ 0 0 0 0 ] Leaf:t Prev:15 Next:17)"),
+            s(b"(17 Keys:[ 101 102 103 ] Values:[ 103 102 101 ] Children:[ 0 0 0 0 ] Leaf:t Prev:16 Next:18)"),
+            s(b"(18 Keys:[ 109 110 111 ] Values:[ 111 110 109 ] Children:[ 0 0 0 0 ] Leaf:t Prev:17 Next:19)"),
+            s(b"(19 Keys:[ 121 122 123 ] Values:[ 123 122 121 ] Children:[ 0 0 0 0 ] Leaf:t Prev:18 Next:0)"),
+        ]);
+        assert_valid_tree(&tree);
+        let (price, elem) = tree_pop_max(&mut tree);
+        assert!(price == 123, 0);
+        assert!(elem == 121, 0);
+        let (price, elem) = tree_pop_max(&mut tree);
+        assert!(price == 122, 0);
+        assert!(elem == 122, 0);
+        let (price, elem) = tree_pop_max(&mut tree);
+        assert!(price == 121, 0);
+        assert!(elem == 123, 0);
+        let (price, elem) = tree_pop_max(&mut tree);
+        assert!(price == 111, 0);
+        assert!(elem == 109, 0);
+        assert_valid_tree(&tree);
+
+        destroy_tree(tree);
+    }
+
+    #[test]
+    fun test_tree_pop_max_to_empty_tree() {
+        let tree = tree_from_strs(4, vector[
+            s(b"(8 Keys:[ 5 ] Values:[ 7 ] Children:[ 0 0 ] Leaf:t Prev:0 Next:0)"),
+        ]);
+        assert_valid_tree(&tree);
+        let (price, elem) = tree_pop_max(&mut tree);
+        assert!(price == 5, 0);
+        assert!(elem == 7, 0);
+        assert_tree(&tree, vector[]);
+        assert!(tree.treeSize == 0, 0);
+        assert_valid_tree(&tree);
+        destroy_tree(tree);
+    }
+
+    #[test]
+    fun test_tree_pop_min() {
+        let tree = tree_from_strs(4, vector[
+            s(b"(3 Keys:[ 50 70 100 ] Children:[ 4 5 6 7 ] Leaf:f Prev:0 Next:0)"),
+            s(b"(4 Keys:[ 10 40 ] Children:[ 8 9 10 ] Leaf:f Prev:0 Next:0)"),
+            s(b"(5 Keys:[ 56 65 ] Children:[ 11 12 13 ] Leaf:f Prev:0 Next:0)"),
+            s(b"(6 Keys:[ 85 95 ] Children:[ 14 15 16 ] Leaf:f Prev:0 Next:0)"),
+            s(b"(7 Keys:[ 105 120 ] Children:[ 17 18 19 ] Leaf:f Prev:0 Next:0)"),
+
+            s(b"(8 Keys:[ 5 6 7 ] Values:[ 7 6 5 ] Children:[ 0 0 0 0 ] Leaf:t Prev:0 Next:9)"),
+            s(b"(9 Keys:[ 11 12 13 ] Values:[ 13 12 11 ] Children:[ 0 0 0 0 ] Leaf:t Prev:8 Next:10)"),
+            s(b"(10 Keys:[ 41 42 43 ] Values:[ 43 42 41 ] Children:[ 0 0 0 0 ] Leaf:t Prev:9 Next:11)"),
+            s(b"(11 Keys:[ 54 55 56 ] Values:[ 56 55 54 ] Children:[ 0 0 0 0 ] Leaf:t Prev:10 Next:12)"),
+            s(b"(12 Keys:[ 57 58 59 ] Values:[ 59 58 57 ] Children:[ 0 0 0 0 ] Leaf:t Prev:11 Next:13)"),
+            s(b"(13 Keys:[ 66 67 68 ] Values:[ 68 67 66 ] Children:[ 0 0 0 0 ] Leaf:t Prev:12 Next:14)"),
+            s(b"(14 Keys:[ 76 77 78 ] Values:[ 78 77 76 ] Children:[ 0 0 0 0 ] Leaf:t Prev:13 Next:15)"),
+            s(b"(15 Keys:[ 86 87 88 ] Values:[ 88 87 86 ] Children:[ 0 0 0 0 ] Leaf:t Prev:14 Next:16)"),
+            s(b"(16 Keys:[ 96 97 98 ] Values:[ 98 97 96 ] Children:[ 0 0 0 0 ] Leaf:t Prev:15 Next:17)"),
+            s(b"(17 Keys:[ 101 102 103 ] Values:[ 103 102 101 ] Children:[ 0 0 0 0 ] Leaf:t Prev:16 Next:18)"),
+            s(b"(18 Keys:[ 109 110 111 ] Values:[ 111 110 109 ] Children:[ 0 0 0 0 ] Leaf:t Prev:17 Next:19)"),
+            s(b"(19 Keys:[ 121 122 123 ] Values:[ 123 122 121 ] Children:[ 0 0 0 0 ] Leaf:t Prev:18 Next:0)"),
+        ]);
+        assert_valid_tree(&tree);
+        let (price, elem) = tree_pop_min(&mut tree);
+        assert!(price == 5, 0);
+        assert!(elem == 7, 0);
+        let (price, elem) = tree_pop_min(&mut tree);
+        assert!(price == 6, 0);
+        assert!(elem == 6, 0);
+        let (price, elem) = tree_pop_min(&mut tree);
+        assert!(price == 7, 0);
+        assert!(elem == 5, 0);
+        let (price, elem) = tree_pop_min(&mut tree);
+        assert!(price == 11, 0);
+        assert!(elem == 13, 0);
+        assert_valid_tree(&tree);
+
+        destroy_tree(tree);
+    }
+
+    #[test]
+    fun test_tree_pop_min_to_empty_tree() {
+        let tree = tree_from_strs(4, vector[
+            s(b"(8 Keys:[ 5 ] Values:[ 7 ] Children:[ 0 0 ] Leaf:t Prev:0 Next:0)"),
+        ]);
+        assert_valid_tree(&tree);
+        let (price, elem) = tree_pop_min(&mut tree);
+        assert!(price == 5, 0);
+        assert!(elem == 7, 0);
+        assert_tree(&tree, vector[]);
+        assert!(tree.treeSize == 0, 0);
+        assert_valid_tree(&tree);
+        destroy_tree(tree);
+    }
 
     #[test]
     fun test_tree_iterate_increasing() {
