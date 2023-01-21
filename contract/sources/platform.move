@@ -41,13 +41,20 @@ module ferum::platform {
         }
     }
 
-    public fun get_user_identifier(user: &signer, protocolCap: &ProtocolCapability): UserIdentifier {
+    public fun get_user_identifier_for_protocol(user: &signer, protocolCap: &ProtocolCapability): UserIdentifier {
         let userAddress = address_of(user);
         let protocolAddress = get_protocol_address(protocolCap);
-
         UserIdentifier {
             userAddress,
             protocolAddress,
+        }
+    }
+
+    public(friend) fun get_user_identifier(user: &signer): UserIdentifier {
+        let userAddress = address_of(user);
+        UserIdentifier {
+            userAddress,
+            protocolAddress: @0x0,
         }
     }
 
@@ -57,6 +64,10 @@ module ferum::platform {
 
     public(friend) fun get_protocol_address(cap: &ProtocolCapability): address {
         return cap.protocolAddress
+    }
+
+    public(friend) fun get_user_address(identifier: &UserIdentifier): address {
+        return identifier.userAddress
     }
 
     public(friend) fun sentinal_user_identifier(): UserIdentifier {
@@ -78,5 +89,13 @@ module ferum::platform {
     #[test_only]
     public fun drop_protocol_capability(cap: ProtocolCapability) {
         let ProtocolCapability {protocolAddress: _} = cap;
+    }
+
+    #[test_only]
+    public fun get_user_identifier_from_address(userAddress: address): UserIdentifier {
+        UserIdentifier {
+            userAddress,
+            protocolAddress: @0x0,
+        }
     }
 }

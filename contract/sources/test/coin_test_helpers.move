@@ -27,17 +27,13 @@ module ferum::coin_test_helpers {
     }
 
     #[test_only]
-    public fun setup_fake_coins(
+    public fun deposit_fake_coins(
         owner: &signer,
-        other: &signer,
         amt: u64,
-        decimals: u8,
+        user: &signer,
     ) acquires FakeMoneyACapabilities, FakeMoneyBCapabilities {
-        create_fake_coins(owner, decimals);
-        register_fma(owner, owner, amt);
-        register_fmb(owner, owner, amt);
-        register_fma(owner, other, amt);
-        register_fmb(owner, other, amt);
+        register_and_deposit_fma(owner, user, amt);
+        register_and_deposit_fmb(owner, user, amt);
     }
 
     #[test_only]
@@ -70,19 +66,13 @@ module ferum::coin_test_helpers {
     }
 
     #[test_only]
-    public fun register_fma_fmb(owner: &signer, user: &signer, amt: u64) acquires FakeMoneyACapabilities, FakeMoneyBCapabilities {
-        register_fma(owner, user, amt);
-        register_fmb(owner, user, amt);
-    }
-
-    #[test_only]
-    public fun register_fma(owner: &signer, user: &signer, amt: u64) acquires FakeMoneyACapabilities {
+    public fun register_and_deposit_fma(owner: &signer, user: &signer, amt: u64) acquires FakeMoneyACapabilities {
         coin::register<FMA>(user);
         deposit_fma(owner, user, amt);
     }
 
     #[test_only]
-    public fun register_fmb(owner: &signer, user: &signer, amt: u64) acquires FakeMoneyBCapabilities {
+    public fun register_and_deposit_fmb(owner: &signer, user: &signer, amt: u64) acquires FakeMoneyBCapabilities {
         coin::register<FMB>(user);
         deposit_fmb(owner, user, amt);
     }

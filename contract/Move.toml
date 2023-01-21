@@ -4,7 +4,6 @@ version = "0.1.0"
 
 [dependencies]
 AptosFramework = { git = "https://github.com/aptos-labs/aptos-core.git", subdir = "aptos-move/framework/aptos-framework/", rev = "devnet" }
-FerumSTD = { local = "../../ferum-std" }
 
 [addresses]
 ferum="0xdcd166a8422c44369b232d1a27fa4bd57fa428fe59af01f5bfa345be65c43358"
