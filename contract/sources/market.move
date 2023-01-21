@@ -905,78 +905,35 @@ module ferum::market {
             };
             // Then check tree if we still have qty.
             if (remainingQty > 0) {
-                // TODO: split up into multiple cases because it is nicer.
-                let (tree, currNodeID) = if (side == SIDE_SELL) {
+                let (tree, it) = if (side == SIDE_SELL) {
                     let tree = &borrow_global<MarketBuyTree<I, Q>>(marketAddr).tree;
-                    let max = tree.max;
-                    (tree, max)
+                    let it = tree_iterate(tree, SIDE_BUY);
+                    (tree, it)
                 } else {
-                    let tree = &borrow_global_mut<MarketSellTree<I, Q>>(marketAddr).tree;
-                    let min = tree.min;
-                    (tree, min)
+                    let tree = &borrow_global<MarketSellTree<I, Q>>(marketAddr).tree;
+                    let it = tree_iterate(tree, SIDE_SELL);
+                    (tree, it)
                 };
-                // Inlined iteration.
-                while (currNodeID != 0) {
-                    let node = table::borrow(&tree.nodes, currNodeID);
-                    let size = vector::length(&node.elements);
-                    let i = if (side == SIDE_BUY) {
-                        0
-                    } else {
-                        size - 1
+                while (it.pos.nodeID != 0) {
+                    let (bookPrice, orderTreeElem) = tree_get_next(tree, &mut it);
+                    // A 0 price means this is a market order and so will execute against anything.
+                    if (
+                        price != 0 &&
+                            (side == SIDE_SELL && bookPrice < price)  ||
+                            (side == SIDE_BUY && bookPrice > price)
+                    ) {
+                        // We've reached the limit price.
+                        break
                     };
-                    loop {
-                        let elem = vector::borrow(&node.elements, i);
-                        let bookPrice = elem.key;
-                        let orderTreeElem = vector::borrow(&elem.value, 0);
-                        // A 0 price means this is a market order and so will execute against anything.
-                        if (
-                            price != 0 &&
-                                (side == SIDE_SELL && bookPrice < price)  ||
-                                (side == SIDE_BUY && bookPrice > price)
-                        ) {
-                            // We've reached the limit price.
-                            break
-                        };
-                        if (orderTreeElem.qty == 0) {
-                            // Skip any prices that have no quantity (they are waiting for the crank to run before
-                            // they are removed.
-                            if (side == SIDE_BUY) {
-                                i = i + 1;
-                                if (i >= size) {
-                                    break
-                                };
-                            } else {
-                                if (i == 0) {
-                                    break
-                                };
-                                i = i - 1;
-                            };
-                            continue
-                        };
-                        if (remainingQty < orderTreeElem.qty) {
-                            // Order qty is filled.
-                            remainingQty = 0;
-                            break
-                        };
-                        remainingQty = remainingQty - orderTreeElem.qty;
-
-                        if (side == SIDE_BUY) {
-                            i = i + 1;
-                            if (i >= size) {
-                                break
-                            };
-                        } else {
-                            if (i == 0) {
-                                break
-                            };
-                            i = i - 1;
-                        };
+                    if (orderTreeElem.qty == 0) {
+                        continue
                     };
-                    if (side == SIDE_BUY) {
-                        currNodeID = node.next
-                    } else {
-                        currNodeID = node.prev
+                    if (remainingQty < orderTreeElem.qty) {
+                        // Order qty is filled.
+                        remainingQty = 0;
+                        break
                     };
+                    remainingQty = remainingQty - orderTreeElem.qty;
                 };
                 if (remainingQty > 0) {
                     // Cancel the order because we couldn't fill it.
