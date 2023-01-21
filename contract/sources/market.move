@@ -1370,7 +1370,6 @@ module ferum::market {
 
     // Removes the order from the price level, returning the amount of qty that was removed.
     // Aborts if the order already has been executed.
-    // TODO: unit tests.
     fun remove_order_from_price_level(
         priceLevels: &mut PriceLevelReuseTable,
         priceLevelID: u16,
@@ -2364,7 +2363,7 @@ module ferum::market {
         let priceLevel = table::borrow(&priceLevels.objects, priceLevelID);
         assert!(get_price_level_order_qty(&priceLevel.orders, orderID1) == 0, 0);
         assert!(get_price_level_order_qty(&priceLevel.orders, orderID2) == 0, 0);
-        assert!(priceLevelID == priceLevels.unusedStack, 0);
+        assert!(!is_price_level_used(&priceLevels, priceLevelID), 0);
 
         drop_order_table(orderTable);
         drop_price_level_table(priceLevels);
@@ -2402,7 +2401,7 @@ module ferum::market {
         let priceLevel = table::borrow(&priceLevels.objects, priceLevelID);
         assert!(get_price_level_order_qty(&priceLevel.orders, orderID1) == 2, 0);
         assert!(get_price_level_order_qty(&priceLevel.orders, orderID2) == 0, 0);
-        assert!(priceLevelID != priceLevels.unusedStack, 0);
+        assert!(is_price_level_used(&priceLevels, priceLevelID), 0);
 
         drop_order_table(orderTable);
         drop_price_level_table(priceLevels);
@@ -2526,6 +2525,19 @@ module ferum::market {
             vector::pop_back(&mut list);
         };
         vector::destroy_empty(list);
+    }
+
+    #[test_only]
+    fun is_price_level_used(priceLevels: &PriceLevelReuseTable, priceLevelID: u16): bool {
+        let currNode = priceLevels.unusedStack;
+        while (currNode != 0) {
+            if (currNode == priceLevelID) {
+                return false
+            };
+            let priceLevel = table::borrow(&priceLevels.objects, priceLevelID);
+            currNode = priceLevel.next;
+        };
+        true
     }
 
     // </editor-fold>
