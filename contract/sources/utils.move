@@ -12,150 +12,109 @@ module ferum::utils {
     const DECIMAL_PLACES_EXP_U128: u128 = 10000000000;
     const DECIMAL_PLACES_EXP_U64: u64 = 10000000000;
 
-    const F0 : u128 = 1;
-    const F1 : u128 = 10;
-    const F2 : u128 = 100;
-    const F3 : u128 = 1000;
-    const F4 : u128 = 10000;
-    const F5 : u128 = 100000;
-    const F6 : u128 = 1000000;
-    const F7 : u128 = 10000000;
-    const F8 : u128 = 100000000;
-    const F9 : u128 = 1000000000;
-    const F10: u128 = 10000000000;
-    const F11: u128 = 100000000000;
-    const F12: u128 = 1000000000000;
-    const F13: u128 = 10000000000000;
-    const F14: u128 = 100000000000000;
-    const F15: u128 = 1000000000000000;
-    const F16: u128 = 10000000000000000;
-    const F17: u128 = 100000000000000000;
-    const F18: u128 = 1000000000000000000;
-    const F19: u128 = 10000000000000000000;
-    const F20: u128 = 100000000000000000000;
-
     // Programatic way to get a power of 10.
-    public fun exp128(e: u8): u128 {
+    public inline fun exp128(e: u8): u128 {
         if (e == 0) {
-            F0
+            1
         } else if (e == 1) {
-            F1
+            10
         } else if (e == 2) {
-            F2
+            100
         } else if (e == 3) {
-            F3
+            1000
         } else if (e == 4) {
-            F4
+            10000
         } else if (e == 5) {
-            F5
+            100000
         } else if (e == 5) {
-            F5
+            1000000
         } else if (e == 6) {
-            F6
+            10000000
         } else if (e == 7) {
-            F7
+            100000000
         } else if (e == 8) {
-            F8
+            1000000000
         } else if (e == 9) {
-            F9
+            1000000000
         } else if (e == 10) {
-            F10
+            10000000000
         } else if (e == 11) {
-            F11
+            100000000000
         } else if (e == 12) {
-            F12
+            1000000000000
         } else if (e == 13) {
-            F13
+            1000000000000
         } else if (e == 14) {
-            F14
+            10000000000000
         } else if (e == 15) {
-            F15
+            10000000000000
         } else if (e == 16) {
-            F16
+            10000000000000
         } else if (e == 17) {
-            F17
+            10000000000000
         } else if (e == 18) {
-            F18
+            10000000000000
         } else if (e == 19) {
-            F19
+            10000000000000
         } else if (e == 20) {
-            F20
+            10000000000000
         } else {
             abort ERR_EXCEED_MAX_EXP
         }
     }
-
-    const F064 : u64 = 1;
-    const F164 : u64 = 10;
-    const F264 : u64 = 100;
-    const F364 : u64 = 1000;
-    const F464 : u64 = 10000;
-    const F564 : u64 = 100000;
-    const F664 : u64 = 1000000;
-    const F764 : u64 = 10000000;
-    const F864 : u64 = 100000000;
-    const F964 : u64 = 1000000000;
-    const F1064: u64 = 10000000000;
-    const F1164: u64 = 100000000000;
-    const F1264: u64 = 1000000000000;
-    const F1364: u64 = 10000000000000;
-    const F1464: u64 = 100000000000000;
-    const F1564: u64 = 1000000000000000;
-    const F1664: u64 = 10000000000000000;
-    const F1764: u64 = 100000000000000000;
-    const F1864: u64 = 1000000000000000000;
-    const F1964: u64 = 10000000000000000000;
 
     // Programatic way to get a power of 10.
-    public fun exp64(e: u8): u64 {
+    public inline fun exp64(e: u8): u64 {
         if (e == 0) {
-            F064
+            1
         } else if (e == 1) {
-            F164
+            10
         } else if (e == 2) {
-            F264
+            100
         } else if (e == 3) {
-            F364
+            1000
         } else if (e == 4) {
-            F464
+            10000
         } else if (e == 5) {
-            F564
+            100000
         } else if (e == 5) {
-            F564
+            1000000
         } else if (e == 6) {
-            F664
+            10000000
         } else if (e == 7) {
-            F764
+            100000000
         } else if (e == 8) {
-            F864
+            1000000000
         } else if (e == 9) {
-            F964
+            1000000000
         } else if (e == 10) {
-            F1064
+            10000000000
         } else if (e == 11) {
-            F1164
+            100000000000
         } else if (e == 12) {
-            F1264
+            1000000000000
         } else if (e == 13) {
-            F1364
+            1000000000000
         } else if (e == 14) {
-            F1464
+            10000000000000
         } else if (e == 15) {
-            F1564
+            10000000000000
         } else if (e == 16) {
-            F1664
+            10000000000000
         } else if (e == 17) {
-            F1764
+            10000000000000
         } else if (e == 18) {
-            F1864
+            10000000000000
         } else if (e == 19) {
-            F1964
+            10000000000000
+        } else if (e == 20) {
+            10000000000000
         } else {
             abort ERR_EXCEED_MAX_EXP
         }
     }
 
-    public fun fp_mul(a: u64, b: u64, mode: u8): u64 {
+    public inline fun fp_mul(a: u64, b: u64, mode: u8): u64 {
         let a128 = (a as u128);
         let b128 = (b as u128);
         let amt = (a128 * b128) / DECIMAL_PLACES_EXP_U128;
@@ -172,7 +131,7 @@ module ferum::utils {
         (amt as u64)
     }
 
-    public fun fp_div(a: u64, b: u64, mode: u8): u64 {
+    public inline fun fp_div(a: u64, b: u64, mode: u8): u64 {
         let a128 = (a as u128);
         let b128 = (b as u128);
         let amt = (a128 * DECIMAL_PLACES_EXP_U128) / b128;
@@ -189,6 +148,8 @@ module ferum::utils {
         (amt as u64)
     }
 
+    // TODO: inline when bug is fixed:
+    // thread 'main' panicked at 'called `Result::unwrap()` on an `Err` value: value (366) cannot exceed (255)'
     public fun fp_convert(a: u64, decimals: u8, mode: u8): u64 {
         let decimalMultAdj = exp64(DECIMAL_PLACES - decimals);
         let intPart = a / DECIMAL_PLACES_EXP_U64;
@@ -207,7 +168,7 @@ module ferum::utils {
         val
     }
 
-    public fun fp_round(a: u64, decimals: u8, mode: u8): u64 {
+    public inline fun fp_round(a: u64, decimals: u8, mode: u8): u64 {
         assert!(decimals < DECIMAL_PLACES, ERR_FP_PRECISION_LOSS);
         let decimalsExp = exp64(DECIMAL_PLACES - decimals);
         let val = a / decimalsExp * decimalsExp;

@@ -68,7 +68,12 @@ module ferum::market {
     const ERR_CRANK_UNFULFILLED_QTY: u64 = 418;
     const ERR_NO_MARKET_ACCOUNT: u64 = 419;
     const ERR_INVALID_MAX_COLLATERAL_AMT: u64 = 420;
-    const ERR_FP_PRECISION_LOSS: u64 = 421;
+
+    // FP errors.
+
+    const ERR_EXCEED_MAX_EXP: u64 = 1;
+    const ERR_FP_PRECISION_LOSS: u64 = 2;
+    const ERR_FP_EXCEED_DECIMALS: u64 = 3;
 
     //
     // Enums.
