@@ -1244,7 +1244,7 @@ module ferum::market {
             };
             let pos = tree_find(tree, orderPrice);
             assert!(pos.nodeID != 0, ERR_PRICE_STORE_ELEM_NOT_FOUND);
-            let priceStoreElem = tree_get_mut(tree, &pos);
+            let (_, priceStoreElem) = tree_get_mut(tree, &pos);
             let qtyRemoved = remove_order_from_price_level(
                 priceLevelsTable,
                 priceStoreElem.priceLevelID,
@@ -1300,7 +1300,7 @@ module ferum::market {
         let pos = tree_find(tree, price);
         if (pos.nodeID != 0) {
             // The price is in the tree.
-            let priceStoreElem = tree_get_mut(tree, &pos);
+            let (_, priceStoreElem) = tree_get_mut(tree, &pos);
             priceStoreElem.qty = priceStoreElem.qty + qty;
             return priceStoreElem.priceLevelID
         };
@@ -1329,7 +1329,7 @@ module ferum::market {
             assert!(pos.nodeID != 0, ERR_ELEM_DOES_NOT_EXIST);
             &pos
         };
-        let priceStoreElem = tree_get_mut(tree, pos);
+        let (_, priceStoreElem) = tree_get_mut(tree, pos);
         if (crank) {
             priceStoreElem.makerCrankPendingQty = priceStoreElem.makerCrankPendingQty - qty;
         } else {
@@ -1518,122 +1518,77 @@ module ferum::market {
         // that messes up iteration.
         let qtysToRemove = vector[];
         let smallestInstrumentAmt = utils::exp64(DECIMAL_PLACES - instrumentDecimals);
-        let currNodeID = if (order.metadata.side == SIDE_BUY) {
-            tree.min
+        let it = tree_iterate(tree, if (order.metadata.side == SIDE_BUY) {
+            SIDE_SELL
         } else {
-            tree.max
-        };
-        // Inlined iteration.
-        while (currNodeID != 0) {
-            let node = table::borrow_mut(&mut tree.nodes, currNodeID);
-            let size = vector::length(&node.elements);
-            let i = if (order.metadata.side == SIDE_BUY) {
-                0
-            } else {
-                size - 1
-            };
-            let limitOrQtyReached = false;
-            loop {
-                let elem = vector::borrow_mut(&mut node.elements, i);
-                let bookPrice = elem.key;
-                let orderTreeElem = vector::borrow_mut(&mut elem.value, 0);
-                if (
-                    order.metadata.price != 0 && (
-                        (order.metadata.side == SIDE_BUY && bookPrice > order.metadata.price) ||
-                        (order.metadata.side == SIDE_SELL && bookPrice < order.metadata.price)
-                    )
-                ) {
-                    // We've reached the limit price.
-                    limitOrQtyReached = true;
-                    break
-                };
-                if (orderTreeElem.qty == 0) {
-                    // Skip any prices with 0 qty (these prices are waiting for crank to turn to be removed).
-                    if (order.metadata.side == SIDE_BUY) {
-                        i = i + 1;
-                        if (i >= size) {
-                            break
-                        };
-                    } else {
-                        if (i == 0) {
-                            break
-                        };
-                        i = i - 1;
-                    };
-                    continue
-                };
-                let remainingQty = order.metadata.unfilledQty - order.metadata.takerCrankPendingQty;
-                let fillQty = if (orderTreeElem.qty > remainingQty) {
-                    remainingQty
-                } else {
-                    orderTreeElem.qty
-                };
-                if (order.metadata.price == 0 && order.metadata.side == SIDE_BUY) {
-                    let usedBuyCollateral = utils::fp_mul(fillQty, bookPrice, FP_NO_PRECISION_LOSS);
-                    if (order.metadata.marketBuyRemainingCollateral < usedBuyCollateral) {
-                        // Need to consider remaining buy collateral for market buy orders. If the remaining buy collateral is
-                        // not enough to cover the fillQty, clamp fillQty to what the remaining buy collateral can cover.
-                        fillQty = utils::fp_round(
-                            utils::fp_div(order.metadata.marketBuyRemainingCollateral, bookPrice, FP_TRUNC),
-                            instrumentDecimals,
-                            FP_TRUNC,
-                        );
-                        if (fillQty == 0) {
-                            break
-                        };
-                        usedBuyCollateral = utils::fp_mul(fillQty, bookPrice, FP_NO_PRECISION_LOSS);
-                    };
-                    // Update the remaining buy collateral.
-                    order.metadata.marketBuyRemainingCollateral = order.metadata.marketBuyRemainingCollateral - usedBuyCollateral;
-                    // Detect if the amount of collateral has gotten so small that no more executions at the current price
-                    // or higher are possible. In this case, set marketBuyRemainingCollateral to 0 because there is no remaining
-                    // collateral left for this market order.
-                    if (order.metadata.marketBuyRemainingCollateral < utils::fp_mul(smallestInstrumentAmt, bookPrice, FP_ROUND_UP)) {
-                        order.metadata.marketBuyRemainingCollateral = 0;
-                    };
-                };
-                order.metadata.takerCrankPendingQty = order.metadata.takerCrankPendingQty + fillQty;
-                orderTreeElem.makerCrankPendingQty = orderTreeElem.makerCrankPendingQty + fillQty;
-                // Create exec event.
-                vector::push_back(execs, ExecutionQueueEvent {
-                    qty: fillQty,
-                    priceLevelID: orderTreeElem.priceLevelID,
-                    timestampSecs,
-                    takerOrderID: orderID,
-                });
-                // Defer update for price qty in the tree.
-                vector::push_back(&mut qtysToRemove, DeferredQtyRemovals{
-                    position: TreePosition{ nodeID: currNodeID, idx: i },
-                    qty: fillQty,
-                });
-                // If the order is finalized, break.
-                if (no_qty_to_be_executed(order, 0)) {
-                    limitOrQtyReached = true;
-                    break
-                };
-
-                if (order.metadata.side == SIDE_BUY) {
-                    i = i + 1;
-                    if (i >= size) {
-                        break
-                    };
-                } else {
-                    if (i == 0) {
-                        break
-                    };
-                    i = i - 1;
-                };
-            };
-            if (limitOrQtyReached) {
-                // No additional work is needed.
+            SIDE_BUY
+        });
+        while (it.pos.nodeID != 0) {
+            let currPos = it.pos;
+            let (bookPrice, orderTreeElem) = tree_get_next_mut(tree, &mut it);
+            if (
+                order.metadata.price != 0 && (
+                    (order.metadata.side == SIDE_BUY && bookPrice > order.metadata.price) ||
+                    (order.metadata.side == SIDE_SELL && bookPrice < order.metadata.price)
+                )
+            ) {
+                // We've reached the limit price.
                 break
             };
-            if (order.metadata.side == SIDE_BUY) {
-                currNodeID = node.next
+            if (orderTreeElem.qty == 0) {
+                // Skip price levels that have no qty.
+                continue
+            };
+            let remainingQty = order.metadata.unfilledQty - order.metadata.takerCrankPendingQty;
+            let fillQty = if (orderTreeElem.qty > remainingQty) {
+                remainingQty
             } else {
-                currNodeID = node.prev
+                orderTreeElem.qty
+            };
+            if (order.metadata.price == 0 && order.metadata.side == SIDE_BUY) {
+                let usedBuyCollateral = utils::fp_mul(fillQty, bookPrice, FP_NO_PRECISION_LOSS);
+                if (order.metadata.marketBuyRemainingCollateral < usedBuyCollateral) {
+                    // Need to consider remaining buy collateral for market buy orders. If the remaining buy collateral is
+                    // not enough to cover the fillQty, clamp fillQty to what the remaining buy collateral can cover.
+                    fillQty = utils::fp_round(
+                        utils::fp_div(order.metadata.marketBuyRemainingCollateral, bookPrice, FP_TRUNC),
+                        instrumentDecimals,
+                        FP_TRUNC,
+                    );
+                    if (fillQty == 0) {
+                        break
+                    };
+                    usedBuyCollateral = utils::fp_mul(fillQty, bookPrice, FP_NO_PRECISION_LOSS);
+                };
+                // Update the remaining buy collateral.
+                order.metadata.marketBuyRemainingCollateral = order.metadata.marketBuyRemainingCollateral - usedBuyCollateral;
+                // Detect if the amount of collateral has gotten so small that no more executions at the current price
+                // or higher are possible. In this case, set marketBuyRemainingCollateral to 0 because there is no remaining
+                // collateral left for this market order.
+                if (order.metadata.marketBuyRemainingCollateral < utils::fp_mul(smallestInstrumentAmt, bookPrice, FP_ROUND_UP)) {
+                    order.metadata.marketBuyRemainingCollateral = 0;
+                };
+            };
+            order.metadata.takerCrankPendingQty = order.metadata.takerCrankPendingQty + fillQty;
+            orderTreeElem.makerCrankPendingQty = orderTreeElem.makerCrankPendingQty + fillQty;
+            // Create exec event.
+            vector::push_back(execs, ExecutionQueueEvent {
+                qty: fillQty,
+                priceLevelID: orderTreeElem.priceLevelID,
+                timestampSecs,
+                takerOrderID: orderID,
+            });
+            // Defer update for price qty in the tree.
+            vector::push_back(&mut qtysToRemove, DeferredQtyRemovals{
+                position: currPos,
+                qty: fillQty,
+            });
+            // If the order is finalized, break.
+            if (no_qty_to_be_executed(order, 0)) {
+                break
             };
         };
+
         // Remove qtys from tree.
         let i = 0;
         let size = vector::length(&qtysToRemove);
@@ -2137,7 +2092,8 @@ module ferum::market {
         assert!(id == 3, 0);
         let pos = &tree_find(&tree, 1);
         assert!(pos.nodeID != 0, 0);
-        let elem = tree_get_mut(&mut tree, pos);
+        let (price, elem) = tree_get_mut(&mut tree, pos);
+        assert!(price == 1, 0);
         assert!(elem.qty == 20, 0);
         assert!(elem.priceLevelID == 3, 0);
         assert!(priceLevels.currID == 1, 0);
@@ -2146,7 +2102,8 @@ module ferum::market {
         assert!(id == 1, 0);
         let pos = &tree_find(&tree, 9);
         assert!(pos.nodeID != 0, 0);
-        let elem = tree_get_mut(&mut tree, pos);
+        let (price, elem) = tree_get_mut(&mut tree, pos);
+        assert!(price == 9, 0);
         assert!(elem.qty == 10, 0);
         assert!(elem.priceLevelID == 1, 0);
         assert!(priceLevels.currID == 2, 0);
@@ -2165,7 +2122,8 @@ module ferum::market {
         });
         remove_price_qty_from_tree(&mut tree, 1, 5, false, vector[]);
         let pos = tree_find(&tree, 1);
-        let elem = tree_get_mut(&mut tree, &pos);
+        let (price, elem) = tree_get_mut(&mut tree, &pos);
+        assert!(price == 1, 0);
         assert!(elem.qty == 5, 0);
         assert!(elem.makerCrankPendingQty == 5, 0);
         assert!(elem.priceLevelID == 3, 0);
@@ -2182,7 +2140,8 @@ module ferum::market {
         });
         let pos = tree_find(&tree, 1);
         remove_price_qty_from_tree(&mut tree, 1, 5, false, vector[pos]);
-        let elem = tree_get_mut(&mut tree, &pos);
+        let (price, elem) = tree_get_mut(&mut tree, &pos);
+        assert!(price == 1, 0);
         assert!(elem.qty == 5, 0);
         assert!(elem.makerCrankPendingQty == 5, 0);
         assert!(elem.priceLevelID == 3, 0);
@@ -2199,7 +2158,8 @@ module ferum::market {
         });
         remove_price_qty_from_tree(&mut tree, 1, 2, true, vector[]);
         let pos = tree_find(&tree, 1);
-        let elem = tree_get_mut(&mut tree, &pos);
+        let (price, elem) = tree_get_mut(&mut tree, &pos);
+        assert!(price == 1, 0);
         assert!(elem.qty == 10, 0);
         assert!(elem.makerCrankPendingQty == 3, 0);
         assert!(elem.priceLevelID == 3, 0);
@@ -2216,7 +2176,8 @@ module ferum::market {
         });
         let pos = tree_find(&tree, 1);
         remove_price_qty_from_tree(&mut tree, 1, 2, true, vector[pos]);
-        let elem = tree_get_mut(&mut tree, &pos);
+        let (price, elem) = tree_get_mut(&mut tree, &pos);
+        assert!(price == 1, 0);
         assert!(elem.qty == 10, 0);
         assert!(elem.makerCrankPendingQty == 3, 0);
         assert!(elem.priceLevelID == 3, 0);
@@ -2233,7 +2194,8 @@ module ferum::market {
         });
         remove_price_qty_from_tree(&mut tree, 1, 10, false, vector[]);
         let pos = tree_find(&tree, 1);
-        let elem = tree_get_mut(&mut tree, &pos);
+        let (price, elem) = tree_get_mut(&mut tree, &pos);
+        assert!(price == 1, 0);
         assert!(elem.qty == 0, 0);
         assert!(elem.makerCrankPendingQty == 5, 0);
         assert!(elem.priceLevelID == 3, 0);
@@ -7417,7 +7379,7 @@ module ferum::market {
                 };
                 let pos = tree_find(tree, price);
                 assert!(pos.nodeID != 0, 0);
-                let elem = tree_get_mut(tree, &pos);
+                let (_, elem) = tree_get_mut(tree, &pos);
                 elem.makerCrankPendingQty
             };
             let priceLevel = table::borrow(&book.priceLevelsTable.objects, order.priceLevelID);
@@ -8629,13 +8591,6 @@ module ferum::market {
         null
     }
 
-    inline fun tree_get_mut<T: copy + store + drop>(tree: &mut Tree<T>, pos: &TreePosition): &mut T {
-        let node = table::borrow_mut(&mut tree.nodes, pos.nodeID);
-        let elem = vector::borrow_mut(&mut node.elements, pos.idx);
-        assert!(vector::length(&elem.value) > 0, ERR_ELEM_DOES_NOT_EXIST);
-        vector::borrow_mut(&mut elem.value, 0)
-    }
-
     // Assumes items are not already in the tree.
     // TODO: inline when bug is fixed (https://github.com/aptos-foundation/AIPs/issues/33#issuecomment-1399213932)
     fun tree_insert<T: copy + store + drop>(tree: &mut Tree<T>, key: u64, value: T) {
@@ -9290,35 +9245,34 @@ module ferum::market {
         }
     }
 
+    inline fun tree_get_next_mut<T: copy + store + drop>(tree: &mut Tree<T>, it: &mut TreeIterator): (u64, &mut T) {
+        let pos = it.pos;
+        tree_next(tree, it);
+        tree_get_mut(tree, &pos)
+    }
+
     inline fun tree_get_next<T: copy + store + drop>(tree: &Tree<T>, it: &mut TreeIterator): (u64, &T) {
-        assert!(it.pos.nodeID != 0, ERR_EMPTY_ITERATOR);
-        let node = table::borrow(&tree.nodes, it.pos.nodeID);
-        let elem = vector::borrow(&node.elements, it.pos.idx);
-        if (it.type == DECREASING_ITERATOR) {
-            if (it.pos.idx > 0) {
-                it.pos.idx = it.pos.idx - 1;
-            } else {
-                it.pos.nodeID = node.prev;
-                if (it.pos.nodeID > 0) {
-                    let prevNode = table::borrow(&tree.nodes, it.pos.nodeID);
-                    it.pos.idx = vector::length(&prevNode.elements) - 1;
-                }
-            };
-        } else {
-            if (it.pos.idx < vector::length(&node.elements) - 1) {
-                it.pos.idx = it.pos.idx + 1;
-            } else {
-                it.pos.nodeID = node.next;
-                it.pos.idx = 0;
-            };
-        };
+        let pos = it.pos;
+        tree_next(tree, it);
+        tree_get(tree, &pos)
+    }
+
+    inline fun tree_get_mut<T: copy + store + drop>(tree: &mut Tree<T>, pos: &TreePosition): (u64, &mut T) {
+        let node = table::borrow_mut(&mut tree.nodes, pos.nodeID);
+        let elem = vector::borrow_mut(&mut node.elements, pos.idx);
+        assert!(vector::length(&elem.value) > 0, ERR_ELEM_DOES_NOT_EXIST);
+        (elem.key, vector::borrow_mut(&mut elem.value, 0))
+    }
+
+    inline fun tree_get<T: copy + store + drop>(tree: &Tree<T>, pos: &TreePosition): (u64, &T) {
+        let node = table::borrow(&tree.nodes, pos.nodeID);
+        let elem = vector::borrow(&node.elements, pos.idx);
+        assert!(vector::length(&elem.value) > 0, ERR_ELEM_DOES_NOT_EXIST);
         (elem.key, vector::borrow(&elem.value, 0))
     }
 
-    inline fun tree_get_next_mut<T: copy + store + drop>(tree: &mut Tree<T>, it: &mut TreeIterator): (u64, &mut T) {
+    inline fun tree_next<T: copy + store + drop>(tree: &Tree<T>, it: &mut TreeIterator) {
         assert!(it.pos.nodeID != 0, ERR_EMPTY_ITERATOR);
-        let nodeID = it.pos.nodeID;
-        let idx = it.pos.idx;
         let node = table::borrow(&tree.nodes, it.pos.nodeID);
         if (it.type == DECREASING_ITERATOR) {
             if (it.pos.idx > 0) {
@@ -9338,10 +9292,6 @@ module ferum::market {
                 it.pos.idx = 0;
             };
         };
-        // Reborrow node as mutable.
-        let node = table::borrow_mut(&mut tree.nodes, nodeID);
-        let elem = vector::borrow_mut(&mut node.elements, idx);
-        (elem.key, vector::borrow_mut(&mut elem.value, 0))
     }
 
     inline fun get_or_create_tree_node<T: copy + store + drop>(tree: &mut Tree<T>): u16 {
