@@ -7256,7 +7256,7 @@ module ferum::market {
     #[test_only]
     fun market_tree_to_str(tree: &Tree<PriceStoreElem>, side: u8, priceLevelIDs: bool): vector<string::String> {
         let out = vector[];
-        let it = tree_iterator(tree, if (side == SIDE_BUY) {
+        let it = tree_iterate(tree, if (side == SIDE_BUY) {
             INCREASING_ITERATOR
         } else {
            DECREASING_ITERATOR
@@ -8551,7 +8551,7 @@ module ferum::market {
         max: u16,
     }
 
-    public fun new_tree<T: copy + store + drop>(m: u64): Tree<T> {
+    inline fun new_tree<T: copy + store + drop>(m: u64): Tree<T> {
         assert!(m >= 4, ERR_INVALID_TREE_DEGREE);
         assert!(m % 2 == 0, ERR_INVALID_TREE_DEGREE);
         Tree {
@@ -8566,7 +8566,7 @@ module ferum::market {
         }
     }
 
-    public fun prealloc_tree_nodes<T: copy + store + drop>(tree: &mut Tree<T>, count: u8) {
+    inline fun prealloc_tree_nodes<T: copy + store + drop>(tree: &mut Tree<T>, count: u8) {
         let i = 0;
         while (i < count) {
             let node = TreeNode {
@@ -8585,7 +8585,8 @@ module ferum::market {
     }
 
     // Find the position of the given key in the tree.
-    public fun tree_find<T: copy + store + drop>(tree: &Tree<T>, key: u64): TreePosition {
+    // TODO: inline when bug is fixed (https://github.com/aptos-foundation/AIPs/issues/33#issuecomment-1399213932)
+    fun tree_find<T: copy + store + drop>(tree: &Tree<T>, key: u64): TreePosition {
         let null = TreePosition {
             nodeID: 0,
             idx: 0,
@@ -8628,7 +8629,7 @@ module ferum::market {
         null
     }
 
-    public fun tree_get_mut<T: copy + store + drop>(tree: &mut Tree<T>, pos: &TreePosition): &mut T {
+    inline fun tree_get_mut<T: copy + store + drop>(tree: &mut Tree<T>, pos: &TreePosition): &mut T {
         let node = table::borrow_mut(&mut tree.nodes, pos.nodeID);
         let elem = vector::borrow_mut(&mut node.elements, pos.idx);
         assert!(vector::length(&elem.value) > 0, ERR_ELEM_DOES_NOT_EXIST);
@@ -8636,7 +8637,8 @@ module ferum::market {
     }
 
     // Assumes items are not already in the tree.
-    public fun tree_insert<T: copy + store + drop>(tree: &mut Tree<T>, key: u64, value: T) {
+    // TODO: inline when bug is fixed (https://github.com/aptos-foundation/AIPs/issues/33#issuecomment-1399213932)
+    fun tree_insert<T: copy + store + drop>(tree: &mut Tree<T>, key: u64, value: T) {
         let currNodeID = tree.root;
         let parentID = 0;
         let m = tree.m;
@@ -8799,7 +8801,8 @@ module ferum::market {
         };
     }
 
-    public fun tree_delete<T: copy + store + drop>(tree: &mut Tree<T>, key: u64) {
+    // TODO: inline when bug is fixed (https://github.com/aptos-foundation/AIPs/issues/33#issuecomment-1399213932)
+    fun tree_delete<T: copy + store + drop>(tree: &mut Tree<T>, key: u64) {
         // First find the item and record a path down to the key.
         let currNodeID = tree.root;
         let found = false;
@@ -9259,35 +9262,35 @@ module ferum::market {
         };
     }
 
-    public fun tree_iterator<T: copy + store + drop>(tree: &Tree<T>, type: u8): TreeIterator {
+    inline fun tree_iterate<T: copy + store + drop>(tree: &Tree<T>, type: u8): TreeIterator {
         if (tree.treeSize == 0) {
-            return TreeIterator {
+            TreeIterator {
                 pos: TreePosition {
                     nodeID: 0,
                     idx: tree.m+1,
                 },
                 type,
             }
-        };
-
-        let (nodeID, idx) = if (type == INCREASING_ITERATOR) {
-            (tree.min, 0)
-        } else if (type == DECREASING_ITERATOR) {
-            let node = table::borrow(&tree.nodes, tree.max);
-            (tree.max, vector::length(&node.elements) - 1)
         } else {
-            abort ERR_INVALID_ITERATOR_TYPE
-        };
-        TreeIterator {
-            pos: TreePosition {
-                nodeID,
-                idx,
-            },
-            type,
+            let (nodeID, idx) = if (type == INCREASING_ITERATOR) {
+                (tree.min, 0)
+            } else if (type == DECREASING_ITERATOR) {
+                let node = table::borrow(&tree.nodes, tree.max);
+                (tree.max, vector::length(&node.elements) - 1)
+            } else {
+                abort ERR_INVALID_ITERATOR_TYPE
+            };
+            TreeIterator {
+                pos: TreePosition {
+                    nodeID,
+                    idx,
+                },
+                type,
+            }
         }
     }
 
-    public fun tree_get_next<T: copy + store + drop>(tree: &Tree<T>, it: &mut TreeIterator): (u64, &T) {
+    inline fun tree_get_next<T: copy + store + drop>(tree: &Tree<T>, it: &mut TreeIterator): (u64, &T) {
         assert!(it.pos.nodeID != 0, ERR_EMPTY_ITERATOR);
         let node = table::borrow(&tree.nodes, it.pos.nodeID);
         let elem = vector::borrow(&node.elements, it.pos.idx);
@@ -9312,7 +9315,7 @@ module ferum::market {
         (elem.key, vector::borrow(&elem.value, 0))
     }
 
-    public fun tree_get_next_mut<T: copy + store + drop>(tree: &mut Tree<T>, it: &mut TreeIterator): (u64, &mut T) {
+    inline fun tree_get_next_mut<T: copy + store + drop>(tree: &mut Tree<T>, it: &mut TreeIterator): (u64, &mut T) {
         assert!(it.pos.nodeID != 0, ERR_EMPTY_ITERATOR);
         let nodeID = it.pos.nodeID;
         let idx = it.pos.idx;
@@ -9341,7 +9344,7 @@ module ferum::market {
         (elem.key, vector::borrow_mut(&mut elem.value, 0))
     }
 
-    fun get_or_create_tree_node<T: copy + store + drop>(tree: &mut Tree<T>): u16 {
+    inline fun get_or_create_tree_node<T: copy + store + drop>(tree: &mut Tree<T>): u16 {
         if (tree.unusedNodeStack == 0) {
             prealloc_tree_nodes(tree, 1);
         };
@@ -9656,7 +9659,7 @@ module ferum::market {
             111, 110, 109,
             123, 122, 121,
         ];
-        let it = tree_iterator(&tree, INCREASING_ITERATOR);
+        let it = tree_iterate(&tree, INCREASING_ITERATOR);
         let i = 0;
         while (it.pos.nodeID != 0) {
             let (key, val) = tree_get_next(&tree, &mut it);
@@ -9720,7 +9723,7 @@ module ferum::market {
             11, 12, 13,
             5, 6, 7,
         ];
-        let it = tree_iterator(&tree, DECREASING_ITERATOR);
+        let it = tree_iterate(&tree, DECREASING_ITERATOR);
         let i = 0;
         while (it.pos.nodeID != 0) {
             let (key, val) = tree_get_next(&tree, &mut it);
@@ -11633,7 +11636,7 @@ module ferum::market {
     fun assert_contains_range(tree: &Tree<u16>, start: u64, end: u64) {
         assert!(start != 0 && start < end, 0);
         // Check increasing direction.
-        let it = tree_iterator(tree, INCREASING_ITERATOR);
+        let it = tree_iterate(tree, INCREASING_ITERATOR);
         let expected = start;
         while (it.pos.nodeID != 0) {
             let (key, _) = tree_get_next(tree, &mut it);
@@ -11642,7 +11645,7 @@ module ferum::market {
         };
         assert!(expected == end + 1, 0);
         // Also check decreasing direction.
-        let it = tree_iterator(tree, DECREASING_ITERATOR);
+        let it = tree_iterate(tree, DECREASING_ITERATOR);
         let expected = end;
         while (it.pos.nodeID != 0) {
             let (key, _) = tree_get_next(tree, &mut it);
@@ -11663,7 +11666,7 @@ module ferum::market {
 
         // Check increasing direction.
         let count = 0;
-        let it = tree_iterator(tree, INCREASING_ITERATOR);
+        let it = tree_iterate(tree, INCREASING_ITERATOR);
         while (it.pos.nodeID != 0) {
             let (key, _) = tree_get_next(tree, &mut it);
             assert!(table::contains(&keySet, key), 0);
@@ -11672,7 +11675,7 @@ module ferum::market {
         assert!(count == vector::length(&keys), 0);
         // Also check the decreasing direction.
         count = 0;
-        it = tree_iterator(tree, DECREASING_ITERATOR);
+        it = tree_iterate(tree, DECREASING_ITERATOR);
         while (it.pos.nodeID != 0) {
             let (key, _z) = tree_get_next(tree, &mut it);
             assert!(table::contains(&keySet, key), 0);
