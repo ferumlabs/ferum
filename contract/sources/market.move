@@ -1155,8 +1155,9 @@ module ferum::market {
                     marketBuyRemainingCollateral: 0,
                 };
                 ordersTable.unusedStack = orderID;
+                return 0
             };
-            return 0
+            return orderID
         };
         // Otherwise, order is added to the price store.
         let remainingQty = order.metadata.unfilledQty - order.metadata.takerCrankPendingQty;
@@ -1804,7 +1805,208 @@ module ferum::market {
 
     // <editor-fold defaultstate="collapsed" desc="Market tests">
 
-    
+    // <editor-fold defaultstate="collapsed" desc="IOC order tests">
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_ioc_order_cancelled_sell(aptos: &signer, ferum: &signer, user: &signer)
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        // Tests that an ioc buy order is cancelled when it can't execute.
+
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup.
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_IOC, 4500000000, 100000000000);
+        assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.9 qty: 3, crankQty: 0)"),
+            s(b"(0.8 qty: 4, crankQty: 0)"),
+            s(b"(0.7 qty: 5, crankQty: 0)"),
+        ], vector[
+            s(b"(0.6 qty: 3, crankQty: 0)"),
+            s(b"(0.5 qty: 3, crankQty: 0)"),
+        ]);
+        assert_exec_events<FMA, FMB>(marketAddr, vector[]);
+        assert!(takerID == 0, 0);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_ioc_order_cancelled_empty_cache_sell(aptos: &signer, ferum: &signer, user: &signer)
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        // Tests that an ioc buy order is cancelled when it can't execute.
+
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup.
+        let orderID1 = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        let orderID2 = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        cancel_order<FMA, FMB>(user, orderID1);
+        cancel_order<FMA, FMB>(user, orderID2);
+        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_IOC, 5500000000, 100000000000);
+        assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.9 qty: 3, crankQty: 0)"),
+            s(b"(0.8 qty: 4, crankQty: 0)"),
+            s(b"(0.7 qty: 5, crankQty: 0)"),
+        ], vector[
+        ]);
+        assert_exec_events<FMA, FMB>(marketAddr, vector[]);
+        assert!(takerID == 0, 0);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_ioc_order_partial_fill_sell(aptos: &signer, ferum: &signer, user: &signer)
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        // Tests that an ioc buy order is can be partially filled.
+
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup.
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_IOC, 7500000000, 120000000000);
+        assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.9 qty: 3, crankQty: 0)"),
+            s(b"(0.8 qty: 4, crankQty: 0)"),
+            s(b"(0.7 qty: 0, crankQty: 5)"),
+        ], vector[
+            s(b"(0.6 qty: 0, crankQty: 3)"),
+            s(b"(0.5 qty: 0, crankQty: 3)"),
+        ]);
+        assert_exec_events<FMA, FMB>(marketAddr, vector[
+            ExecEventInfo {
+                qty: 30000000000,
+                takerOrderID: takerID,
+                price: 5000000000,
+            },
+            ExecEventInfo {
+                qty: 30000000000,
+                takerOrderID: takerID,
+                price: 6000000000,
+            },
+            ExecEventInfo {
+                qty: 50000000000,
+                takerOrderID: takerID,
+                price: 7000000000,
+            },
+        ]);
+        assert_order_qtys<FMA, FMB>(marketAddr, takerID, 110000000000, 110000000000, 0);
+        let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
+        assert_order_used(book, takerID);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_ioc_order_cancelled_buy(aptos: &signer, ferum: &signer, user: &signer)
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        // Tests that an ioc sell order is cancelled when it can't execute.
+
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup.
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_IOC, 9500000000, 100000000000);
+        assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.5 qty: 3, crankQty: 0)"),
+            s(b"(0.6 qty: 4, crankQty: 0)"),
+            s(b"(0.7 qty: 5, crankQty: 0)"),
+        ], vector[
+            s(b"(0.8 qty: 3, crankQty: 0)"),
+            s(b"(0.9 qty: 3, crankQty: 0)"),
+        ]);
+        assert_exec_events<FMA, FMB>(marketAddr, vector[]);
+        assert!(takerID == 0, 0);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_ioc_order_cancelled_empty_cache_buy(aptos: &signer, ferum: &signer, user: &signer)
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        // Tests that an ioc sell order is cancelled when it can't execute.
+
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup.
+        let orderID1 = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        let orderID2 = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        cancel_order<FMA, FMB>(user, orderID1);
+        cancel_order<FMA, FMB>(user, orderID2);
+        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_IOC, 7500000000, 100000000000);
+        assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.5 qty: 3, crankQty: 0)"),
+            s(b"(0.6 qty: 4, crankQty: 0)"),
+            s(b"(0.7 qty: 5, crankQty: 0)"),
+        ], vector[
+        ]);
+        assert_exec_events<FMA, FMB>(marketAddr, vector[]);
+        assert!(takerID == 0, 0);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_ioc_order_partial_fill_buy(aptos: &signer, ferum: &signer, user: &signer)
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        // Tests that an ioc sell order is can be partially filled.
+
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup.
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_IOC, 6500000000, 120000000000);
+        assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.5 qty: 3, crankQty: 0)"),
+            s(b"(0.6 qty: 4, crankQty: 0)"),
+            s(b"(0.7 qty: 0, crankQty: 5)"),
+        ], vector[
+            s(b"(0.8 qty: 0, crankQty: 3)"),
+            s(b"(0.9 qty: 0, crankQty: 3)"),
+        ]);
+        assert_exec_events<FMA, FMB>(marketAddr, vector[
+            ExecEventInfo {
+                qty: 30000000000,
+                takerOrderID: takerID,
+                price: 9000000000,
+            },
+            ExecEventInfo {
+                qty: 30000000000,
+                takerOrderID: takerID,
+                price: 8000000000,
+            },
+            ExecEventInfo {
+                qty: 50000000000,
+                takerOrderID: takerID,
+                price: 7000000000,
+            },
+        ]);
+        assert_order_qtys<FMA, FMB>(marketAddr, takerID, 110000000000, 110000000000, 0);
+        let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
+        assert_order_used(book, takerID);
+    }
+
+    // </editor-fold>
+
     // <editor-fold defaultstate="collapsed" desc="FOK order tests">
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
