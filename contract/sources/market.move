@@ -1,10 +1,9 @@
 // Todos
-// Permissions
-// Quote price publishing
-// Fees implementation
-// Rebalancing node cache + test
-// Code clean up and organization
-// Documentation updates
+// - Permissions
+// - Quote price publishing
+// - Fees implementation
+// - Code clean up and organization
+// - Documentation updates
 //
 // Tests:
 // - Deposit and withdrawal permissions
@@ -935,8 +934,7 @@ module ferum::market {
         marketBuyMaxCollateral: u64, // Only required for market orders.
         book: &mut Orderbook<I, Q>,
         execs: &mut vector<ExecutionQueueEvent>,
-    ): u32 acquires MarketSellTree, MarketBuyTree, MarketSellCache, MarketBuyCache, IndexingEventHandles
-    {
+    ): u32 acquires MarketSellTree, MarketBuyTree, MarketSellCache, MarketBuyCache, IndexingEventHandles {
         // Validate inputs.
         // <editor-fold defaultstate="collapsed" desc="Input Validation">
         utils::fp_round(qty, book.iDecimals, FP_NO_PRECISION_LOSS);
@@ -1805,6 +1803,475 @@ module ferum::market {
     }
 
     // <editor-fold defaultstate="collapsed" desc="Market tests">
+
+    
+    // <editor-fold defaultstate="collapsed" desc="FOK order tests">
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_fok_order_cancelled_cache_limit_exceeded_middle_sell(aptos: &signer, ferum: &signer, user: &signer)
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        // Tests that an fok buy order that can't execute past the middle of the cache is cancelled.
+
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup.
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_FOK, 5500000000, 100000000000);
+        assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.9 qty: 3, crankQty: 0)"),
+            s(b"(0.8 qty: 4, crankQty: 0)"),
+            s(b"(0.7 qty: 5, crankQty: 0)"),
+        ], vector[
+            s(b"(0.6 qty: 8, crankQty: 0)"),
+            s(b"(0.5 qty: 7, crankQty: 0)"),
+        ]);
+        assert_exec_events<FMA, FMB>(marketAddr, vector[]);
+        assert!(takerID == 0, 0);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_fok_order_cancelled_cache_limit_exceeded_front_sell(aptos: &signer, ferum: &signer, user: &signer)
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        // Tests that an fok buy order that can't execute past the front of the cache is cancelled.
+
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup.
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_FOK, 4000000000, 100000000000);
+        assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.9 qty: 3, crankQty: 0)"),
+            s(b"(0.8 qty: 4, crankQty: 0)"),
+            s(b"(0.7 qty: 5, crankQty: 0)"),
+        ], vector[
+            s(b"(0.6 qty: 8, crankQty: 0)"),
+            s(b"(0.5 qty: 7, crankQty: 0)"),
+        ]);
+        assert_exec_events<FMA, FMB>(marketAddr, vector[]);
+        assert!(takerID == 0, 0);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_fok_order_cancelled_cache_empty_tree_not_enough_qty_sell(aptos: &signer, ferum: &signer, user: &signer)
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        // Tests that an fok buy order that can't execute in the tree because there is not enough qty is cancelled.
+
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup.
+        let orderID1 = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        let orderID2 = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        cancel_order<FMA, FMB>(user, orderID1);
+        cancel_order<FMA, FMB>(user, orderID2);
+        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_FOK, 9000000000, 1000000000000);
+        assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.9 qty: 3, crankQty: 0)"),
+            s(b"(0.8 qty: 4, crankQty: 0)"),
+            s(b"(0.7 qty: 5, crankQty: 0)"),
+        ], vector[]);
+        assert_exec_events<FMA, FMB>(marketAddr, vector[]);
+        assert!(takerID == 0, 0);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_fok_order_cancelled_cache_empty_tree_limit_exceed_middle_sell(aptos: &signer, ferum: &signer, user: &signer)
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        // Tests that an fok buy order that can't execute in the tree because the limit price is exceeded is cancelled.
+
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup.
+        let orderID1 = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        let orderID2 = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        cancel_order<FMA, FMB>(user, orderID1);
+        cancel_order<FMA, FMB>(user, orderID2);
+        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_FOK, 8500000000, 100000000000);
+        assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.9 qty: 3, crankQty: 0)"),
+            s(b"(0.8 qty: 4, crankQty: 0)"),
+            s(b"(0.7 qty: 5, crankQty: 0)"),
+        ], vector[]);
+        assert_exec_events<FMA, FMB>(marketAddr, vector[]);
+        assert!(takerID == 0, 0);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_fok_order_cancelled_empty_book_sell(aptos: &signer, ferum: &signer, user: &signer)
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        // Tests that an fok buy order that can't execute because the book is empty.
+
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup.
+        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_FOK, 8500000000, 100000000000);
+        assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[], vector[]);
+        assert_exec_events<FMA, FMB>(marketAddr, vector[]);
+        assert!(takerID == 0, 0);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_fok_order_cancelled_tree_limit_exceeded_front_sell(aptos: &signer, ferum: &signer, user: &signer)
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        // Tests that an fok buy order that can't execute past the front of the tree is cancelled.
+
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup.
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_FOK, 6500000000, 100000000000);
+        assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.9 qty: 3, crankQty: 0)"),
+            s(b"(0.8 qty: 4, crankQty: 0)"),
+            s(b"(0.7 qty: 5, crankQty: 0)"),
+        ], vector[
+            s(b"(0.6 qty: 3, crankQty: 0)"),
+            s(b"(0.5 qty: 3, crankQty: 0)"),
+        ]);
+        assert_exec_events<FMA, FMB>(marketAddr, vector[]);
+        assert!(takerID == 0, 0);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_fok_order_cancelled_tree_limit_exceeded_middle_sell(aptos: &signer, ferum: &signer, user: &signer)
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        // Tests that an fok buy order that can't execute past middle of the tree is cancelled.
+
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup.
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_FOK, 7500000000, 150000000000);
+        assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.9 qty: 3, crankQty: 0)"),
+            s(b"(0.8 qty: 4, crankQty: 0)"),
+            s(b"(0.7 qty: 5, crankQty: 0)"),
+        ], vector[
+            s(b"(0.6 qty: 3, crankQty: 0)"),
+            s(b"(0.5 qty: 3, crankQty: 0)"),
+        ]);
+        assert_exec_events<FMA, FMB>(marketAddr, vector[]);
+        assert!(takerID == 0, 0);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_fok_order_cancelled_tree_empty_sell(aptos: &signer, ferum: &signer, user: &signer)
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        // Tests that an fok buy order that is cancelled when there is not enough qty in the tree.
+
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup.
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_FOK, 7500000000, 150000000000);
+        assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
+        ], vector[
+            s(b"(0.6 qty: 3, crankQty: 0)"),
+            s(b"(0.5 qty: 3, crankQty: 0)"),
+        ]);
+        assert_exec_events<FMA, FMB>(marketAddr, vector[]);
+        assert!(takerID == 0, 0);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_fok_order_executed_sell(aptos: &signer, ferum: &signer, user: &signer)
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        // Tests that an fok buy order is able to execute when there is enough qty.
+
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup.
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_FOK, 7500000000, 50000000000);
+        assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
+        ], vector[
+            s(b"(0.6 qty: 1, crankQty: 2)"),
+            s(b"(0.5 qty: 0, crankQty: 3)"),
+        ]);
+        assert_exec_events<FMA, FMB>(marketAddr, vector[
+            ExecEventInfo {
+                qty: 30000000000,
+                takerOrderID: takerID,
+                price: 5000000000,
+            },
+            ExecEventInfo {
+                qty: 20000000000,
+                takerOrderID: takerID,
+                price: 6000000000,
+            },
+        ]);
+        let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
+        assert_order_used(book, takerID);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_fok_order_cancelled_cache_limit_exceeded_middle_buy(aptos: &signer, ferum: &signer, user: &signer)
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        // Tests that an fok sell order that can't execute past the middle of the cache is cancelled.
+
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup.
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_FOK, 8500000000, 100000000000);
+        assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.5 qty: 3, crankQty: 0)"),
+            s(b"(0.6 qty: 4, crankQty: 0)"),
+            s(b"(0.7 qty: 5, crankQty: 0)"),
+        ], vector[
+            s(b"(0.8 qty: 3, crankQty: 0)"),
+            s(b"(0.9 qty: 3, crankQty: 0)"),
+        ]);
+        assert_exec_events<FMA, FMB>(marketAddr, vector[]);
+        assert!(takerID == 0, 0);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_fok_order_cancelled_cache_limit_exceeded_front_buy(aptos: &signer, ferum: &signer, user: &signer)
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        // Tests that an fok sell order that can't execute past the front of the cache is cancelled.
+
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup.
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_FOK, 9500000000, 100000000000);
+        assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.5 qty: 3, crankQty: 0)"),
+            s(b"(0.6 qty: 4, crankQty: 0)"),
+            s(b"(0.7 qty: 5, crankQty: 0)"),
+        ], vector[
+            s(b"(0.8 qty: 3, crankQty: 0)"),
+            s(b"(0.9 qty: 3, crankQty: 0)"),
+        ]);
+        assert_exec_events<FMA, FMB>(marketAddr, vector[]);
+        assert!(takerID == 0, 0);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_fok_order_cancelled_cache_empty_tree_not_enough_qty_buy(aptos: &signer, ferum: &signer, user: &signer)
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        // Tests that an fok sell order that can't execute in the tree because there is not enough qty is cancelled.
+
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup.
+        let orderID1 = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        let orderID2 = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        cancel_order<FMA, FMB>(user, orderID1);
+        cancel_order<FMA, FMB>(user, orderID2);
+        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_FOK, 4500000000, 1000000000000);
+        assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.5 qty: 3, crankQty: 0)"),
+            s(b"(0.6 qty: 4, crankQty: 0)"),
+            s(b"(0.7 qty: 5, crankQty: 0)"),
+        ], vector[
+        ]);
+        assert_exec_events<FMA, FMB>(marketAddr, vector[]);
+        assert!(takerID == 0, 0);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_fok_order_cancelled_cache_empty_tree_limit_exceed_middle_buy(aptos: &signer, ferum: &signer, user: &signer)
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        // Tests that an fok sell order that can't execute in the tree because the limit price is exceeded is cancelled.
+
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup.
+        let orderID1 = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        let orderID2 = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        cancel_order<FMA, FMB>(user, orderID1);
+        cancel_order<FMA, FMB>(user, orderID2);
+        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_FOK, 6500000000, 60000000000);
+        assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.5 qty: 3, crankQty: 0)"),
+            s(b"(0.6 qty: 4, crankQty: 0)"),
+            s(b"(0.7 qty: 5, crankQty: 0)"),
+        ], vector[
+        ]);
+        assert_exec_events<FMA, FMB>(marketAddr, vector[]);
+        assert!(takerID == 0, 0);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_fok_order_cancelled_empty_book_buy(aptos: &signer, ferum: &signer, user: &signer)
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        // Tests that an fok sell order that can't execute because the book is empty.
+
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup.
+        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_FOK, 8500000000, 100000000000);
+        assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[], vector[]);
+        assert_exec_events<FMA, FMB>(marketAddr, vector[]);
+        assert!(takerID == 0, 0);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_fok_order_cancelled_tree_limit_exceeded_front_buy(aptos: &signer, ferum: &signer, user: &signer)
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        // Tests that an fok sell order that can't execute past the front of the tree is cancelled.
+
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup.
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_FOK, 7500000000, 100000000000);
+        assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.5 qty: 3, crankQty: 0)"),
+            s(b"(0.6 qty: 4, crankQty: 0)"),
+            s(b"(0.7 qty: 5, crankQty: 0)"),
+        ], vector[
+            s(b"(0.8 qty: 3, crankQty: 0)"),
+            s(b"(0.9 qty: 3, crankQty: 0)"),
+        ]);
+        assert_exec_events<FMA, FMB>(marketAddr, vector[]);
+        assert!(takerID == 0, 0);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_fok_order_cancelled_tree_limit_exceeded_middle_buy(aptos: &signer, ferum: &signer, user: &signer)
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        // Tests that an fok sell order that can't execute past middle of the tree is cancelled.
+
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup.
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_FOK, 6500000000, 150000000000);
+        assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.5 qty: 3, crankQty: 0)"),
+            s(b"(0.6 qty: 4, crankQty: 0)"),
+            s(b"(0.7 qty: 5, crankQty: 0)"),
+        ], vector[
+            s(b"(0.8 qty: 3, crankQty: 0)"),
+            s(b"(0.9 qty: 3, crankQty: 0)"),
+        ]);
+        assert_exec_events<FMA, FMB>(marketAddr, vector[]);
+        assert!(takerID == 0, 0);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_fok_order_cancelled_tree_empty_buy(aptos: &signer, ferum: &signer, user: &signer)
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        // Tests that an fok sell order that is cancelled when there is not enough qty in the tree.
+
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup.
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_FOK, 7500000000, 100000000000);
+        assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
+        ], vector[
+            s(b"(0.8 qty: 3, crankQty: 0)"),
+            s(b"(0.9 qty: 3, crankQty: 0)"),
+        ]);
+        assert_exec_events<FMA, FMB>(marketAddr, vector[]);
+        assert!(takerID == 0, 0);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_fok_order_executed_buy(aptos: &signer, ferum: &signer, user: &signer)
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        // Tests that an fok sell order is able to execute when there is enough qty.
+
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup.
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_FOK, 4500000000, 50000000000);
+        assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
+        ], vector[
+            s(b"(0.5 qty: 1, crankQty: 2)"),
+            s(b"(0.6 qty: 0, crankQty: 3)"),
+        ]);
+        assert_exec_events<FMA, FMB>(marketAddr, vector[
+            ExecEventInfo {
+                qty: 30000000000,
+                takerOrderID: takerID,
+                price: 6000000000,
+            },
+            ExecEventInfo {
+                qty: 20000000000,
+                takerOrderID: takerID,
+                price: 5000000000,
+            },
+        ]);
+        let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
+        assert_order_used(book, takerID);
+    }
+
+    // </editor-fold>
 
     // <editor-fold defaultstate="collapsed" desc="Rebalance">
 
