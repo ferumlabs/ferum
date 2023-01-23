@@ -1805,6 +1805,178 @@ module ferum::market {
 
     // <editor-fold defaultstate="collapsed" desc="Market tests">
 
+    // <editor-fold defaultstate="collapsed" desc="POST order tests">
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_post_order_cancelled_sell(aptos: &signer, ferum: &signer, user: &signer)
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        // Tests that a post buy order is cancelled when it crosses the spread.
+
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup.
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_POST, 5500000000, 100000000000);
+        assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.9 qty: 3, crankQty: 0)"),
+            s(b"(0.8 qty: 4, crankQty: 0)"),
+            s(b"(0.7 qty: 5, crankQty: 0)"),
+        ], vector[
+            s(b"(0.6 qty: 3, crankQty: 0)"),
+            s(b"(0.5 qty: 3, crankQty: 0)"),
+        ]);
+        assert_exec_events<FMA, FMB>(marketAddr, vector[]);
+        assert!(takerID == 0, 0);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_post_order_cancelled_empty_cache_sell(aptos: &signer, ferum: &signer, user: &signer)
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        // Tests that a post buy order is cancelled when it cross the spread.
+
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup.
+        let orderID1 = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        let orderID2 = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        cancel_order<FMA, FMB>(user, orderID1);
+        cancel_order<FMA, FMB>(user, orderID2);
+        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_POST, 8500000000, 100000000000);
+        assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.9 qty: 3, crankQty: 0)"),
+            s(b"(0.8 qty: 4, crankQty: 0)"),
+            s(b"(0.7 qty: 5, crankQty: 0)"),
+        ], vector[
+        ]);
+        assert_exec_events<FMA, FMB>(marketAddr, vector[]);
+        assert!(takerID == 0, 0);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_post_order_sell(aptos: &signer, ferum: &signer, user: &signer)
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        // Tests that a post buy order can be added to the book.
+
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup.
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_POST, 4500000000, 10000000000);
+        assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.9 qty: 3, crankQty: 0)"),
+            s(b"(0.8 qty: 4, crankQty: 0)"),
+            s(b"(0.7 qty: 5, crankQty: 0)"),
+        ], vector[
+            s(b"(0.6 qty: 3, crankQty: 0)"),
+            s(b"(0.5 qty: 3, crankQty: 0)"),
+        ]);
+        assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
+        ], vector[
+            s(b"(0.45 qty: 1, crankQty: 0)"),
+        ]);
+        assert_exec_events<FMA, FMB>(marketAddr, vector[]);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_post_order_cancelled_buy(aptos: &signer, ferum: &signer, user: &signer)
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        // Tests that a post sell order is cancelled when it crosses the spread.
+
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup.
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_POST, 8500000000, 100000000000);
+        assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.5 qty: 3, crankQty: 0)"),
+            s(b"(0.6 qty: 4, crankQty: 0)"),
+            s(b"(0.7 qty: 5, crankQty: 0)"),
+        ], vector[
+            s(b"(0.8 qty: 3, crankQty: 0)"),
+            s(b"(0.9 qty: 3, crankQty: 0)"),
+        ]);
+        assert_exec_events<FMA, FMB>(marketAddr, vector[]);
+        assert!(takerID == 0, 0);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_post_order_cancelled_empty_cache_buy(aptos: &signer, ferum: &signer, user: &signer)
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        // Tests that a post sell order is cancelled when it crosses the spread.
+
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup.
+        let orderID1 = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        let orderID2 = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        cancel_order<FMA, FMB>(user, orderID1);
+        cancel_order<FMA, FMB>(user, orderID2);
+        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_POST, 6500000000, 100000000000);
+        assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.5 qty: 3, crankQty: 0)"),
+            s(b"(0.6 qty: 4, crankQty: 0)"),
+            s(b"(0.7 qty: 5, crankQty: 0)"),
+        ], vector[
+        ]);
+        assert_exec_events<FMA, FMB>(marketAddr, vector[]);
+        assert!(takerID == 0, 0);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_post_order_buy(aptos: &signer, ferum: &signer, user: &signer)
+        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        // Tests that a post sell order can be added to the book.
+
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup.
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_POST, 9500000000, 120000000000);
+        assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
+            s(b"(0.5 qty: 3, crankQty: 0)"),
+            s(b"(0.6 qty: 4, crankQty: 0)"),
+            s(b"(0.7 qty: 5, crankQty: 0)"),
+        ], vector[
+            s(b"(0.8 qty: 3, crankQty: 0)"),
+            s(b"(0.9 qty: 3, crankQty: 0)"),
+        ]);
+        assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
+        ], vector[
+            s(b"(0.95 qty: 12, crankQty: 0)"),
+        ]);
+        assert_exec_events<FMA, FMB>(marketAddr, vector[]);
+    }
+
+    // </editor-fold>
+
     // <editor-fold defaultstate="collapsed" desc="IOC order tests">
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
@@ -1974,7 +2146,7 @@ module ferum::market {
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_IOC, 6500000000, 120000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_IOC,120000000000, 120000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
