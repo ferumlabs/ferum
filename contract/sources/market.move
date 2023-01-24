@@ -3,7 +3,7 @@
 // - Quote price publishing
 // - Fees implementation
 // - Code clean up and organization
-// - Documentation updates
+    // - Documentation updates
 //
 // Tests:
 // - Deposit and withdrawal permissions
@@ -42,7 +42,7 @@ module ferum::market {
     // #[test_only]
     // use ferum::platform::{get_user_identifier, register_protocol};
     // #[test_only]
-    // use ferum::admin::{init_ferum};
+    // use ferum::{init_ferum};
     // #[test_only]
     // use ferum::coin_test_helpers::{FMA, FMB, setup_fake_coins, register_fmb, register_fma, create_fake_coins, register_fma_fmb};
     // #[test_only]
@@ -54,17 +54,16 @@ module ferum::market {
     #[test_only]
     use ferum::test_utils as ftu;
     use ferum::test_utils::s;
-    #[test_only]
-    use std::string;
     use aptos_framework::event::{EventHandle, emit_event};
     use ferum::platform;
     use aptos_framework::account::new_event_handle;
-    use ferum::admin;
     #[test_only]
     use aptos_framework::account;
     #[test_only]
     use ferum::coin_test_helpers::{FMA, FMB, create_fake_coins, deposit_fake_coins};
     use ferum::platform::UserIdentifier;
+    use std::string;
+    use aptos_std::type_info;
 
     //
     // Errors
@@ -172,7 +171,7 @@ module ferum::market {
         // the order, and the maker crank pending qty, which is only stored in the price store for efficiancy.
         unfilledQty: u64,
         // Qty of a taker order which was executed but is still waiting for the crank to be turned so executions can
-        // be cerated.
+        // be created.
         takerCrankPendingQty: u64,
         // Optional metadata provided for this order.
         clientOrderID: u32,
@@ -351,7 +350,9 @@ module ferum::market {
     // Entry functions.
     //
 
-    public entry fun init_market_entry<I, Q>(owner: &signer, instrumentDecimals: u8, quoteDecimals: u8, maxCacheSize: u8) {
+    public entry fun init_market_entry<I, Q>(
+        owner: &signer, instrumentDecimals: u8, quoteDecimals: u8, maxCacheSize: u8) acquires FerumInfo
+    {
         let ownerAddr = address_of(owner);
         assert!(!exists<Orderbook<I, Q>>(ownerAddr), ERR_BOOK_EXISTS);
         let (iCoinDecimals, qCoinDecimals) = validate_coins<I, Q>();
@@ -413,10 +414,10 @@ module ferum::market {
             executions: executionEvents,
             finalizations: finalizeEvents,
         });
-        admin::register_market<I, Q>(ownerAddr);
+        register_market<I, Q>(ownerAddr);
     }
 
-    public entry fun open_market_account_entry<I, Q>(owner: &signer) acquires Orderbook {
+    public entry fun open_market_account_entry<I, Q>(owner: &signer) acquires FerumInfo, Orderbook {
         open_market_account<I, Q>(owner, platform::get_user_identifier(owner))
     }
 
@@ -424,14 +425,14 @@ module ferum::market {
         owner: &signer,
         coinIAmt: u64,
         coinQAmt: u64,
-    ) acquires Orderbook {
+    ) acquires FerumInfo, Orderbook {
         deposit_to_market_account<I, Q>(owner, platform::get_user_identifier(owner), coinIAmt, coinQAmt)
     }
 
     public entry fun rebalance_cache_entry<I, Q>(_owner: &signer, limit: u8)
-        acquires Orderbook, MarketSellCache, MarketSellTree, MarketBuyCache, MarketBuyTree
+        acquires Orderbook, MarketSellCache, MarketSellTree, MarketBuyCache, MarketBuyTree, FerumInfo
     {
-        let marketAddr = admin::get_market_addr<I, Q>();
+        let marketAddr = get_market_addr<I, Q>();
         let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
 
         if (book.summary.buyCacheSize < book.maxCacheSize) {
@@ -463,9 +464,9 @@ module ferum::market {
     // }
 
     public entry fun crank<I, Q>(limit: u8)
-        acquires Orderbook, EventQueue, IndexingEventHandles, MarketBuyTree, MarketBuyCache, MarketSellTree, MarketSellCache
+        acquires FerumInfo, Orderbook, EventQueue, IndexingEventHandles, MarketBuyTree, MarketBuyCache, MarketSellTree, MarketSellCache
     {
-        let marketAddr = admin::get_market_addr<I, Q>();
+        let marketAddr = get_market_addr<I, Q>();
         let i = 0;
         let queue = &mut borrow_global_mut<EventQueue<I, Q>>(marketAddr).queue;
         let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
@@ -509,9 +510,9 @@ module ferum::market {
 
     // Public functions.
 
-    public fun open_market_account<I, Q>(owner: &signer, userIdentifier: UserIdentifier) acquires Orderbook {
+    public fun open_market_account<I, Q>(owner: &signer, userIdentifier: UserIdentifier) acquires FerumInfo, Orderbook {
         assert!(address_of(owner) == platform::get_user_address(&userIdentifier), ERR_NOT_OWNER);
-        let marketAddr = admin::get_market_addr<I, Q>();
+        let marketAddr = get_market_addr<I, Q>();
         let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
         table::add(&mut book.marketAccounts, userIdentifier, MarketAccount<I, Q>{
             activeOrders: vector[],
@@ -525,8 +526,8 @@ module ferum::market {
         userIdentifier: UserIdentifier,
         coinIAmt: u64,
         coinQAmt: u64,
-    ) acquires Orderbook {
-        let marketAddr = admin::get_market_addr<I, Q>();
+    ) acquires FerumInfo, Orderbook {
+        let marketAddr = get_market_addr<I, Q>();
         let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
         assert!(table::contains(&book.marketAccounts, userIdentifier), ERR_NO_MARKET_ACCOUNT);
         let marketAcc = table::borrow_mut(&mut book.marketAccounts, userIdentifier);
@@ -758,9 +759,9 @@ module ferum::market {
         qty: u64, // Fixedpoint values with `DECIMAL_PLACES` decimal places.
         clientOrderID: u32,
         marketBuyMaxCollateral: u64, // Should only be specified for market orders.
-    ): u32 acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles {
+    ): u32 acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles {
         assert!(address_of(owner) == platform::get_user_address(&userAccountIdentifier), ERR_NOT_OWNER);
-        let marketAddr = admin::get_market_addr<I, Q>();
+        let marketAddr = get_market_addr<I, Q>();
         let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
         let execs = &mut vector[];
         let orderID = add_order_to_book<I, Q>(
@@ -1191,9 +1192,9 @@ module ferum::market {
     }
 
     fun cancel_order<I, Q>(_owner: &signer, orderID: u32)
-        acquires Orderbook, MarketBuyTree, MarketBuyCache, MarketSellTree, MarketSellCache, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyTree, MarketBuyCache, MarketSellTree, MarketSellCache, IndexingEventHandles
     {
-        let marketAddr = admin::get_market_addr<I, Q>();
+        let marketAddr = get_market_addr<I, Q>();
         let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
         assert!(table::contains(&book.ordersTable.objects, orderID), ERR_UNKNOWN_ORDER);
         let order = table::borrow(&book.ordersTable.objects, orderID);
@@ -1805,7 +1806,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_post_order_cancelled_sell(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a post buy order is cancelled when it crosses the spread.
 
@@ -1832,7 +1833,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_post_order_cancelled_empty_cache_sell(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a post buy order is cancelled when it cross the spread.
 
@@ -1859,7 +1860,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_post_order_sell(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a post buy order can be added to the book.
 
@@ -1889,7 +1890,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_post_order_cancelled_buy(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a post sell order is cancelled when it crosses the spread.
 
@@ -1916,7 +1917,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_post_order_cancelled_empty_cache_buy(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a post sell order is cancelled when it crosses the spread.
 
@@ -1943,7 +1944,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_post_order_buy(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a post sell order can be added to the book.
 
@@ -1977,7 +1978,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_ioc_order_cancelled_sell(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an ioc buy order is cancelled when it can't execute.
 
@@ -2004,7 +2005,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_ioc_order_cancelled_empty_cache_sell(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an ioc buy order is cancelled when it can't execute.
 
@@ -2031,7 +2032,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_ioc_order_partial_fill_sell(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an ioc buy order is can be partially filled.
 
@@ -2076,7 +2077,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_ioc_order_cancelled_buy(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an ioc sell order is cancelled when it can't execute.
 
@@ -2103,7 +2104,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_ioc_order_cancelled_empty_cache_buy(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an ioc sell order is cancelled when it can't execute.
 
@@ -2130,7 +2131,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_ioc_order_partial_fill_buy(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an ioc sell order is can be partially filled.
 
@@ -2179,7 +2180,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_fok_order_cancelled_cache_limit_exceeded_middle_sell(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an fok buy order that can't execute past the middle of the cache is cancelled.
 
@@ -2208,7 +2209,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_fok_order_cancelled_cache_limit_exceeded_front_sell(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an fok buy order that can't execute past the front of the cache is cancelled.
 
@@ -2237,7 +2238,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_fok_order_cancelled_cache_empty_tree_not_enough_qty_sell(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an fok buy order that can't execute in the tree because there is not enough qty is cancelled.
 
@@ -2263,7 +2264,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_fok_order_cancelled_cache_empty_tree_limit_exceed_middle_sell(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an fok buy order that can't execute in the tree because the limit price is exceeded is cancelled.
 
@@ -2289,7 +2290,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_fok_order_cancelled_empty_book_sell(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an fok buy order that can't execute because the book is empty.
 
@@ -2304,7 +2305,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_fok_order_cancelled_tree_limit_exceeded_front_sell(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an fok buy order that can't execute past the front of the tree is cancelled.
 
@@ -2331,7 +2332,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_fok_order_cancelled_tree_limit_exceeded_middle_sell(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an fok buy order that can't execute past middle of the tree is cancelled.
 
@@ -2358,7 +2359,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_fok_order_cancelled_tree_empty_sell(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an fok buy order that is cancelled when there is not enough qty in the tree.
 
@@ -2379,7 +2380,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_fok_order_executed_sell(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an fok buy order is able to execute when there is enough qty.
 
@@ -2412,7 +2413,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_fok_order_cancelled_cache_limit_exceeded_middle_buy(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an fok sell order that can't execute past the middle of the cache is cancelled.
 
@@ -2439,7 +2440,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_fok_order_cancelled_cache_limit_exceeded_front_buy(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an fok sell order that can't execute past the front of the cache is cancelled.
 
@@ -2466,7 +2467,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_fok_order_cancelled_cache_empty_tree_not_enough_qty_buy(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an fok sell order that can't execute in the tree because there is not enough qty is cancelled.
 
@@ -2493,7 +2494,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_fok_order_cancelled_cache_empty_tree_limit_exceed_middle_buy(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an fok sell order that can't execute in the tree because the limit price is exceeded is cancelled.
 
@@ -2520,7 +2521,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_fok_order_cancelled_empty_book_buy(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an fok sell order that can't execute because the book is empty.
 
@@ -2535,7 +2536,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_fok_order_cancelled_tree_limit_exceeded_front_buy(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an fok sell order that can't execute past the front of the tree is cancelled.
 
@@ -2562,7 +2563,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_fok_order_cancelled_tree_limit_exceeded_middle_buy(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an fok sell order that can't execute past middle of the tree is cancelled.
 
@@ -2589,7 +2590,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_fok_order_cancelled_tree_empty_buy(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an fok sell order that is cancelled when there is not enough qty in the tree.
 
@@ -2610,7 +2611,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_fok_order_executed_buy(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an fok sell order is able to execute when there is enough qty.
 
@@ -2651,7 +2652,7 @@ module ferum::market {
         ferum: &signer,
         user: &signer,
     )
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
@@ -2733,7 +2734,7 @@ module ferum::market {
         ferum: &signer,
         user: &signer,
     )
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
@@ -2793,7 +2794,7 @@ module ferum::market {
         ferum: &signer,
         user: &signer,
     )
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
@@ -2877,7 +2878,7 @@ module ferum::market {
         ferum: &signer,
         user: &signer,
     )
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 4);
 
@@ -2961,7 +2962,7 @@ module ferum::market {
         ferum: &signer,
         user: &signer,
     )
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 4);
 
@@ -3051,7 +3052,7 @@ module ferum::market {
         makerUser: &signer,
         takerUser: &signer,
     )
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that market buy order executes against orders in the cache properly.
 
@@ -3164,7 +3165,7 @@ module ferum::market {
         makerUser: &signer,
         takerUser: &signer,
     )
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that market buy order executes against orders in the tree properly.
 
@@ -3817,7 +3818,7 @@ module ferum::market {
         makerUser: &signer,
         takerUser: &signer,
     )
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an execution event which executes a single maker partially is handled properly.
 
@@ -3907,7 +3908,7 @@ module ferum::market {
         makerUser: &signer,
         takerUser: &signer,
     )
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an execution event which executes a single maker partially is handled properly.
 
@@ -3993,7 +3994,7 @@ module ferum::market {
         makerUser: &signer,
         takerUser: &signer,
     )
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an execution event which executes a single maker partially is handled properly.
 
@@ -4082,7 +4083,7 @@ module ferum::market {
         makerUser: &signer,
         takerUser: &signer,
     )
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an execution event which executes a single maker partially is handled properly.
 
@@ -4167,7 +4168,7 @@ module ferum::market {
         makerUser: &signer,
         takerUser: &signer,
     )
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an execution event which executes a single maker partially is handled properly.
 
@@ -4271,7 +4272,7 @@ module ferum::market {
         makerUser2: &signer,
         takerUser: &signer,
     )
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an execution event which execute against multiple makers is processed correctly.
 
@@ -4396,7 +4397,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user1=@0x3, user2=@0x4, user3=@0x5)]
     fun test_market_crank_qty_in_cache_buy(aptos: &signer, ferum: &signer, user1: &signer, user2: &signer, user3: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an execution event for qty in the cache is processed correctly.
 
@@ -4470,7 +4471,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user1=@0x3, user2=@0x4, user3=@0x5)]
     fun test_market_crank_qty_in_tree_buy(aptos: &signer, ferum: &signer, user1: &signer, user2: &signer, user3: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an execution event for qty in the cache is processed correctly.
 
@@ -4539,7 +4540,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user1=@0x3, user2=@0x4, user3=@0x5)]
     fun test_market_crank_qty_in_cache_remove_price_buy(aptos: &signer, ferum: &signer, user1: &signer, user2: &signer, user3: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an execution event for qty in the cache removes the price level correctly.
 
@@ -4621,7 +4622,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user1=@0x3, user2=@0x4, user3=@0x5)]
     fun test_market_crank_qty_in_tree_remove_price_buy(aptos: &signer, ferum: &signer, user1: &signer, user2: &signer, user3: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an execution event for qty in the tree removes the price level correctly.
 
@@ -4716,7 +4717,7 @@ module ferum::market {
         makerUser: &signer,
         takerUser: &signer,
     )
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an execution event which executes a single maker partially is handled properly.
 
@@ -4820,7 +4821,7 @@ module ferum::market {
         makerUser2: &signer,
         takerUser: &signer,
     )
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an execution event which execute against multiple makers is processed correctly.
 
@@ -4945,7 +4946,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user1=@0x3, user2=@0x4, user3=@0x5)]
     fun test_market_crank_qty_in_cache_sell(aptos: &signer, ferum: &signer, user1: &signer, user2: &signer, user3: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an execution event for qty in the cache is processed correctly.
 
@@ -5019,7 +5020,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user1=@0x3, user2=@0x4, user3=@0x5)]
     fun test_market_crank_qty_in_tree_sell(aptos: &signer, ferum: &signer, user1: &signer, user2: &signer, user3: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an execution event for qty in the cache is processed correctly.
 
@@ -5088,7 +5089,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user1=@0x3, user2=@0x4, user3=@0x5)]
     fun test_market_crank_qty_in_cache_remove_price_sell(aptos: &signer, ferum: &signer, user1: &signer, user2: &signer, user3: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an execution event for qty in the cache removes the price level correctly.
 
@@ -5170,7 +5171,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user1=@0x3, user2=@0x4, user3=@0x5)]
     fun test_market_crank_qty_in_tree_remove_price_sell(aptos: &signer, ferum: &signer, user1: &signer, user2: &signer, user3: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an execution event for qty in the cache removes the price level correctly.
 
@@ -5265,7 +5266,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_cache_overflow_buy(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that added buy prices are put into the tree when the cache is full and the order falls outside the
         // range of the cache. If the cache is full but orders fall into the cache range, it is placed into the cache.
@@ -5373,7 +5374,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_remove_cache_underflow_buy(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a removed buy price levels doesn't cause prices to move from the cache to the tree.
 
@@ -5433,7 +5434,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_cache_underflow_add_to_tree_buy(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a price is added to the tree if it falls into the range defined by the tree, even if the cache
         // has space.
@@ -5496,7 +5497,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_order_inserted_into_price_level_after_executions_buy(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a sell order is inserted into a price level after executing against other orders.
 
@@ -5569,7 +5570,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_price_level_same_price_buy(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that price levels can have the same price on opposite sides.
 
@@ -5685,7 +5686,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_cache_overflow_sell(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that added sell prices are put into the tree when the cache is full and the order falls outside the
         // range of the cache. If the cache is full but orders fall into the cache range, it is placed into the cache.
@@ -5793,7 +5794,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_remove_cache_underflow_sell(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a removed sell price levels doesn't cause prices to move from the cache to the tree.
 
@@ -5854,7 +5855,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_cache_underflow_add_to_tree_sell(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a price is added to the tree if it falls into the range defined by the tree, even if the cache
         // has space.
@@ -5917,7 +5918,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_order_inserted_into_price_level_after_executions_sell(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a buy order is inserted into a price level after executing against other orders.
 
@@ -5990,7 +5991,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_price_level_same_price_sell(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that price levels can have the same price on opposite sides.
 
@@ -6103,7 +6104,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_execute_limit_price_exceeded_tree_buy(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a sell order stops filling when the limit price is exceeded in the tree.
 
@@ -6172,7 +6173,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_execute_limit_price_exceeded_cache_buy(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a sell order stops filling when the limit price is exceeded in the cache.
 
@@ -6231,7 +6232,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_execute_qty_exceeded_tree_buy(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a sell order stops filling when the qty is exceeded in the tree.
 
@@ -6297,7 +6298,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_execute_qty_exceeded_cache_buy(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a sell order stops filling when the qty is exceeded in the cache.
 
@@ -6353,7 +6354,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_partial_fill_into_cache_buy(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a sell order which is partially filled is inserted into the price store.
 
@@ -6415,7 +6416,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_execute_empty_tree_buy(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a sell order fills against the cache but doesn't fill against the tree because it is empty.
 
@@ -6486,7 +6487,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_execute_empty_cache_buy(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a sell order fills against the tree but not the cache.
 
@@ -6550,7 +6551,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_execute_against_multiple_cache_buy_levels(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a sell order executes aganst orders in the cache across multiple price levels. The order ends up
         // being fully filled and eats through levels completely.
@@ -6611,7 +6612,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_execute_against_multiple_cache_single_tree_buy_levels(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a sell order executes aganst orders in the cache across multiple price levels and orders in the
         // tree in a price level. The order ends up being fully filled and eats through nodes completely.
@@ -6677,7 +6678,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_execute_against_multiple_cache_multiple_tree_buy_levels(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a sell order executes aganst orders in the cache across multiple price levels and orders in the
         // tree in a price level. The order ends up being fully filled and eats through nodes completely.
@@ -6748,7 +6749,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_execute_against_single_cache_buy_levels(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a sell order executes aganst orders in the cache across a single price level. The order ends up
         // being fully filled and eats through price store level completely.
@@ -6804,7 +6805,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_execute_against_single_cache_single_tree_buy_levels(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a sell order executes aganst orders in the cache across a single price level and orders in the
         // tree in a price level. The order ends up being fully filled and eats through nodes completely.
@@ -6866,7 +6867,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_execute_against_single_cache_multiple_tree_buy_levels(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a sell order executes aganst orders in the cache across a single price level and orders in the
         // tree in a price level. The order ends up being fully filled and eats through nodes completely.
@@ -6936,7 +6937,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_execute_limit_price_exceeded_tree_sell(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a buy order stops filling when the limit price is exceeded in the tree.
 
@@ -7000,7 +7001,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_execute_limit_price_exceeded_cache_sell(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a buy order stops filling when the limit price is exceeded in the cache.
 
@@ -7059,7 +7060,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_execute_qty_exceeded_tree_sell(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a buy order stops filling when the qty is exceeded in the tree.
 
@@ -7125,7 +7126,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_execute_qty_exceeded_cache_sell(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a buy order stops filling when the qty is exceeded in the cache.
 
@@ -7186,7 +7187,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_partial_fill_into_cache_sell(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a buy order stops which is partially filled is inserted into the price store.
 
@@ -7248,7 +7249,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_execute_empty_tree_sell(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a buy order fills against the cache but doesn't fill against the tree because it is empty.
 
@@ -7319,7 +7320,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_execute_empty_cache_sell(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a buy order fills against the tree but not the cache.
 
@@ -7383,7 +7384,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_execute_against_multiple_cache_sell_levels(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a buy order executes aganst orders in the cache across multiple price levels. The order ends up
         // being fully filled and eats through levels completely.
@@ -7444,7 +7445,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_execute_against_multiple_cache_single_tree_sell_levels(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a buy order executes aganst orders in the cache across multiple price levels and orders in the
         // tree in a price level. The order ends up being fully filled and eats through nodes completely.
@@ -7510,7 +7511,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_execute_against_multiple_cache_multiple_tree_sell_levels(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a buy order executes aganst orders in the cache across multiple price levels and orders in the
         // tree across multiple price levels. The order ends up being fully filled and eats through nodes completely.
@@ -7581,7 +7582,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_execute_against_single_cache_sell_levels(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a buy order executes aganst orders in the cache in a single cache level.
 
@@ -7636,7 +7637,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_execute_against_single_cache_single_tree_sell_levels(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a buy order executes aganst orders in a single cache price level and a single tree price level.
 
@@ -7700,7 +7701,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_price_store_execute_against_single_cache_multiple_tree_sell_levels(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a buy order executes aganst orders in a single cache price level and multiple tree price level.
 
@@ -7770,7 +7771,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_cancel_full_tree(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an order can be cancelled from the tree.
 
@@ -7814,7 +7815,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_cancel_full_cache(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an order can be cancelled from the cache.
 
@@ -7859,7 +7860,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_cancel_partial_tree(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an order can be partially cancelled from the tree.
 
@@ -7906,7 +7907,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_cancel_partial_cache(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an order can be partially cancelled from the cache.
 
@@ -7953,7 +7954,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_cancel_partial_pending_taker(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an order can be partially cancelled if it has some pending taker qty.
 
@@ -8006,7 +8007,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_cancel_partial_pending_maker(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an order can be partially cancelled if it has some pending maker qty.
 
@@ -8053,7 +8054,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_cancel_partial_pending_both_maker_and_taker_buy(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a buy order can be partially cancelled if it has both maker and taker pending qtys.
 
@@ -8106,7 +8107,7 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_cancel_partial_pending_both_maker_and_taker_sell(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that a sell order can be partially cancelled if it has both maker and taker pending qtys.
 
@@ -8162,7 +8163,7 @@ module ferum::market {
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     #[expected_failure(abort_code=ERR_ORDER_EXECUTED_BUT_IS_PENDING_CRANK)]
     fun test_market_cancel_fail_pending_maker(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an order with maker pending crank qty can't be cancelled.
 
@@ -8192,7 +8193,7 @@ module ferum::market {
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     #[expected_failure(abort_code=ERR_ORDER_EXECUTED_BUT_IS_PENDING_CRANK)]
     fun test_market_cancel_fail_pending_taker(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an order with taker pending crank qty can't be cancelled.
 
@@ -8224,7 +8225,7 @@ module ferum::market {
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     #[expected_failure(abort_code=ERR_ORDER_EXECUTED_BUT_IS_PENDING_CRANK)]
     fun test_market_cancel_fail_pending_maker_and_taker(aptos: &signer, ferum: &signer, user: &signer)
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         // Tests that an order with maker and taker pending crank qty can't be cancelled.
 
@@ -8263,10 +8264,10 @@ module ferum::market {
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_setup_ferum(aptos: &signer, ferum: &signer, user: &signer)
-       acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+       acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 8);
-        assert!(marketAddr == admin::get_market_addr<FMA, FMB>(), 0);
+        assert!(marketAddr == get_market_addr<FMA, FMB>(), 0);
         assert!(marketAddr == address_of(ferum), 0);
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         let userAccIdentifier = platform::get_user_identifier(user);
@@ -8747,33 +8748,33 @@ module ferum::market {
 
     #[test_only]
     fun add_user_limit_order<I, Q>(user: &signer, side: u8, behaviour: u8, price: u64, qty: u64): u32
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         add_order<I, Q>(user, platform::get_user_identifier(user), side, behaviour, price, qty, 0, 0)
     }
 
     #[test_only]
     fun add_user_market_order<I, Q>(user: &signer, side: u8, behaviour: u8, qty: u64, maxBuyCollateral: u64): u32
-        acquires Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         add_order<I, Q>(user, platform::get_user_identifier(user), side, behaviour, 0, qty, 0, maxBuyCollateral)
     }
 
     #[test_only]
     fun setup_ferum_test<I, Q>(aptos: &signer, ferum: &signer, user: &signer, maxCacheSize: u8): address
-        acquires Orderbook, IndexingEventHandles, MarketSellCache, MarketSellTree, MarketBuyCache, MarketBuyTree, EventQueue
+        acquires FerumInfo, Orderbook, IndexingEventHandles, MarketSellCache, MarketSellTree, MarketBuyCache, MarketBuyTree, EventQueue
     {
         timestamp::set_time_has_started_for_testing(aptos);
         account::create_account_for_test(address_of(ferum));
         account::create_account_for_test(address_of(user));
         create_fake_coins(ferum, 8);
         deposit_fake_coins(ferum, 10000000000, user);
-        admin::init_ferum(ferum);
+        init_ferum(ferum);
         init_market_entry<I, Q>(ferum, 4, 4, maxCacheSize);
         let userIdentifier = platform::get_user_identifier(user);
         open_market_account<I, Q>(user, userIdentifier);
         deposit_to_market_account<I, Q>(user, userIdentifier, 1000000000000, 1000000000000);
-        let marketAddr = admin::get_market_addr<I, Q>();
+        let marketAddr = get_market_addr<I, Q>();
         // Pre-emptive borrows so test signatures are consistent.
         borrow_global<IndexingEventHandles<I, Q>>(marketAddr);
         borrow_global<MarketSellCache<I, Q>>(marketAddr);
@@ -8782,6 +8783,674 @@ module ferum::market {
         borrow_global<MarketBuyTree<I, Q>>(marketAddr);
         borrow_global<EventQueue<I, Q>>(marketAddr);
         marketAddr
+    }
+
+    // </editor-fold>
+
+    // <editor-fold defaultstate="collapsed" desc="Inlined admin">
+
+    // Errors
+    const ERR_NOT_ALLOWED: u64 = 200;
+    const ERR_MARKET_NOT_EXISTS: u64 = 201;
+    const ERR_MARKET_EXISTS: u64 = 202;
+    const ERR_INVALID_FEE_TYPE: u64 = 203;
+    const ERR_FEE_TYPE_EXISTS: u64 = 204;
+
+    // Structs.
+    // Global info object for ferum.
+    struct FerumInfo has key {
+        // Map of all markets created, keyed by their instrument quote pairs.
+        marketMap: table::Table<string::String, address>,
+        // Fee structure for all Ferum market types. Each fee structure is associated with a specific key.
+        feeStructures: table::Table<string::String, FeeStructure>,
+    }
+
+    // Key used to map to a market address. Is first converted to a string using TypeInfo.
+    struct MarketKey<phantom I, phantom Q> has key {}
+
+    // Entry functions.
+    // All fee values are fixed points with 4 decimal places.
+    public entry fun init_ferum(owner: &signer) {
+        let ownerAddr = address_of(owner);
+        assert!(!exists<FerumInfo>(ownerAddr), ERR_NOT_ALLOWED);
+        assert!(ownerAddr == @ferum, ERR_NOT_ALLOWED);
+
+        move_to(owner, FerumInfo {
+            marketMap: table::new<string::String, address>(),
+            feeStructures: table::new(),
+        });
+    }
+
+    public entry fun new_fee_type_entry(
+        owner: &signer,
+        feeType: string::String,
+        takerFee: u64,
+        makerFee: u64,
+        protocolFeeBps: u64,
+    ) acquires FerumInfo {
+        let ownerAddr = address_of(owner);
+        assert_ferum_inited();
+        assert!(ownerAddr == @ferum, ERR_NOT_ALLOWED);
+        let info = borrow_global_mut<FerumInfo>(@ferum);
+        assert!(!table::contains(&info.feeStructures, feeType), ERR_FEE_TYPE_EXISTS);
+        table::add(&mut info.feeStructures, feeType, new_fee_tiers_with_defaults(
+            takerFee,
+            makerFee,
+            protocolFeeBps,
+        ));
+    }
+
+    public entry fun add_protocol_fee_tier_entry(
+        owner: &signer,
+        feeType: string::String,
+        minFerumTokenHoldings: u64,
+        fee: u64,
+    ) acquires FerumInfo {
+        let ownerAddr = address_of(owner);
+        assert_ferum_inited();
+        assert!(ownerAddr == @ferum, ERR_NOT_ALLOWED);
+        let info = borrow_global_mut<FerumInfo>(@ferum);
+        assert!(table::contains(&info.feeStructures, feeType), ERR_INVALID_FEE_TYPE);
+        let structure = table::borrow_mut(&mut info.feeStructures, feeType);
+
+        set_protocol_fee_tier(structure, minFerumTokenHoldings, fee);
+    }
+
+    public entry fun add_user_fee_tier_entry(
+        owner: &signer,
+        feeType: string::String,
+        minFerumTokenHoldings: u64,
+        takerFee: u64,
+        makerFee: u64,
+    ) acquires FerumInfo {
+        let ownerAddr = address_of(owner);
+        assert_ferum_inited();
+        assert!(ownerAddr == @ferum, ERR_NOT_ALLOWED);
+        let info = borrow_global_mut<FerumInfo>(@ferum);
+        assert!(table::contains(&info.feeStructures, feeType), ERR_INVALID_FEE_TYPE);
+        let structure = table::borrow_mut(&mut info.feeStructures, feeType);
+
+        set_user_fee_tier(structure, minFerumTokenHoldings, takerFee, makerFee);
+    }
+
+    public entry fun remove_protocol_fee_tier_entry(
+        owner: &signer,
+        feeType: string::String,
+        minFerumTokenHoldings: u64,
+    ) acquires FerumInfo {
+        let ownerAddr = address_of(owner);
+        assert_ferum_inited();
+        assert!(ownerAddr == @ferum, ERR_NOT_ALLOWED);
+        let info = borrow_global_mut<FerumInfo>(@ferum);
+        assert!(table::contains(&info.feeStructures, feeType), ERR_INVALID_FEE_TYPE);
+        let structure = table::borrow_mut(&mut info.feeStructures, feeType);
+
+        remove_protocol_fee_tier(structure, minFerumTokenHoldings);
+    }
+
+    public entry fun remove_user_fee_tier_entry(
+        owner: &signer,
+        feeType: string::String,
+        minFerumTokenHoldings: u64,
+    ) acquires FerumInfo {
+        let ownerAddr = address_of(owner);
+        assert_ferum_inited();
+        assert!(ownerAddr == @ferum, ERR_NOT_ALLOWED);
+        let info = borrow_global_mut<FerumInfo>(@ferum);
+        assert!(table::contains(&info.feeStructures, feeType), ERR_INVALID_FEE_TYPE);
+        let structure = table::borrow_mut(&mut info.feeStructures, feeType);
+
+        remove_user_fee_tier(structure, minFerumTokenHoldings);
+    }
+
+    inline fun assert_ferum_inited() {
+        assert!(exists<FerumInfo>(@ferum), ERR_NOT_ALLOWED);
+    }
+
+    inline fun register_market<I, Q>(marketAddr: address) acquires FerumInfo {
+        assert_ferum_inited();
+        let info = borrow_global_mut<FerumInfo>(@ferum);
+        let key = market_key<I, Q>();
+        assert!(!table::contains(&info.marketMap, key), ERR_MARKET_EXISTS);
+        let oppositeKey = market_key<Q, I>();
+        assert!(!table::contains(&info.marketMap, oppositeKey), ERR_MARKET_EXISTS);
+        table::add(&mut info.marketMap, key, marketAddr);
+    }
+
+    inline fun get_fee_structure(feeType: string::String): &FeeStructure acquires FerumInfo {
+        assert_ferum_inited();
+        let info = borrow_global_mut<FerumInfo>(@ferum);
+        assert!(table::contains(&info.feeStructures, feeType), ERR_INVALID_FEE_TYPE);
+        table::borrow(&mut info.feeStructures, feeType)
+    }
+
+    inline fun get_market_addr<I, Q>(): address acquires FerumInfo {
+        assert_ferum_inited();
+        let info = borrow_global<FerumInfo>(@ferum);
+        let key = market_key<I, Q>();
+        assert!(table::contains(&info.marketMap, key), ERR_MARKET_NOT_EXISTS);
+        *table::borrow(&info.marketMap, key)
+    }
+
+    inline fun assert_market_inited<I, Q>() acquires FerumInfo {
+        get_market_addr<I, Q>();
+    }
+
+    inline fun market_key<I, Q>(): string::String {
+        type_info::type_name<MarketKey<I, Q>>()
+    }
+
+    // Tests
+
+    #[test(owner = @ferum)]
+    fun test_init_ferum(owner: &signer) {
+        // Tests that an account can init ferum.
+        init_ferum(owner);
+    }
+
+    #[test(owner = @0x1)]
+    #[expected_failure]
+    fun test_init_not_ferum(owner: &signer) {
+        // Tests that an account that's not ferum can't init.
+        init_ferum(owner);
+    }
+
+    #[test(owner = @ferum)]
+    fun test_register_market(owner: &signer) acquires FerumInfo {
+        // Tests that a market can be registered.
+        account::create_account_for_test(address_of(owner));
+        init_ferum(owner);
+        create_fake_coins(owner, 8);
+        register_market<FMA, FMB>(address_of(owner));
+        let market_addr = get_market_addr<FMA, FMB>();
+        assert!(market_addr == address_of(owner), 0);
+    }
+
+    #[test(owner = @ferum)]
+    #[expected_failure]
+    fun test_register_other_combination(owner: &signer) acquires FerumInfo {
+        // Tests that when market<I, Q> is registered, market<Q, I> is not.
+        init_ferum(owner);
+        create_fake_coins(owner, 8);
+        register_market<FMA, FMB>(address_of(owner));
+        let market_addr = get_market_addr<FMA, FMB>();
+        assert!(market_addr == address_of(owner), 0);
+        get_market_addr<FMB, FMA>();
+    }
+
+    #[test(owner = @ferum)]
+    fun test_admin_fee_types(owner: &signer) acquires FerumInfo {
+        init_ferum(owner);
+        new_fee_type_entry(owner, s(b"test"), 5000000, 5000000, 5000000000);
+        add_user_fee_tier_entry(owner, s(b"test"), 100, 6000000, 0);
+        add_protocol_fee_tier_entry(owner, s(b"test"), 100, 6000000000);
+
+        let structure = get_fee_structure(s(b"test"));
+        let (taker, maker) = get_user_fee(structure,25);
+        assert!(taker == 5000000, 0);
+        assert!(maker == 5000000, 0);
+        let (taker, maker) = get_user_fee(structure, 125);
+        assert!(taker == 6000000, 0);
+        assert!(maker == 0000000, 0);
+        let protocolFee = get_protocol_fee(structure, 10);
+        assert!(protocolFee == 5000000000, 0);
+        let protocolFee = get_protocol_fee(structure, 125);
+        assert!(protocolFee == 6000000000, 0);
+    }
+
+    // </editor-fold>
+
+    // <editor-fold defaultstate="collapsed" desc="Inlined fees">
+
+    // Errors.
+    const ERR_INVALID_FEE_STRUCTURE: u64 = 301;
+    const ERR_TIER_NOT_FOUND: u64 = 302;
+
+    // Differing teirs users can qualify for.
+    struct UserFeeTier has store, drop {
+        // Percent fee charged to user trading in this fee tier (if the order is a taker).
+        // Represented as a 10 decimal fixed point number. For example, 5000000 == 5bps.
+        makerFee: u64,
+        // Percent fee charged to user trading in this fee tier (if the order is a maker).
+        // Represented as a 10 decimal fixed point number. For example, 5000000 == 5bps.
+        takerFee: u64,
+    }
+
+    // Differing teirs protocols can qualify for.
+    struct ProtocolFeeTier has store, drop {
+        // Percentage of the user trading fee that is given to protocols that are in this fee tier.
+        // Represented as a 10 decimal fixed point number. For example, 500000000 == 5%.
+        protocolFee: u64,
+    }
+
+    // Tier structure encapsulating different types of tiers.
+    struct Tier<T: store + drop> has store, drop {
+        // Minimum Fe a protocol needs to hold to qualify for this fee tier.
+        minFerumTokens: u64,
+        // Information about this tier.
+        value: T,
+    }
+
+    // FeeStructure is an object which describes the fee tiers for a given market. The structures are stored in a map
+    // on the
+    struct FeeStructure has store, drop {
+        // List of UserFeeTiers sorted in increasing order.
+        userTiers: vector<Tier<UserFeeTier>>,
+        // List of ProtocolFeeTiers sorted in increasing order.
+        protocolTiers: vector<Tier<ProtocolFeeTier>>,
+
+        // Ferum takes 100% - protocol fee.
+    }
+
+    inline fun new_fee_tiers_with_defaults(takerFee: u64, makerFee: u64, protocolFee: u64): FeeStructure {
+        let structure = FeeStructure {
+            userTiers: vector[
+                Tier{
+                    minFerumTokens: 0,
+                    value: UserFeeTier {
+                        makerFee,
+                        takerFee,
+                    },
+                },
+            ],
+            protocolTiers: vector[
+                Tier{
+                    minFerumTokens: 0,
+                    value: ProtocolFeeTier {
+                        protocolFee,
+                    },
+                },
+            ],
+        };
+        validate_fees(&structure);
+        structure
+    }
+
+    // Returns the % protocols get from user fees based on the protocol's fee tier.
+    inline fun get_protocol_fee(structure: &FeeStructure, tokenHoldingsAmt: u64): u64 {
+        let tier = find_tier<ProtocolFeeTier>(&structure.protocolTiers, tokenHoldingsAmt);
+        tier.value.protocolFee
+    }
+
+    // Returns (taker, maker) fees for users based on the user's token holdings.
+    inline fun get_user_fee(structure: &FeeStructure, tokenHoldingsAmt: u64): (u64, u64) {
+        let tier = find_tier<UserFeeTier>(&structure.userTiers, tokenHoldingsAmt);
+        (tier.value.takerFee, tier.value.makerFee)
+    }
+
+    inline fun set_user_fee_tier(
+        structure: &mut FeeStructure,
+        minFerumTokens: u64,
+        takerFee: u64,
+        makerFee: u64,
+    ) {
+        let tier = Tier {
+            value: UserFeeTier {
+                makerFee,
+                takerFee,
+            },
+            minFerumTokens,
+        };
+        set_tier<UserFeeTier>(&mut structure.userTiers, tier);
+        validate_fees(structure);
+    }
+
+    inline fun set_protocol_fee_tier(
+        structure: &mut FeeStructure,
+        minFerumTokens: u64,
+        protocolFee: u64,
+    ) {
+        let tier = Tier {
+            minFerumTokens,
+            value: ProtocolFeeTier {
+                protocolFee,
+            },
+        };
+        set_tier<ProtocolFeeTier>(&mut structure.protocolTiers, tier);
+        validate_fees(structure);
+    }
+
+    inline fun remove_user_fee_tier(structure: &mut FeeStructure, minFerumTokens: u64) {
+        remove_tier<UserFeeTier>(&mut structure.userTiers, minFerumTokens);
+    }
+
+    inline fun remove_protocol_fee_tier(structure: &mut FeeStructure, minFerumTokens: u64) {
+        remove_tier<ProtocolFeeTier>(&mut structure.protocolTiers, minFerumTokens);
+    }
+
+    inline fun validate_fees(structure: &FeeStructure) {
+        let hundred = 10000000000;
+        let bip = 1000000;
+        let percent = 100000000;
+
+        let protocolFeeCount = vector::length(&structure.protocolTiers);
+        let i = 0;
+        while (i < protocolFeeCount) {
+            let tier = vector::borrow(&structure.protocolTiers, i);
+            if (tier.value.protocolFee != 0) {
+                assert!(tier.value.protocolFee >= percent, ERR_INVALID_FEE_STRUCTURE);
+            };
+            assert!(tier.value.protocolFee <= hundred, ERR_INVALID_FEE_STRUCTURE);
+            i = i + 1;
+        };
+
+        // Assert that user fees don't exceed 100.
+        let i = 0;
+        let size = vector::length(&structure.userTiers);
+        while (i < size) {
+            let tier = vector::borrow(&structure.userTiers, i);
+            assert!(tier.value.makerFee < hundred, ERR_INVALID_FEE_STRUCTURE);
+            if (tier.value.makerFee != 0) {
+                assert!(tier.value.makerFee >= bip, ERR_INVALID_FEE_STRUCTURE);
+            };
+            assert!(tier.value.takerFee < hundred, ERR_INVALID_FEE_STRUCTURE);
+            if (tier.value.takerFee != 0) {
+                assert!(tier.value.takerFee >= bip, ERR_INVALID_FEE_STRUCTURE);
+            };
+            i = i + 1;
+        };
+    }
+
+    // TODO: make inline once bugs are fixed.
+    fun set_tier<T: store + drop>(list: &mut vector<Tier<T>>, tier: Tier<T>) {
+        let i = 0;
+        let size = vector::length(list);
+        let tierMinFe = tier.minFerumTokens;
+        assert!(size > 0, ERR_INVALID_FEE_STRUCTURE);
+        while (i < size) {
+            let curr = vector::borrow_mut(list, i);
+            if (curr.minFerumTokens == tierMinFe) {
+                *curr = tier;
+                return
+            };
+            if (curr.minFerumTokens > tierMinFe) {
+                break
+            };
+            i = i + 1;
+        };
+        vector::push_back(list, tier);
+        while (i < size) {
+            vector::swap(list, i, size);
+            i = i + 1;
+        };
+    }
+
+    fun remove_tier<T: store + drop>(list: &mut vector<Tier<T>>, minFerumTokens: u64) {
+        let i = 0;
+        let size = vector::length(list);
+        assert!(size > 0, ERR_INVALID_FEE_STRUCTURE);
+        let found = false;
+        while (i < size) {
+            let curr = vector::borrow_mut(list, i);
+            if (curr.minFerumTokens == minFerumTokens) {
+                found = true;
+            };
+            if (found && i < size-1) {
+                vector::swap(list, i, i+1);
+            };
+            i = i + 1;
+        };
+        assert!(found, ERR_TIER_NOT_FOUND);
+        vector::pop_back(list);
+    }
+
+    fun find_tier<T: store + drop>(list: &vector<Tier<T>>, val: u64): &Tier<T> {
+        let size = vector::length(list);
+        assert!(size > 0, ERR_INVALID_FEE_STRUCTURE);
+        let i = 1;
+        while (i < size) {
+            let curr = vector::borrow(list, i);
+            if (curr.minFerumTokens > val) {
+                break
+            };
+            i = i + 1;
+        };
+        vector::borrow(list, i - 1)
+    }
+
+    #[test]
+    fun test_fees_protocol_fee_tiers() {
+        let structure = new_fee_tiers_with_defaults(5000000, 0, 500000000);
+        // Add some protocol tiers.
+        set_protocol_fee_tier(
+            &mut structure,
+            100,
+            1000000000,
+        );
+        set_protocol_fee_tier(
+            &mut structure,
+            200,
+            2000000000,
+        );
+        set_protocol_fee_tier(
+            &mut structure,
+            125,
+            1600000000,
+        );
+        set_protocol_fee_tier(
+            &mut structure,
+            125,
+            1500000000,
+        );
+        set_protocol_fee_tier(
+            &mut structure,
+            25,
+            1600000000,
+        );
+        remove_protocol_fee_tier(&mut structure, 25);
+
+        let fee = get_protocol_fee(&structure, 0);
+        assert!(fee == 500000000, 0);
+        let fee = get_protocol_fee(&structure, 50);
+        assert!(fee == 500000000, 0);
+        let fee = get_protocol_fee(&structure, 130);
+        assert!(fee == 1500000000, 0);
+        let fee = get_protocol_fee(&structure, 1000);
+        assert!(fee == 2000000000, 0);
+    }
+
+    #[test]
+    fun test_fees_user_fee_tiers() {
+        let structure = new_fee_tiers_with_defaults(25000000, 4000000, 500000000);
+        // Add some user tiers.
+        set_user_fee_tier(
+            &mut structure,
+            100,
+            20000000,
+            3000000,
+        );
+        set_user_fee_tier(
+            &mut structure,
+            200,
+            10000000,
+            1000000,
+        );
+        set_user_fee_tier(
+            &mut structure,
+            150,
+            18000000,
+            5000000,
+        );
+        set_user_fee_tier(
+            &mut structure,
+            150,
+            15000000,
+            2000000,
+        );
+        set_user_fee_tier(
+            &mut structure,
+            20,
+            19000000,
+            2000000,
+        );
+        remove_user_fee_tier(&mut structure, 20);
+
+        let (taker, maker) = get_user_fee(&structure, 0);
+        assert!(taker == 25000000, 0);
+        assert!(maker == 4000000, 0);
+        let (taker, maker) = get_user_fee(&structure, 75);
+        assert!(taker == 25000000, 0);
+        assert!(maker == 4000000, 0);
+        let (taker, maker) = get_user_fee(&structure, 100);
+        assert!(taker == 20000000, 0);
+        assert!(maker == 3000000, 0);
+        let (taker, maker) = get_user_fee(&structure, 125);
+        assert!(taker == 20000000, 0);
+        assert!(maker == 3000000, 0);
+        let (taker, maker) = get_user_fee(&structure, 150);
+        assert!(taker == 15000000, 0);
+        assert!(maker == 2000000, 0);
+        let (taker, maker) = get_user_fee(&structure, 1500);
+        assert!(taker == 10000000, 0);
+        assert!(maker == 1000000, 0);
+    }
+
+    #[test]
+    fun test_fees_remove_fee_tier() {
+        let tiers = vector[
+            Tier {
+                minFerumTokens: 100,
+                value: UserFeeTier {
+                    takerFee: 10,
+                    makerFee: 10,
+                },
+            },
+            Tier {
+                minFerumTokens: 200,
+                value: UserFeeTier {
+                    takerFee: 10,
+                    makerFee: 10,
+                },
+            },
+            Tier {
+                minFerumTokens: 300,
+                value: UserFeeTier {
+                    takerFee: 10,
+                    makerFee: 10,
+                },
+            },
+        ];
+
+        remove_tier(&mut tiers, 100);
+        ftu::assert_vector_equal(&tiers, &vector[
+            Tier {
+                minFerumTokens: 200,
+                value: UserFeeTier {
+                    takerFee: 10,
+                    makerFee: 10,
+                },
+            },
+            Tier {
+                minFerumTokens: 300,
+                value: UserFeeTier {
+                    takerFee: 10,
+                    makerFee: 10,
+                },
+            },
+        ]);
+
+        remove_tier(&mut tiers, 300);
+        ftu::assert_vector_equal(&tiers, &vector[
+            Tier {
+                minFerumTokens: 200,
+                value: UserFeeTier {
+                    takerFee: 10,
+                    makerFee: 10,
+                },
+            },
+        ]);
+
+        remove_tier(&mut tiers, 200);
+        ftu::assert_vector_equal(&tiers, &vector[]);
+    }
+
+    #[test]
+    #[expected_failure(abort_code=ERR_TIER_NOT_FOUND)]
+    fun test_fees_remove_fee_tier_doesnt_exist() {
+        let tiers = vector[
+            Tier {
+                minFerumTokens: 100,
+                value: UserFeeTier {
+                    takerFee: 10,
+                    makerFee: 10,
+                },
+            },
+            Tier {
+                minFerumTokens: 200,
+                value: UserFeeTier {
+                    takerFee: 10,
+                    makerFee: 10,
+                },
+            },
+            Tier {
+                minFerumTokens: 300,
+                value: UserFeeTier {
+                    takerFee: 10,
+                    makerFee: 10,
+                },
+            },
+        ];
+
+        remove_tier(&mut tiers, 150);
+    }
+
+    #[test]
+    #[expected_failure(abort_code=ERR_INVALID_FEE_STRUCTURE)]
+    fun test_fees_invalid_default_protocol_fee_max() {
+        new_fee_tiers_with_defaults(0, 0, 20000000000);
+    }
+
+    #[test]
+    #[expected_failure(abort_code=ERR_INVALID_FEE_STRUCTURE)]
+    fun test_fees_invalid_default_protocol_fee_min() {
+        new_fee_tiers_with_defaults(0, 0, 1000000);
+    }
+
+    #[test]
+    #[expected_failure(abort_code=ERR_INVALID_FEE_STRUCTURE)]
+    fun test_fees_invalid_default_user_taker_fee_max() {
+        new_fee_tiers_with_defaults(20000000000, 0, 0);
+    }
+
+    #[test]
+    #[expected_failure(abort_code=ERR_INVALID_FEE_STRUCTURE)]
+    fun test_fees_invalid_default_user_maker_fee_max() {
+        new_fee_tiers_with_defaults(0, 20000000000, 0);
+    }
+
+    #[test]
+    #[expected_failure(abort_code=ERR_INVALID_FEE_STRUCTURE)]
+    fun test_fees_invalid_default_user_taker_fee_min() {
+        new_fee_tiers_with_defaults(100000, 0, 0);
+    }
+
+    #[test]
+    #[expected_failure(abort_code=ERR_INVALID_FEE_STRUCTURE)]
+    fun test_fees_invalid_default_user_maker_fee_min() {
+        new_fee_tiers_with_defaults(0, 100000, 0);
+    }
+
+    #[test]
+    #[expected_failure(abort_code=ERR_INVALID_FEE_STRUCTURE)]
+    fun test_fees_invalid_tier_user_fees() {
+        let structure = new_fee_tiers_with_defaults(0, 0, 0);
+        set_user_fee_tier(
+            &mut structure,
+            100,
+            1000,
+            0,
+        );
+    }
+
+    #[test]
+    #[expected_failure(abort_code=ERR_INVALID_FEE_STRUCTURE)]
+    fun test_fees_invalid_tier_protocol_fees() {
+        let structure = new_fee_tiers_with_defaults(0, 0, 0);
+        set_protocol_fee_tier(
+            &mut structure,
+            100,
+            1000,
+        );
     }
 
     // </editor-fold>
