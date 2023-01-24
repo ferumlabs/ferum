@@ -280,7 +280,7 @@ module ferum::market {
         // Number of decimals for the quote coin.
         qDecimals: u8,
         // Fee type for this market.
-        feeType: u8,
+        feeType: string::String,
         // All the price levels for this book.
         priceLevelsTable: PriceLevelReuseTable,
         // All the orders for this book.
@@ -351,8 +351,8 @@ module ferum::market {
     //
 
     public entry fun init_market_entry<I, Q>(
-        owner: &signer, instrumentDecimals: u8, quoteDecimals: u8, maxCacheSize: u8) acquires FerumInfo
-    {
+        owner: &signer, instrumentDecimals: u8, quoteDecimals: u8, maxCacheSize: u8, feeType: string::String
+    ) acquires FerumInfo {
         let ownerAddr = address_of(owner);
         assert!(!exists<Orderbook<I, Q>>(ownerAddr), ERR_BOOK_EXISTS);
         let (iCoinDecimals, qCoinDecimals) = validate_coins<I, Q>();
@@ -363,6 +363,7 @@ module ferum::market {
             qCoinDecimals
         };
         assert!(instrumentDecimals + quoteDecimals <= minDecimals, ERR_INVALID_DECIMAL_CONFIG);
+        get_fee_structure(feeType); // Asserts that the feeType maps to a valid fee structure.
 
         let finalizeEvents = new_event_handle<IndexingFinalizeEvent>(owner);
         let executionEvents = new_event_handle<IndexingExecutionEvent>(owner);
@@ -382,7 +383,7 @@ module ferum::market {
             maxCacheSize,
             iDecimals: instrumentDecimals,
             qDecimals: quoteDecimals,
-            feeType: FEE_TYPE_DEFAULT,
+            feeType,
             priceLevelsTable: PriceLevelReuseTable {
                 objects: table::new(),
                 unusedStack: 0,
@@ -8770,7 +8771,8 @@ module ferum::market {
         create_fake_coins(ferum, 8);
         deposit_fake_coins(ferum, 10000000000, user);
         init_ferum(ferum);
-        init_market_entry<I, Q>(ferum, 4, 4, maxCacheSize);
+        new_fee_type_entry(ferum, s(b"test"), 0, 0, 0);
+        init_market_entry<I, Q>(ferum, 4, 4, maxCacheSize, s(b"test"));
         let userIdentifier = platform::get_user_identifier(user);
         open_market_account<I, Q>(user, userIdentifier);
         deposit_to_market_account<I, Q>(user, userIdentifier, 1000000000000, 1000000000000);
@@ -9179,6 +9181,7 @@ module ferum::market {
         let i = 0;
         let size = vector::length(list);
         assert!(size > 0, ERR_INVALID_FEE_STRUCTURE);
+        assert!(minFerumTokens != 0, ERR_TIER_NOT_FOUND); // Can't remove default fee tier.
         let found = false;
         while (i < size) {
             let curr = vector::borrow_mut(list, i);
