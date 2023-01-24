@@ -2035,7 +2035,7 @@ module ferum::market {
     fun test_market_ioc_order_partial_fill_sell(aptos: &signer, ferum: &signer, user: &signer)
         acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
-        // Tests that an ioc buy order is can be partially filled.
+        // Tests that an ioc buy order can be partially filled.
 
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
@@ -2134,7 +2134,7 @@ module ferum::market {
     fun test_market_ioc_order_partial_fill_buy(aptos: &signer, ferum: &signer, user: &signer)
         acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
-        // Tests that an ioc sell order is can be partially filled.
+        // Tests that an ioc sell order can be partially filled.
 
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
@@ -2144,7 +2144,7 @@ module ferum::market {
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_IOC,120000000000, 120000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_IOC,6500000000, 120000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
