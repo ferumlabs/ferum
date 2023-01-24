@@ -1,6 +1,6 @@
 // Ferum Architecture highlights.
 //
-// Ferum Price Store Overview:
+// Ferum Price Store:
 //
 //        -\                                                                       /-
 //          -\                                                                   /-
@@ -17,7 +17,7 @@
 //
 // New pricelevels are added to the cache until it is reaches capacity, at which point prices are added to the tree.
 // When adding a new price, the range covered by the cache and the tree is noted and takes precendence. For example,
-// say the cache is full with prices 1, 2, 3, and 4. A price of 3.5 will still be added to the cache. A similar
+// say the cache is full with prices 1, 2, 3, and 4. A price of 3.5 will still be added to the cache. The same
 // principle applies to the prices stored in the tree. Prices between the tree an the cache are rebalanced periodically
 // via cranks (see `rebalance` entry method).
 //
@@ -45,6 +45,10 @@
 //
 // Ferum groups items in lists into single Nodes stored in a table to optimize read/write costs. See the NodeList
 // structure for more details.
+//
+// Numeric values:
+//
+// Unless otherwise stated, all numeric values are fixedpoint number with 10 decimal places.
 //
 module ferum::market {
     use aptos_framework::coin;
