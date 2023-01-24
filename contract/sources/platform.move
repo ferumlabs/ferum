@@ -7,8 +7,6 @@ module ferum::platform {
     // Errors
     //
 
-    // Platform errors reserve [600, 699].
-
     const ERR_PROTOCOL_ALREADY_REGISTERED: u64 = 600;
     const ERR_INVALID_PROTOCOL_ADDRESS: u64 = 601;
 
@@ -18,17 +16,14 @@ module ferum::platform {
     }
 
     // Used to identify user that placed the order from a given protocol.
-    struct UserIdentifier has store, drop, copy {
+    // Should only be able to be generated using a ProtocolCapability.
+    struct AccountIdentifier has drop {
         protocolAddress: address, // 0x0 is reserved as the sentinal value.
         userAddress: address, // 0x0 is reserved as the sentinal value.
     }
 
     // Struct used to store information about a protocol.
     struct ProtocolInfo has key {}
-
-    //
-    // Public functions.
-    //
 
     public fun register_protocol(owner: &signer): ProtocolCapability {
         let ownerAddr = address_of(owner);
@@ -41,20 +36,12 @@ module ferum::platform {
         }
     }
 
-    public fun get_user_identifier_for_protocol(user: &signer, protocolCap: &ProtocolCapability): UserIdentifier {
+    public fun gen_account_identifier(user: &signer, protocolCap: &ProtocolCapability): AccountIdentifier {
         let userAddress = address_of(user);
         let protocolAddress = get_protocol_address(protocolCap);
-        UserIdentifier {
+        AccountIdentifier {
             userAddress,
             protocolAddress,
-        }
-    }
-
-    public(friend) fun get_user_identifier(user: &signer): UserIdentifier {
-        let userAddress = address_of(user);
-        UserIdentifier {
-            userAddress,
-            protocolAddress: @0x0,
         }
     }
 
@@ -62,40 +49,34 @@ module ferum::platform {
         return addr != @0x0
     }
 
-    public(friend) fun get_protocol_address(cap: &ProtocolCapability): address {
-        return cap.protocolAddress
-    }
-
-    public(friend) fun get_user_address(identifier: &UserIdentifier): address {
-        return identifier.userAddress
-    }
-
-    public(friend) fun sentinal_user_identifier(): UserIdentifier {
-        UserIdentifier {
-            protocolAddress: @0x0,
-            userAddress: @0x0,
-        }
-    }
-
-    public(friend) fun is_user_identifier_valid(identifier: &UserIdentifier): bool {
+    public(friend) fun is_account_identifier_valid(identifier: &AccountIdentifier): bool {
         is_address_valid(identifier.protocolAddress) && is_address_valid(identifier.userAddress)
     }
 
     // Returns (protocolAddress, userAddress)
-    public(friend) fun get_addresses_from_user_identifier(id: &UserIdentifier): (address, address) {
+    public(friend) fun get_addresses(id: &AccountIdentifier): (address, address) {
         (id.protocolAddress, id.userAddress)
+    }
+
+    public(friend) fun get_protocol_address(cap: &ProtocolCapability): address {
+        return cap.protocolAddress
+    }
+
+    public(friend) fun get_user_address(identifier: &AccountIdentifier): address {
+        return identifier.userAddress
+    }
+
+    #[test_only]
+    public fun account_identifier_for_test(user: &signer): AccountIdentifier {
+        let userAddress = address_of(user);
+        AccountIdentifier {
+            userAddress,
+            protocolAddress: @ferum,
+        }
     }
 
     #[test_only]
     public fun drop_protocol_capability(cap: ProtocolCapability) {
         let ProtocolCapability {protocolAddress: _} = cap;
-    }
-
-    #[test_only]
-    public fun get_user_identifier_from_address(userAddress: address): UserIdentifier {
-        UserIdentifier {
-            userAddress,
-            protocolAddress: @0x0,
-        }
     }
 }

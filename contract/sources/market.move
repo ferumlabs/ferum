@@ -1,114 +1,159 @@
-// Todos
-// - Permissions
-// - Quote price publishing
-// - Fees implementation
-// - Code clean up and organization
-    // - Documentation updates
+// Ferum Architecture highlights.
 //
-// Tests:
-// - Deposit and withdrawal permissions
-//   - User can withdraw from non protocol market accounts
-//   - Random protocol cant withdraw from a non protocol market account
-//   - Protocol can withdraw for user from protocol market accounts
-//   - User cannot withdraw from a protocol market account
-// - Order cancel permissions
-//   - User can cancel an order for a non protocol market accounts
-//   - Random protocol cant cancel an order for a non protocol market account
-//   - Protocol can cancel an order for user from protocol market accounts
-//   - User cannot cancel an order from a protocol market account
-// - Order placement permissions
-//   - User can add an order for a non protocol market accounts
-//   - Random protocol cant add an order for a non protocol market account
-//   - Protocol can add an order for user from protocol market accounts
-//   - User cannot add an order from a protocol market account
-
+// Ferum Price Store Overview:
+//
+//        -\                                                                       /-
+//          -\                                                                   /-
+//            --   +-------------------------+    +------------------------+   --
+// Buy Tree        |       Buy Cache         |    |       Sell Cache       |         Sell Tree
+//            /-   +-------------------------+    +------------------------+   -\
+//          /-                                                                   -\
+//        /-                                                                       -\
+//
+// Ferum's orderbook for a single side is dvided into two main components, a vector cache and a B+ tree.
+// Both the cache and the tree store a PriceStoreElem, which encapsulates high level information about the pricelevel:
+// qty, pendingMakerCrankQty, and the id of the PriceLevel object (which stores the actual order information for that
+// pricelevel).
+//
+// New pricelevels are added to the cache until it is reaches capacity, at which point prices are added to the tree.
+// When adding a new price, the range covered by the cache and the tree is noted and takes precendence. For example,
+// say the cache is full with prices 1, 2, 3, and 4. A price of 3.5 will still be added to the cache. A similar
+// principle applies to the prices stored in the tree. Prices between the tree an the cache are rebalanced periodically
+// via cranks (see `rebalance` entry method).
+//
+// The cache and tree are each stored as seperate objects. Ferum maintains a MarketSummary object with properies like
+// max/min cache prices. This allows us to only load either the cache or the tree - optimizing storage read/write costs.
+//
+// Pending quantities:
+//
+// To avoid having to load multiple different objects from storage, Ferum maintains pending quantities for executions.
+// Each pricelevel maintains a pending maker quantity indicating how much quantity in that price level has already been
+// executed as a maker and each order has a takerCrankPendingQty property. Pending quantities are "resolved" and
+// settled as executions via the crank (see `crank` method). This allows Ferum to handle execution via a modification
+// of a single value vs having to load and write multiple different objects.
+//
+// Object Reuse:
+//
+// Ferum reuses objects to avoid having to pay the expensive object create cost. Objects are created with unique IDs
+// and, when they are no longer used, are added into an unused stack. When creating a new object, the stack is first
+// checked to see if we can use an existing object. See OrderReuseTable and PriceLevelReuseTable for examples.
+//
+// A consequence of this is that IDs can't be used to uniquely map to an object. PriceLevels aren't mapped to directly
+// by the price they represent and order IDs are reused.
+//
+// NodeList grouping:
+//
+// Ferum groups items in lists into single Nodes stored in a table to optimize read/write costs. See the NodeList
+// structure for more details.
+//
 module ferum::market {
     use aptos_framework::coin;
-    // use aptos_std::event::{EventHandle, emit_event};
-    // use aptos_framework::account::{new_event_handle};
     use aptos_framework::timestamp;
     use aptos_std::table;
-    // use aptos_std::type_info;
     use std::signer::address_of;
-    // use std::string::{Self, String};
     use std::vector;
+    use std::string;
+    use aptos_std::type_info;
+    use aptos_framework::event::{EventHandle, emit_event};
+    use aptos_framework::account::new_event_handle;
+    use ferum::platform::AccountIdentifier;
+    use ferum::platform;
+    use ferum::token;
     use ferum::utils;
-    use std::debug;
 
-    // use ferum::admin;
-    // use ferum::platform;
-    // use ferum::platform::{UserIdentifier, is_user_identifier_valid, sentinal_user_identifier};
-    //
-    // #[test_only]
-    // use ferum::platform::{get_user_identifier, register_protocol};
-    // #[test_only]
-    // use ferum::{init_ferum};
-    // #[test_only]
-    // use ferum::coin_test_helpers::{FMA, FMB, setup_fake_coins, register_fmb, register_fma, create_fake_coins, register_fma_fmb};
-    // #[test_only]
-    // use aptos_framework::account;
-    // #[test_only]
-    // use ferum::platform::{drop_protocol_capability};
     #[test_only]
     use aptos_std::table_with_length as twl;
     #[test_only]
-    use ferum::test_utils as ftu;
-    #[test_only]
-    use ferum::test_utils::s;
-    use aptos_framework::event::{EventHandle, emit_event};
-    use ferum::platform;
-    use aptos_framework::account::new_event_handle;
+    use std::debug;
     #[test_only]
     use aptos_framework::account;
     #[test_only]
     use ferum::coin_test_helpers::{FMA, FMB, create_fake_coins, deposit_fake_coins};
-    use ferum::platform::UserIdentifier;
-    use std::string;
-    use aptos_std::type_info;
-    use ferum::token;
+    #[test_only]
+    use ferum::test_utils as ftu;
+    #[test_only]
+    use ferum::test_utils::s;
 
-    //
-    // Errors
-    //
+    // <editor-fold defaultstate="collapsed" desc="Errors">
 
-    // Market errors reserve [400, 499].
+    // <editor-fold defaultstate="collapsed" desc="Market Errors">
 
-    const ERR_BOOK_EXISTS: u64 = 400;
-    const ERR_BOOK_DOES_NOT_EXIST: u64 = 401;
-    const ERR_COIN_UNINITIALIZED: u64 = 402;
-    const ERR_UNKNOWN_ORDER: u64 = 403;
-    const ERR_NOT_OWNER: u64 = 404;
-    const ERR_COIN_EXCEEDS_MAX_SUPPORTED_DECIMALS: u64 = 405;
-    const ERR_INVALID_BEHAVIOUR: u64 = 406;
-    const ERR_INVALID_DECIMAL_CONFIG: u64 = 407;
-    const ERR_INVALID_SIDE: u64 = 408;
-    const ERR_CLORDID_TOO_LARGE: u64 = 409;
-    const ERR_NOT_CORRECT_PROTOCOL: u64 = 410;
-    const ERR_INVALID_USER_IDENTIFIER: u64 = 411;
-    const ERR_INVALID_MARKET_TYPE: u64 = 412;
-    const ERR_SIGNER_NOT_IN_MAP: u64 = 413;
-    const ERR_INVALID_SWAP_REQUEST: u64 = 415;
-    const ERR_ORDER_EXECUTED_BUT_IS_PENDING_CRANK: u64 = 416;
-    const ERR_PRICE_STORE_ELEM_NOT_FOUND: u64 = 417;
-    const ERR_CRANK_UNFULFILLED_QTY: u64 = 418;
-    const ERR_NO_MARKET_ACCOUNT: u64 = 419;
-    const ERR_INVALID_MAX_COLLATERAL_AMT: u64 = 420;
+    const ERR_COIN_UNINITIALIZED: u64 = 401;
+    const ERR_UNKNOWN_ORDER: u64 = 402;
+    const ERR_NOT_OWNER: u64 = 403;
+    const ERR_COIN_EXCEEDS_MAX_SUPPORTED_DECIMALS: u64 = 404;
+    const ERR_INVALID_BEHAVIOUR: u64 = 405;
+    const ERR_INVALID_DECIMAL_CONFIG: u64 = 406;
+    const ERR_INVALID_SIDE: u64 = 407;
+    const ERR_ORDER_EXECUTED_BUT_IS_PENDING_CRANK: u64 = 408;
+    const ERR_PRICE_STORE_ELEM_NOT_FOUND: u64 = 409;
+    const ERR_CRANK_UNFULFILLED_QTY: u64 = 410;
+    const ERR_NO_MARKET_ACCOUNT: u64 = 411;
+    const ERR_INVALID_MAX_COLLATERAL_AMT: u64 = 412;
 
-    // FP errors.
+    // </editor-fold>
 
+    // <editor-fold defaultstate="collapsed" desc="Admin Errors">
+
+    const ERR_NOT_ALLOWED: u64 = 200;
+    const ERR_MARKET_NOT_EXISTS: u64 = 201;
+    const ERR_MARKET_EXISTS: u64 = 202;
+    const ERR_INVALID_FEE_TYPE: u64 = 203;
+    const ERR_FEE_TYPE_EXISTS: u64 = 204;
+    const ERR_FE_UNINITED: u64 = 205;
+
+    // </editor-fold>
+
+    // <editor-fold defaultstate="collapsed" desc="Market Errors">
+
+    const ERR_INVALID_FEE_STRUCTURE: u64 = 301;
+    const ERR_TIER_NOT_FOUND: u64 = 302;
+
+    // </editor-fold>
+
+    // <editor-fold defaultstate="collapsed" desc="Cache Errors">
+
+    const ERR_CACHE_DUPLICATE_ITEM: u64 = 1;
+    const ERR_CACHE_INVALID_TYPE: u64 = 2;
+    const ERR_CACHE_ITEM_NOT_FOUND: u64 = 3;
+
+    // </editor-fold>
+
+    // <editor-fold defaultstate="collapsed" desc="NodeList Errors">
+
+    const ERR_LIST_EMPTY: u64 = 1;
+    const ERR_LIST_ELEM_NOT_FOUND: u64 = 2;
+
+    // </editor-fold>
+
+    // <editor-fold defaultstate="collapsed" desc="Tree Errors">
+
+    const ERR_TREE_DUPLICATE_ITEM: u64 = 1;
+    const ERR_TREE_ELEM_DOES_NOT_EXIST: u64 = 4;
+    const ERR_TREE_INVALID_TREE_DEGREE: u64 = 5;
+    const ERR_TREE_INVALID_ITERATOR_TYPE: u64 = 6;
+    const ERR_TREE_EMPTY_ITERATOR: u64 = 7;
+    const ERR_TREE_DUPLICATE_ENTRY: u64 = 8;
+
+    // </editor-fold>
+
+    // Needs to be included to prevent inline from complaining.
+    // TODO: remove once inline is more finalized.
     const ERR_EXCEED_MAX_EXP: u64 = 1;
     const ERR_FP_PRECISION_LOSS: u64 = 2;
     const ERR_FP_EXCEED_DECIMALS: u64 = 3;
 
-    //
-    // Enums.
-    //
+    // </editor-fold>
 
+    // <editor-fold defaultstate="collapsed" desc="Enums">
+
+    // Order Side.
     // Represents a buy order.
     const SIDE_BUY: u8 = 1;
     // Represents a sell order.
     const SIDE_SELL: u8 = 2;
 
+    // Order behaviour.
     // Represents a resting order. Can be a taker or a maker order.
     const BEHAVIOUR_GTC: u8 = 1;
     // Represents a POST order. Will always be the maker order.
@@ -120,32 +165,25 @@ module ferum::market {
     // FOK orders are always takers.
     const BEHAVIOUR_FOK: u8 = 4;
 
-    // Represents a pending order.
-    const STATUS_PENDING: u8 = 1;
-    // Represents a cancelled order.
-    const STATUS_CANCELLED: u8 = 2;
-    // Represents a filled order.
-    const STATUS_FILLED: u8 = 3;
-
-    // Used as the default value, ie: the order was not cancelled.
-    const CANCEL_AGENT_NONE: u8 = 0;
-    // Used when the order is cancelled because it of it's behaviour.
-    const CANCEL_AGENT_BEHAVIOUR: u8 = 1;
-    // Used when the order was cancelled by the user (or custodian).
-    const CANCEL_AGENT_USER: u8 = 3;
-
-    // Used to identify a market with the default fee type.
-    const FEE_TYPE_DEFAULT: u8 = 1;
-    // Used to identify a market with the stable swap fee type.
-    const FEE_TYPE_STABLE_SWAP: u8 = 2;
-
+    // FixedPoint modes.
+    // Ensures there is no precision loss past either specified number of decimals of the max decimal places.
     const FP_NO_PRECISION_LOSS: u8 = 1;
+    // Rounds up if the number of decimals places exceeds the specified or max amount
     const FP_ROUND_UP: u8 = 2;
     const FP_TRUNC: u8 = 3;
 
-    //
-    // Constants.
-    //
+    // B tree child types used for deletions.
+    const CHILD_TYPE_NULL: u8 = 0;
+    const CHILD_TYPE_LEFT: u8 = 1;
+    const CHILD_TYPE_RIGHT: u8 = 2;
+
+    // B tree iterator types.
+    const DECREASING_ITERATOR: u8 = 1; // Used for buys.
+    const INCREASING_ITERATOR: u8 = 2; // Used for sells.
+
+    // </editor-fold>
+
+    // <editor-fold defaultstate="collapsed" desc="Constants">
 
     const MAX_DECIMALS: u8 = 10;
     const TREE_DEGREE: u64 = 8;
@@ -154,11 +192,34 @@ module ferum::market {
     const DECIMAL_PLACES: u8 = 10;
     const DECIMAL_PLACES_EXP_U128: u128 = 10000000000;
     const DECIMAL_PLACES_EXP_U64: u64 = 10000000000;
+    const MAX_U64: u64 = 18446744073709551615;
+    const MAX_U16: u64 = 65535;
 
-    //
+    // </editor-fold>
+
+    // <editor-fold defaultstate="collapsed" desc="Market implementation">
+
     // Structs.
-    //
 
+    // Each market account is uniquely described by a protocol and user address.
+    struct MarketAccountKey has store, copy, drop {
+        protocolAddress: address,
+        userAddress: address,
+    }
+
+    // The market account itself.
+    struct MarketAccount<phantom I, phantom Q> has store {
+        // List of ids of orders which are still active for this account.
+        activeOrders: vector<u32>,
+        // The total instrument coin balance for this order.
+        instrumentBalance: coin::Coin<I>,
+        // The total quote coin balance for this order.
+        quoteBalance: coin::Coin<Q>,
+        // Signer that created this market account.
+        ownerAddress: address,
+    }
+
+    // Stores all the properties defining an order.
     struct OrderMetadata has drop, copy, store {
         // Side for this order. See the OrderSide enum.
         side: u8,
@@ -177,23 +238,16 @@ module ferum::market {
         takerCrankPendingQty: u64,
         // Optional metadata provided for this order.
         clientOrderID: u32,
-        // Identifies both the user and the protocol the user used to place this order.
-        // If this is not populated, then the order was not placed by a protocol.
-        // If not placed via a protocol, will be the sentinal value (see platform::sentinal_user_identifier).
-        userIdentifier: platform::UserIdentifier,
+        // Address of the owner of this order. Could be the user's address directly or the address of a protocol
+        // owned resource account.
+        ownerAddress: address,
+        // Key of market account this order was placed for.
+        accountKey: MarketAccountKey,
         // The remaining collateral for a market buy order.
         marketBuyRemainingCollateral: u64,
     }
 
-    struct MarketAccount<phantom I, phantom Q> has store {
-        // List of ids of orders which are still active for this account.
-        activeOrders: vector<u32>,
-        // The total instrument coin balance for this order.
-        instrumentBalance: coin::Coin<I>,
-        // The total quote coin balance for this order.
-        quoteBalance: coin::Coin<Q>,
-    }
-
+    // Structural information about the order in addition to its metadata.
     struct Order<phantom I, phantom Q> has store {
         // Metadata of the order.
         metadata: OrderMetadata,
@@ -209,6 +263,7 @@ module ferum::market {
         next: u32,
     }
 
+    // The representation of the order in a price level object.
     struct PriceLevelOrder has store, copy, drop {
         // The id of the order.
         id: u32,
@@ -217,6 +272,7 @@ module ferum::market {
         qty: u64,
     }
 
+    // Object representing a single price level.
     struct PriceLevel has store {
         // The list of orders at this price level.
         orders: NodeList<PriceLevelOrder>,
@@ -236,28 +292,14 @@ module ferum::market {
         priceLevelID: u16,
     }
 
-    struct MarketBuyTree<phantom I, phantom Q> has key, store {
-        tree: Tree<PriceStoreElem>,
-    }
-
-    struct MarketSellTree<phantom I, phantom Q> has key, store {
-        tree: Tree<PriceStoreElem>,
-    }
-
-    struct MarketBuyCache<phantom I, phantom Q> has key, store {
-        cache: Cache<PriceStoreElem>,
-    }
-
-    struct MarketSellCache<phantom I, phantom Q> has key, store {
-        cache: Cache<PriceStoreElem>,
-    }
-
+    // Reuse table storing price levels.
     struct PriceLevelReuseTable has store {
         objects: table::Table<u16, PriceLevel>,
         unusedStack: u16,
         currID: u16,
     }
 
+    // Reuse table storing orders.
     struct OrderReuseTable<phantom I, phantom Q> has store {
         objects: table::Table<u32, Order<I, Q>>,
         unusedStack: u32,
@@ -289,6 +331,7 @@ module ferum::market {
         sellCacheSize: u8,
     }
 
+    // Struct encapsilating all info for a market.
     struct Orderbook<phantom I, phantom Q> has key, store {
         // Top level summary variables for this market. Used primarily to avoid having to load both the table and
         // cache.
@@ -306,9 +349,10 @@ module ferum::market {
         // All the orders for this book.
         ordersTable: OrderReuseTable<I, Q>,
         // Market accounts for this trading pair.
-        marketAccounts: table::Table<UserIdentifier, MarketAccount<I, Q>>,
+        marketAccounts: table::Table<MarketAccountKey, MarketAccount<I, Q>>,
     }
 
+    // Queue of execution events.
     struct ExecutionQueueEvent has store, drop, copy {
         qty: u64,
         takerOrderID: u32,
@@ -316,71 +360,83 @@ module ferum::market {
         timestampSecs: u64,
     }
 
+    // Queue of events which are consumed by the crank.
     struct EventQueue<phantom I, phantom Q> has key {
         queue: NodeList<ExecutionQueueEvent>,
     }
 
+    // Representation of an execution emitted as an Aptos event.
     struct IndexingExecutionEvent has store, drop {
-        makerAccountIdentifier: UserIdentifier,
-        takerAccountIdentifier: UserIdentifier,
-        price: u64,
-        qty: u64,
+        makerAccountKey: MarketAccountKey,
+        takerAccountKey: MarketAccountKey,
+        price: u64, // Fixedpoint value.
+        qty: u64, // Fixedpoint value.
         timestampSecs: u64
     }
 
+    // Representation of an order finalization emitted as an Aptos event.
     struct IndexingFinalizeEvent has store, drop {
-        userAccountIdentifier: UserIdentifier,
+        accountKey: MarketAccountKey,
         originalQty: u64,
-        price: u64,
+        price: u64, // Fixedpoint value.
         timestampSecs: u64,
     }
 
+    // Wrapper to store all event handles.
     struct IndexingEventHandles<phantom I, phantom Q> has key {
         executions: EventHandle<IndexingExecutionEvent>,
         finalizations: EventHandle<IndexingFinalizeEvent>
     }
 
-    struct MarketProceeds<phantom I, phantom Q> has key {
-        instrumentProceeds: coin::Coin<I>,
-        quoteProceeds: coin::Coin<Q>,
+    // Struct encapsulating price at a given timestamp for the market.
+    // TODO: add indexing method.
+    struct PriceUpdateEvent has drop, store {
+        // Type info for the instrument coin type for the order.
+        instrumentType: type_info::TypeInfo,
+        // Type info for the quote coin type for the order.
+        quoteType: type_info::TypeInfo,
+        // The most someone is willing to pay for the given instrument/quote pair.
+        // Represented as a fixed point number.
+        maxBid: u64,
+        // How much quantity there is the the maxBid price point.
+        // Represented as a fixed point number.
+        bidSize: u64,
+        // The least someone is willing to accept as payment for the given instrument/quote pair.
+        // Represented as a fixed point number.
+        minAsk: u64,
+        // How much quantity there is the the minAsk price point.
+        // Represented as a fixed point number.
+        askSize: u64,
+        // The chain timestamp this quote was issued at.
+        timestampMicroSeconds: u64
     }
 
-    // Struct encapsulating price at a given timestamp for the market.
-    // struct Quote has drop, store {
-    //     // Type info for the instrument coin type for the order.
-    //     instrumentType: type_info::TypeInfo,
-    //     // Type info for the quote coin type for the order.
-    //     quoteType: type_info::TypeInfo,
-    //     // The most someone is willing to pay for the given instrument/quote pair.
-    //     maxBid: FixedPoint64,
-    //     // How much quantity there is the the maxBid price point.
-    //     bidSize: FixedPoint64,
-    //     // The least someone is willing to accept as payment for the given instrument/quote pair.
-    //     minAsk: FixedPoint64,
-    //     // How much quantity there is the the minAsk price point.
-    //     askSize: FixedPoint64,
-    //     // The chain timestamp this quote was issued at.
-    //     timestampMicroSeconds: u64
-    // }
+    // Wrapper objects around the tree/cache. Stored as seperate items in global storage to avoid having to load each
+    // one individually.
+    struct MarketBuyTree<phantom I, phantom Q> has key, store {
+        tree: Tree<PriceStoreElem>,
+    }
+    struct MarketSellTree<phantom I, phantom Q> has key, store {
+        tree: Tree<PriceStoreElem>,
+    }
+    struct MarketBuyCache<phantom I, phantom Q> has key, store {
+        cache: Cache<PriceStoreElem>,
+    }
+    struct MarketSellCache<phantom I, phantom Q> has key, store {
+        cache: Cache<PriceStoreElem>,
+    }
 
-    //
-    // Events.
-    //
-
-    // struct PriceUpdateEvent has drop, store {
-    //     data: Quote,
-    // }
-
-    //
-    // Entry functions.
-    //
+    // <editor-fold defaultstate="collapsed" desc="Market entry functions">
 
     public entry fun init_market_entry<I, Q>(
-        owner: &signer, instrumentDecimals: u8, quoteDecimals: u8, maxCacheSize: u8, feeType: string::String
+        owner: &signer,
+        instrumentDecimals: u8,
+        quoteDecimals: u8,
+        maxCacheSize: u8,
+        feeType: string::String
     ) acquires FerumInfo {
         let ownerAddr = address_of(owner);
         assert!(ownerAddr == @ferum, ERR_NOT_ALLOWED);
-        assert!(!exists<Orderbook<I, Q>>(ownerAddr), ERR_BOOK_EXISTS);
         let (iCoinDecimals, qCoinDecimals) = validate_coins<I, Q>();
         assert!(iCoinDecimals >= instrumentDecimals && qCoinDecimals >= quoteDecimals, ERR_INVALID_DECIMAL_CONFIG);
         let minDecimals = if (iCoinDecimals < qCoinDecimals) {
@@ -444,8 +500,10 @@ module ferum::market {
         register_market<I, Q>(ownerAddr);
     }
 
-    public entry fun open_market_account_entry<I, Q>(owner: &signer) acquires FerumInfo, Orderbook {
-        open_market_account<I, Q>(owner, platform::get_user_identifier(owner))
+    public entry fun open_market_account_entry<I, Q>(
+        owner: &signer
+    ) acquires FerumInfo, Orderbook {
+        open_market_account<I, Q>(owner, vector[]);
     }
 
     public entry fun deposit_to_market_account_entry<I, Q>(
@@ -453,12 +511,17 @@ module ferum::market {
         coinIAmt: u64,
         coinQAmt: u64,
     ) acquires FerumInfo, Orderbook {
-        deposit_to_market_account<I, Q>(owner, platform::get_user_identifier(owner), coinIAmt, coinQAmt)
+        let accountKey = MarketAccountKey {
+            protocolAddress: @0,
+            userAddress: address_of(owner),
+        };
+        deposit_to_market_account<I, Q>(owner, accountKey, coinIAmt, coinQAmt)
     }
 
-    public entry fun rebalance_cache_entry<I, Q>(_owner: &signer, limit: u8)
-        acquires Orderbook, MarketSellCache, MarketSellTree, MarketBuyCache, MarketBuyTree, FerumInfo
-    {
+    public entry fun rebalance_cache_entry<I, Q>(
+        _: &signer,
+        limit: u8,
+    ) acquires Orderbook, MarketSellCache, MarketSellTree, MarketBuyCache, MarketBuyTree, FerumInfo {
         let marketAddr = get_market_addr<I, Q>();
         let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
 
@@ -482,17 +545,22 @@ module ferum::market {
         };
     }
 
-    // public entry fun withdraw_from_market_account_entry<I, Q>(
-    //     owner: &signer,
-    //     coinIAmt: u64,
-    //     coinQAmt: u64,
-    // ) acquires Orderbook {
-    //     // TODO: implement
-    // }
+    public entry fun withdraw_from_market_account_entry<I, Q>(
+        owner: &signer,
+        coinIAmt: u64, // Fixedpoint value.
+        coinQAmt: u64, // Fixedpoint value.
+    ) acquires FerumInfo, Orderbook {
+        let accountKey = MarketAccountKey {
+            protocolAddress: @0,
+            userAddress: address_of(owner),
+        };
+        withdraw_from_market_account<I, Q>(owner, accountKey, coinIAmt, coinQAmt)
+    }
 
-    public entry fun crank<I, Q>(limit: u8)
-        acquires FerumInfo, Orderbook, EventQueue, IndexingEventHandles, MarketBuyTree, MarketBuyCache, MarketSellTree, MarketSellCache
-    {
+    public entry fun crank<I, Q>(
+        _: &signer,
+        limit: u8,
+    ) acquires FerumInfo, Orderbook, EventQueue, IndexingEventHandles, MarketBuyTree, MarketBuyCache, MarketSellTree, MarketSellCache {
         let marketAddr = get_market_addr<I, Q>();
         let i = 0;
         let queue = &mut borrow_global_mut<EventQueue<I, Q>>(marketAddr).queue;
@@ -537,33 +605,71 @@ module ferum::market {
         update_tree_max_min(&mut book.summary, sellTree, SIDE_SELL);
     }
 
-    // Public functions.
+    public entry fun add_order_entry<I, Q>(
+        owner: &signer,
+        side: u8,
+        behaviour: u8,
+        price: u64, // Fixedpoint value.
+        qty: u64, // Fixedpoint value.
+        clientOrderID: u32,
+        marketBuyMaxCollateral: u64, // Should only be specified for market orders.
+    ) acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles {
+        let accountKey = MarketAccountKey {
+            protocolAddress: @ferum,
+            userAddress: address_of(owner),
+        };
+        add_order<I, Q>(owner, accountKey, side, behaviour, price, qty, clientOrderID, marketBuyMaxCollateral);
+    }
 
-    public fun open_market_account<I, Q>(owner: &signer, userIdentifier: UserIdentifier) acquires FerumInfo, Orderbook {
+    public entry fun cancel_order_entry<I, Q>(
+        owner: &signer,
+        orderID: u32,
+    ) acquires FerumInfo, Orderbook, MarketBuyTree, MarketBuyCache, MarketSellTree, MarketSellCache, IndexingEventHandles {
+        cancel_order<I, Q>(owner, orderID);
+    }
+
+    // </editor-fold>
+
+    // <editor-fold defaultstate="collapsed" desc="Market public functions">
+
+    public fun open_market_account<I, Q>(
+        owner: &signer,
+        id: vector<platform::AccountIdentifier>
+    ): MarketAccountKey acquires FerumInfo, Orderbook {
         let ownerAddr = address_of(owner);
-        assert!(ownerAddr == platform::get_user_address(&userIdentifier), ERR_NOT_OWNER);
         if (!coin::is_account_registered<token::Fe>(ownerAddr)) {
             coin::register<token::Fe>(owner);
         };
         let marketAddr = get_market_addr<I, Q>();
         let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
-        table::add(&mut book.marketAccounts, userIdentifier, MarketAccount<I, Q>{
+        let accountKey = if (vector::length(&id) > 0) {
+            account_key_from_identifier(vector::pop_back(&mut id))
+        } else {
+            MarketAccountKey {
+                protocolAddress: @ferum,
+                userAddress: ownerAddr,
+            }
+        };
+        table::add(&mut book.marketAccounts, accountKey, MarketAccount<I, Q>{
             activeOrders: vector[],
             instrumentBalance: coin::zero(),
             quoteBalance: coin::zero(),
+            ownerAddress: ownerAddr,
         });
+        accountKey
     }
 
     public fun deposit_to_market_account<I, Q>(
         owner: &signer,
-        userIdentifier: UserIdentifier,
-        coinIAmt: u64,
-        coinQAmt: u64,
+        accountKey: MarketAccountKey,
+        coinIAmt: u64, // Fixedpoint value.
+        coinQAmt: u64, // Fixedpoint value.
     ) acquires FerumInfo, Orderbook {
         let marketAddr = get_market_addr<I, Q>();
         let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
-        assert!(table::contains(&book.marketAccounts, userIdentifier), ERR_NO_MARKET_ACCOUNT);
-        let marketAcc = table::borrow_mut(&mut book.marketAccounts, userIdentifier);
+        assert!(table::contains(&book.marketAccounts, accountKey), ERR_NO_MARKET_ACCOUNT);
+        let marketAcc = table::borrow_mut(&mut book.marketAccounts, accountKey);
+        assert!(owns_account(owner, &accountKey, marketAcc), ERR_NOT_OWNER);
         if (coinIAmt > 0) {
             let coinIDecimals = coin::decimals<I>();
             let coinAmt = coin::withdraw<I>(owner, utils::fp_convert(coinIAmt, coinIDecimals, FP_NO_PRECISION_LOSS));
@@ -575,6 +681,129 @@ module ferum::market {
             coin::merge(&mut marketAcc.quoteBalance, coinAmt);
         };
     }
+
+    public fun withdraw_from_market_account<I, Q>(
+        owner: &signer,
+        accountKey: MarketAccountKey,
+        coinIAmt: u64, // Fixedpoint value.
+        coinQAmt: u64, // Fixedpoint value.
+    ) acquires FerumInfo, Orderbook {
+        let marketAddr = get_market_addr<I, Q>();
+        let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
+        assert!(table::contains(&book.marketAccounts, accountKey), ERR_NO_MARKET_ACCOUNT);
+        let marketAcc = table::borrow_mut(&mut book.marketAccounts, accountKey);
+        assert!(owns_account(owner, &accountKey, marketAcc), ERR_NOT_OWNER);
+        if (coinIAmt > 0) {
+            let coinIDecimals = coin::decimals<I>();
+            let coinAmt = coin::withdraw<I>(owner, utils::fp_convert(coinIAmt, coinIDecimals, FP_NO_PRECISION_LOSS));
+            coin::merge(&mut marketAcc.instrumentBalance, coinAmt);
+        };
+        if (coinQAmt > 0) {
+            let coinQDecimals = coin::decimals<Q>();
+            let coinAmt = coin::withdraw<Q>(owner, utils::fp_convert(coinQAmt, coinQDecimals, FP_NO_PRECISION_LOSS));
+            coin::merge(&mut marketAcc.quoteBalance, coinAmt);
+        };
+    }
+
+    public fun add_order<I, Q>(
+        owner: &signer,
+        accountKey: MarketAccountKey,
+        side: u8,
+        behaviour: u8,
+        price: u64, // Fixedpoint value.
+        qty: u64, // Fixedpoint value.
+        clientOrderID: u32,
+        marketBuyMaxCollateral: u64, // Should only be specified for market orders.
+    ): u32 acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles {
+        let marketAddr = get_market_addr<I, Q>();
+        let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
+        let execs = &mut vector[];
+        let orderID = add_order_to_book<I, Q>(
+            owner,
+            accountKey,
+            marketAddr,
+            behaviour,
+            side,
+            price,
+            qty,
+            clientOrderID,
+            marketBuyMaxCollateral,
+            book,
+            execs,
+        );
+        // Add any created execution events to queue.
+        let execCount = vector::length(execs);
+        if (execCount > 0) {
+            let queue = &mut borrow_global_mut<EventQueue<I, Q>>(marketAddr).queue;
+            let i = 0;
+            let halfExecCount = execCount / 2;
+            while (i < halfExecCount) { // Inlined reverse.
+                vector::swap(execs, i, execCount - i - 1);
+                i = i + 1;
+            };
+            i = 0;
+            while (i < execCount) {
+                let exec = vector::pop_back(execs);
+                list_push(queue, exec);
+                i = i + 1;
+            };
+        };
+        orderID
+    }
+
+    public inline fun prealloc_price_levels(
+        table: &mut PriceLevelReuseTable,
+        count: u8,
+    ) {
+        let i = 0;
+        while (i < count) {
+            let priceLevel = PriceLevel {
+                orders: new_list(PRICE_LEVEL_NODE_SIZE),
+                next: table.unusedStack,
+            };
+            let priceLevelID = table.currID;
+            table.currID = table.currID + 1;
+            table.unusedStack = priceLevelID;
+            table::add(&mut table.objects, priceLevelID, priceLevel);
+            i = i + 1;
+        }
+    }
+
+    public inline fun prealloc_orders<I, Q>(
+        table: &mut OrderReuseTable<I, Q>,
+        count: u8,
+    ) {
+        let i = 0;
+        while (i < count) {
+            let order = Order<I, Q>{
+                next: table.unusedStack,
+                buyCollateral: coin::zero(),
+                sellCollateral: coin::zero(),
+                priceLevelID: 0,
+                metadata: OrderMetadata{
+                    side: 0,
+                    behaviour: 0,
+                    price: 0,
+                    originalQty: 0,
+                    unfilledQty: 0,
+                    takerCrankPendingQty: 0,
+                    clientOrderID: 0,
+                    accountKey: sentinal_market_account_key(),
+                    ownerAddress: @0,
+                    marketBuyRemainingCollateral: 0,
+                },
+            };
+            let orderID = table.currID;
+            table.currID = table.currID + 1;
+            table.unusedStack = orderID;
+            table::add(&mut table.objects, orderID, order);
+            i = i + 1;
+        }
+    }
+
+    // </editor-fold>
+
+    // <editor-fold defaultstate="collapsed" desc="Market private functions">
 
     fun processExecEvent<I, Q>(
         book: &mut Orderbook<I, Q>,
@@ -597,12 +826,13 @@ module ferum::market {
         // Get taker user address.
         let takerOrder = table::borrow_mut(&mut ordersTable.objects, event.takerOrderID);
         let takerPrice = takerOrder.metadata.price;
-        let takerAccountIdentifier = takerOrder.metadata.userIdentifier;
         let takerBuyCollateral = coin::extract_all(&mut takerOrder.buyCollateral);
         let takerSellCollateral = coin::extract_all(&mut takerOrder.sellCollateral);
         let takerInstrumentProceeds = coin::zero<I>();
         let takerQuoteProceeds = coin::zero<Q>();
-        let (takerProtocolAddress, takerUserAddress) = platform::get_addresses_from_user_identifier(&takerAccountIdentifier);
+        let takerAccountKey = takerOrder.metadata.accountKey;
+        let takerUserAddress = takerAccountKey.userAddress;
+        let takerProtocolAddress = takerAccountKey.protocolAddress;
         let takerUserFeBalance = if (!coin::is_account_registered<token::Fe>(takerUserAddress)) {
             0
         } else {
@@ -637,9 +867,10 @@ module ferum::market {
                 let makerPrice = makerOrder.metadata.price;
                 let makerSide = makerOrder.metadata.side;
                 makerOrder.metadata.unfilledQty = makerOrder.metadata.unfilledQty - execFillQty;
-                let makerAccountIdentifier = makerOrder.metadata.userIdentifier;
-                let makerAccount = table::borrow_mut(marketAccounts, makerAccountIdentifier);
-                let (makerProtocolAddress, makerUserAddress) = platform::get_addresses_from_user_identifier(&makerAccountIdentifier);
+                let makerAccountKey = makerOrder.metadata.accountKey;
+                let makerAccount = table::borrow_mut(marketAccounts, makerAccountKey);
+                let makerUserAddress = makerAccountKey.userAddress;
+                let makerProtocolAddress = makerAccountKey.protocolAddress;
                 let makerUserFeBalance = if (!coin::is_account_registered<token::Fe>(makerUserAddress)) {
                     0
                 } else {
@@ -725,8 +956,8 @@ module ferum::market {
                 };
                 // Emit an execution event.
                 emit_event(execEventHandle, IndexingExecutionEvent {
-                    makerAccountIdentifier,
-                    takerAccountIdentifier,
+                    makerAccountKey,
+                    takerAccountKey,
                     price: makerOrder.metadata.price,
                     qty: execFillQty,
                     timestampSecs: event.timestampSecs,
@@ -736,7 +967,7 @@ module ferum::market {
                 // Shouldn't have to worry about market orders because they will never be in the book.
                 if (is_finalized(makerOrder)) {
                     emit_event(finalizeEventHandle, IndexingFinalizeEvent {
-                        userAccountIdentifier: makerAccountIdentifier,
+                        accountKey: makerAccountKey,
                         price: makerOrder.metadata.price,
                         originalQty: makerOrder.metadata.originalQty,
                         timestampSecs: event.timestampSecs,
@@ -749,7 +980,8 @@ module ferum::market {
                         unfilledQty: 0,
                         takerCrankPendingQty: 0,
                         clientOrderID: 0,
-                        userIdentifier: platform::sentinal_user_identifier(),
+                        accountKey: sentinal_market_account_key(),
+                        ownerAddress: @0,
                         marketBuyRemainingCollateral: 0,
                     };
                     // Release any unsettled collateral.
@@ -769,7 +1001,7 @@ module ferum::market {
         };
         assert!(qty == 0, ERR_CRANK_UNFULFILLED_QTY);
         // Update the taker order.
-        let takerAccount = table::borrow_mut(marketAccounts, takerAccountIdentifier);
+        let takerAccount = table::borrow_mut(marketAccounts, takerAccountKey);
         let takerOrder = table::borrow_mut(&mut ordersTable.objects, event.takerOrderID);
         takerOrder.metadata.takerCrankPendingQty = takerOrder.metadata.takerCrankPendingQty - event.qty;
         takerOrder.metadata.unfilledQty = takerOrder.metadata.unfilledQty - event.qty;
@@ -783,7 +1015,7 @@ module ferum::market {
         // unused order stack, and emit a finalize event.
         if (is_finalized(takerOrder)) {
             emit_event(finalizeEventHandle, IndexingFinalizeEvent {
-                userAccountIdentifier: takerAccountIdentifier,
+                accountKey: takerAccountKey,
                 price: takerOrder.metadata.price,
                 originalQty: takerOrder.metadata.originalQty,
                 timestampSecs: event.timestampSecs,
@@ -796,7 +1028,8 @@ module ferum::market {
                 unfilledQty: 0,
                 takerCrankPendingQty: 0,
                 clientOrderID: 0,
-                userIdentifier: platform::sentinal_user_identifier(),
+                accountKey: sentinal_market_account_key(),
+                ownerAddress: @0,
                 marketBuyRemainingCollateral: 0,
             };
             // Release any unsettled collateral.
@@ -813,54 +1046,6 @@ module ferum::market {
         // Remove orders from the PriceLevel.
         list_drop_from_front(&mut makerPriceLevel.orders, numElemsToDrop);
     }
-
-    public fun add_order<I, Q>(
-        owner: &signer,
-        userAccountIdentifier: platform::UserIdentifier,
-        side: u8,
-        behaviour: u8,
-        price: u64, // Fixedpoint values with `DECIMAL_PLACES` decimal places.
-        qty: u64, // Fixedpoint values with `DECIMAL_PLACES` decimal places.
-        clientOrderID: u32,
-        marketBuyMaxCollateral: u64, // Should only be specified for market orders.
-    ): u32 acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles {
-        assert!(address_of(owner) == platform::get_user_address(&userAccountIdentifier), ERR_NOT_OWNER);
-        let marketAddr = get_market_addr<I, Q>();
-        let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
-        let execs = &mut vector[];
-        let orderID = add_order_to_book<I, Q>(
-            userAccountIdentifier,
-            marketAddr,
-            behaviour,
-            side,
-            price,
-            qty,
-            clientOrderID,
-            marketBuyMaxCollateral,
-            book,
-            execs,
-        );
-        // Add any created execution events to queue.
-        let execCount = vector::length(execs);
-        if (execCount > 0) {
-            let queue = &mut borrow_global_mut<EventQueue<I, Q>>(marketAddr).queue;
-            let i = 0;
-            let halfExecCount = execCount / 2;
-            while (i < halfExecCount) { // Inlined reverse.
-                vector::swap(execs, i, execCount - i - 1);
-                i = i + 1;
-            };
-            i = 0;
-            while (i < execCount) {
-                let exec = vector::pop_back(execs);
-                list_push(queue, exec);
-                i = i + 1;
-            };
-        };
-        orderID
-    }
-
-    // Private functions.
 
     fun rebalance_cache<I, Q>(
         book: &mut Orderbook<I, Q>,
@@ -985,14 +1170,15 @@ module ferum::market {
     }
 
     fun add_order_to_book<I, Q>(
-        accountIdentifier: UserIdentifier,
+        owner: &signer,
+        accountKey: MarketAccountKey,
         marketAddr: address,
         behaviour: u8,
         side: u8,
-        price: u64,
-        qty: u64,
+        price: u64, // Fixedpoint value.
+        qty: u64, // Fixedpoint value.
         clientOrderID: u32,
-        marketBuyMaxCollateral: u64, // Only required for market orders.
+        marketBuyMaxCollateral: u64, // Should only be specified for market orders.
         book: &mut Orderbook<I, Q>,
         execs: &mut vector<ExecutionQueueEvent>,
     ): u32 acquires MarketSellTree, MarketBuyTree, MarketSellCache, MarketBuyCache, IndexingEventHandles {
@@ -1038,11 +1224,11 @@ module ferum::market {
         // <editor-fold defaultstate="collapsed" desc="Order Behaviour Checks">
         if (behaviour == BEHAVIOUR_IOC && price != 0 && !crossesSpread) {
             // Cancel limit IOC orders that don't cross the spread because they won't execute.
-            emit_finalized_event<I, Q>(marketAddr, accountIdentifier, price, qty);
+            emit_finalized_event<I, Q>(marketAddr, accountKey, price, qty);
             return 0
         } else if (behaviour == BEHAVIOUR_POST && crossesSpread) {
             // Cancel POST orders that cross the spread because we can't guarantee that they will be makers.
-            emit_finalized_event<I, Q>(marketAddr, accountIdentifier, price, qty);
+            emit_finalized_event<I, Q>(marketAddr, accountKey, price, qty);
             return 0
         } else if (behaviour == BEHAVIOUR_FOK) {
             // Check to make sure a FOK order can be filled by orders on the book. Otherwise, cancel it.
@@ -1109,7 +1295,7 @@ module ferum::market {
                 };
                 if (remainingQty > 0) {
                     // Cancel the order because we couldn't fill it.
-                    emit_finalized_event<I, Q>(marketAddr, accountIdentifier, price, qty);
+                    emit_finalized_event<I, Q>(marketAddr, accountKey, price, qty);
                     return 0
                 };
             };
@@ -1117,8 +1303,9 @@ module ferum::market {
         // </editor-fold>
 
         // Create order object.
-        assert!(table::contains(&book.marketAccounts, accountIdentifier), ERR_NO_MARKET_ACCOUNT);
-        let marketAccount = table::borrow_mut(&mut book.marketAccounts, accountIdentifier);
+        assert!(table::contains(&book.marketAccounts, accountKey), ERR_NO_MARKET_ACCOUNT);
+        let marketAccount = table::borrow_mut(&mut book.marketAccounts, accountKey);
+        assert!(owns_account(owner, &accountKey, marketAccount), ERR_NOT_OWNER);
         let (buyCollateral, sellCollateral) = if (side == SIDE_BUY) {
             let quoteCoinAmt = if (price == 0) {
                 utils::fp_convert(marketBuyMaxCollateral, coin::decimals<Q>(), FP_NO_PRECISION_LOSS)
@@ -1146,7 +1333,8 @@ module ferum::market {
             unfilledQty: qty,
             takerCrankPendingQty: 0,
             clientOrderID,
-            userIdentifier: accountIdentifier,
+            accountKey,
+            ownerAddress: address_of(owner),
             marketBuyRemainingCollateral: marketBuyMaxCollateral,
         };
         coin::merge(&mut order.buyCollateral, buyCollateral);
@@ -1198,7 +1386,7 @@ module ferum::market {
                 // Order is fully finalized. Emit finalize event and reuse order object.
                 emit_finalized_event<I, Q>(
                     marketAddr,
-                    order.metadata.userIdentifier,
+                    order.metadata.accountKey,
                     order.metadata.price,
                     order.metadata.originalQty,
                 );
@@ -1212,7 +1400,8 @@ module ferum::market {
                     unfilledQty: 0,
                     takerCrankPendingQty: 0,
                     clientOrderID: 0,
-                    userIdentifier: platform::sentinal_user_identifier(),
+                    accountKey: sentinal_market_account_key(),
+                    ownerAddress: @0,
                     marketBuyRemainingCollateral: 0,
                 };
                 ordersTable.unusedStack = orderID;
@@ -1255,13 +1444,15 @@ module ferum::market {
         orderID
     }
 
-    fun cancel_order<I, Q>(_owner: &signer, orderID: u32)
-        acquires FerumInfo, Orderbook, MarketBuyTree, MarketBuyCache, MarketSellTree, MarketSellCache, IndexingEventHandles
-    {
+    fun cancel_order<I, Q>(
+        owner: &signer,
+        orderID: u32,
+    ) acquires FerumInfo, Orderbook, MarketBuyTree, MarketBuyCache, MarketSellTree, MarketSellCache, IndexingEventHandles {
         let marketAddr = get_market_addr<I, Q>();
         let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
         assert!(table::contains(&book.ordersTable.objects, orderID), ERR_UNKNOWN_ORDER);
         let order = table::borrow(&book.ordersTable.objects, orderID);
+        assert!(order.metadata.ownerAddress != @0, ERR_UNKNOWN_ORDER);
         let side = order.metadata.side;
         let price = order.metadata.price;
         // If the order is cancelable, then there is some amount of unfilledQty that is not pending a crank turn. Check
@@ -1272,10 +1463,12 @@ module ferum::market {
         // Remove order from price store and level.
         let qtyCancelled = remove_order_from_price_store_and_level<I, Q>(marketAddr, &mut book.priceLevelsTable, &mut book.summary, orderID, side, price);
         // Update order.
-        let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
+        let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr); // Reborrow.
         let ordersTable = &mut book.ordersTable;
         let order = table::borrow_mut(&mut ordersTable.objects, orderID);
-        let marketAccount = table::borrow_mut(&mut book.marketAccounts, order.metadata.userIdentifier);
+        let marketAccount = table::borrow_mut(&mut book.marketAccounts, order.metadata.accountKey);
+        // Better to do this check above but doing it here to save a borrow call.
+        assert!(owns_account(owner, &order.metadata.accountKey, marketAccount), ERR_NOT_OWNER);
         order.metadata.unfilledQty = order.metadata.unfilledQty - qtyCancelled;
         // Release collateral.
         if (order.metadata.side == SIDE_BUY) {
@@ -1294,7 +1487,7 @@ module ferum::market {
             // Order is fully finalized. Emit finalize event and reuse order object.
             emit_finalized_event<I, Q>(
                 marketAddr,
-                order.metadata.userIdentifier,
+                order.metadata.accountKey,
                 order.metadata.price,
                 order.metadata.originalQty,
             );
@@ -1308,7 +1501,8 @@ module ferum::market {
                 unfilledQty: 0,
                 takerCrankPendingQty: 0,
                 clientOrderID: 0,
-                userIdentifier: platform::sentinal_user_identifier(),
+                ownerAddress: @0,
+                accountKey: sentinal_market_account_key(),
                 marketBuyRemainingCollateral: 0,
             };
             ordersTable.unusedStack = orderID;
@@ -1317,13 +1511,13 @@ module ferum::market {
 
     inline fun emit_finalized_event<I, Q>(
         marketAddr: address,
-        accountIdentifier: UserIdentifier,
+        accountKey: MarketAccountKey,
         price: u64,
         originalQty: u64,
     ) acquires IndexingEventHandles {
         let finalizeEventHandle = &mut borrow_global_mut<IndexingEventHandles<I, Q>>(marketAddr).finalizations;
         emit_event(finalizeEventHandle, IndexingFinalizeEvent {
-            userAccountIdentifier: accountIdentifier,
+            accountKey,
             price,
             originalQty,
             timestampSecs: timestamp::now_seconds(),
@@ -1447,16 +1641,16 @@ module ferum::market {
     // Removes the qty from the tree for the given price level.
     fun remove_price_qty_from_tree(
         tree: &mut Tree<PriceStoreElem>,
-        price: u64,
-        qty: u64,
-        crank: bool,
+        price: u64, // Fixedpoint value.
+        qty: u64, // Fixedpoint value.
+        crank: bool, // Wether or not this function is being called from the crank.
         treePosHint: vector<TreePosition>,
     ) {
         let pos = if (vector::length(&treePosHint) > 0) {
             vector::borrow(&treePosHint, 0)
         } else {
             let pos = tree_find(tree, price);
-            assert!(pos.nodeID != 0, ERR_ELEM_DOES_NOT_EXIST);
+            assert!(pos.nodeID != 0, ERR_TREE_ELEM_DOES_NOT_EXIST);
             &pos
         };
         let (_, priceStoreElem) = tree_get_mut(tree, pos);
@@ -1474,9 +1668,9 @@ module ferum::market {
     // Removes the qty from the cache for the given price level.
     fun remove_price_qty_from_cache(
         cache: &mut Cache<PriceStoreElem>,
-        price: u64,
-        qty: u64,
-        crank: bool,
+        price: u64, // Fixedpoint value.
+        qty: u64, // Fixedpoint value.
+        crank: bool, // Wether or not this function is being called from the crank.
         cacheIdxHint: vector<u64>,
     ) {
         let idx = if (vector::length(&cacheIdxHint) == 1) {
@@ -1747,34 +1941,6 @@ module ferum::market {
         orderID
     }
 
-    public inline fun prealloc_orders<I, Q>(table: &mut OrderReuseTable<I, Q>, count: u8) {
-        let i = 0;
-        while (i < count) {
-            let order = Order<I, Q>{
-                next: table.unusedStack,
-                buyCollateral: coin::zero(),
-                sellCollateral: coin::zero(),
-                priceLevelID: 0,
-                metadata: OrderMetadata{
-                    side: 0,
-                    behaviour: 0,
-                    price: 0,
-                    originalQty: 0,
-                    unfilledQty: 0,
-                    takerCrankPendingQty: 0,
-                    clientOrderID: 0,
-                    userIdentifier: platform::sentinal_user_identifier(),
-                    marketBuyRemainingCollateral: 0,
-                },
-            };
-            let orderID = table.currID;
-            table.currID = table.currID + 1;
-            table.unusedStack = orderID;
-            table::add(&mut table.objects, orderID, order);
-            i = i + 1;
-        }
-    }
-
     inline fun get_or_create_price_level(table: &mut PriceLevelReuseTable): u16 {
         if (table.unusedStack == 0) {
             prealloc_price_levels(table, 1)
@@ -1784,21 +1950,6 @@ module ferum::market {
         table.unusedStack = priceLevel.next;
         priceLevel.next = 0;
         priceLevelID
-    }
-
-    public inline fun prealloc_price_levels(table: &mut PriceLevelReuseTable, count: u8) {
-        let i = 0;
-        while (i < count) {
-            let priceLevel = PriceLevel {
-                orders: new_list(PRICE_LEVEL_NODE_SIZE),
-                next: table.unusedStack,
-            };
-            let priceLevelID = table.currID;
-            table.currID = table.currID + 1;
-            table.unusedStack = priceLevelID;
-            table::add(&mut table.objects, priceLevelID, priceLevel);
-            i = i + 1;
-        }
     }
 
     inline fun validate_coins<I, Q>(): (u8, u8) {
@@ -1815,7 +1966,11 @@ module ferum::market {
     // buyTreeMax/sellTreeMin might point to a price level whose entire qty might be used and pending a crank turn.
     // If this returns false, than an order with `price` can't execute against the tree. Otherwise, an order with
     // `price` might execute against the tree.
-    inline fun can_maybe_execute_against_tree(summary: &MarketSummary, orderSide: u8, price: u64): bool {
+    inline fun can_maybe_execute_against_tree(
+        summary: &MarketSummary,
+        orderSide: u8,
+        price: u64, // Fixedpoint value.
+    ): bool {
         if (orderSide == SIDE_SELL) {
             // Will execute against buy tree.
             price == 0 || (summary.buyTreeMax != 0 && price <= summary.buyTreeMax)
@@ -1826,7 +1981,12 @@ module ferum::market {
     }
 
     // Returns true if a new price should be inserted into the cache.
-    inline fun should_insert_in_cache(summary: &MarketSummary, maxCacheSize: u8, side: u8, price: u64): bool {
+    inline fun should_insert_in_cache(
+        summary: &MarketSummary,
+        maxCacheSize: u8,
+        side: u8,
+        price: u64, // Fixedpoint value.
+    ): bool {
         if (side == SIDE_BUY) {
             summary.buyCacheSize < maxCacheSize && (summary.buyTreeMax == 0 || price > summary.buyTreeMax) ||
                 summary.buyCacheSize >= maxCacheSize && (summary.buyCacheMin != 0 && price >= summary.buyCacheMin)
@@ -1837,7 +1997,11 @@ module ferum::market {
     }
 
     // Given a price that already exists in the price store, returns true if the price is in the cache.
-    inline fun is_price_store_elem_in_cache(summary: &MarketSummary, side: u8, price: u64): bool {
+    inline fun is_price_store_elem_in_cache(
+        summary: &MarketSummary,
+        side: u8,
+        price: u64, // Fixedpoint value.
+    ): bool {
         if (side == SIDE_BUY) {
             summary.buyTreeMax == 0 || price > summary.buyTreeMax ||
                 (summary.buyCacheMin != 0 && price >= summary.buyCacheMin)
@@ -1848,7 +2012,10 @@ module ferum::market {
     }
 
     // Returns true if the order can no longer be executed.
-    inline fun no_qty_to_be_executed<I, Q>(order: &Order<I, Q>, makerPendingCrankQty: u64): bool {
+    inline fun no_qty_to_be_executed<I, Q>(
+        order: &Order<I, Q>,
+        makerPendingCrankQty: u64, // Fixedpoint value.
+    ): bool {
         let marketBuyAndCannotExecute = order.metadata.price == 0 &&
             order.metadata.side == SIDE_BUY &&
             order.metadata.marketBuyRemainingCollateral == 0;
@@ -1857,12 +2024,42 @@ module ferum::market {
 
     // Returns true if the order is finalized. To be finalized means the order can no longer be executed any more and
     // there is no pending qty remaining.
-    inline fun is_finalized<I, Q>(order: &Order<I, Q>): bool {
+    inline fun is_finalized<I, Q>(
+        order: &Order<I, Q>,
+    ): bool {
         let marketBuyAndCannotExecute = order.metadata.price == 0 &&
             order.metadata.side == SIDE_BUY &&
             order.metadata.marketBuyRemainingCollateral == 0;
         (marketBuyAndCannotExecute || order.metadata.unfilledQty == 0) && order.metadata.takerCrankPendingQty == 0
     }
+
+    // Returns true if the signer is able to perform mutative actions on an account and for the orders that the account
+    // placed. Only the protocol or the address that created the account should be allowed.
+    inline fun owns_account<I, Q>(
+        owner: &signer,
+        accountKey: &MarketAccountKey,
+        marketAccount: &MarketAccount<I, Q>,
+    ): bool {
+        let ownerAddr = address_of(owner);
+        ownerAddr == marketAccount.ownerAddress || ownerAddr == accountKey.protocolAddress
+    }
+
+    inline fun sentinal_market_account_key(): MarketAccountKey {
+        MarketAccountKey {
+            protocolAddress: @0,
+            userAddress: @0,
+        }
+    }
+
+    fun account_key_from_identifier(id: AccountIdentifier): MarketAccountKey {
+        let (protocolAddress, userAddress) = platform::get_addresses(&id);
+        MarketAccountKey {
+            protocolAddress,
+            userAddress,
+        }
+    }
+
+    // </editor-fold>
 
     // <editor-fold defaultstate="collapsed" desc="Market tests">
 
@@ -3125,12 +3322,12 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, makerUser);
         account::create_account_for_test(address_of(takerUser));
         deposit_fake_coins(ferum, 10000000000, takerUser);
-        let makerAccID = platform::get_user_identifier(makerUser);
-        open_market_account<FMA, FMB>(makerUser, makerAccID);
-        deposit_to_market_account<FMA, FMB>(makerUser, makerAccID, 1000000000000, 1000000000000);
-        let takerAccID = platform::get_user_identifier(takerUser);
-        open_market_account<FMA, FMB>(takerUser, takerAccID);
-        deposit_to_market_account<FMA, FMB>(takerUser, takerAccID, 1000000000000, 1000000000000);
+        let makerAccID = platform::account_identifier_for_test(makerUser);
+        let makerAccKey = open_market_account<FMA, FMB>(makerUser, vector[makerAccID]);
+        deposit_to_market_account<FMA, FMB>(makerUser, makerAccKey, 1000000000000, 1000000000000);
+        let takerAccID = platform::account_identifier_for_test(takerUser);
+        let takerAccKey = open_market_account<FMA, FMB>(takerUser, vector[takerAccID]);
+        deposit_to_market_account<FMA, FMB>(takerUser, takerAccKey, 1000000000000, 1000000000000);
 
         // Setup.
         let makerID1 = add_user_limit_order<FMA, FMB>(makerUser, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
@@ -3178,8 +3375,8 @@ module ferum::market {
         assert_order_used(book, makerID2);
         assert_order_used(book, makerID3);
         assert_order_used(book, makerID4);
-        assert_account_balances(book, takerAccID, 1000000000000, 936000000000);
-        assert_account_balances(book, makerAccID, 850000000000, 1000000000000);
+        assert_account_balances(book, takerAccKey, 1000000000000, 936000000000);
+        assert_account_balances(book, makerAccKey, 850000000000, 1000000000000);
         assert!(book.summary.sellCacheMax == 6000000000, 0);
         assert!(book.summary.sellCacheMin == 5000000000, 0);
         assert!(book.summary.sellCacheQty == 31667000000, 0);
@@ -3187,7 +3384,7 @@ module ferum::market {
         assert!(book.summary.sellTreeMin == 7000000000, 0);
 
         // Crank.
-        crank<FMA, FMB>(1);
+        crank<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
@@ -3212,8 +3409,8 @@ module ferum::market {
         assert_order_unused(book, makerID2);
         assert_order_unused(book, makerID3);
         assert_order_used(book, makerID4);
-        assert_account_balances(book, makerAccID, 850000000000, 1063999800000);
-        assert_account_balances(book, takerAccID, 1118333000000, 936000200000);
+        assert_account_balances(book, makerAccKey, 850000000000, 1063999800000);
+        assert_account_balances(book, takerAccKey, 1118333000000, 936000200000);
         assert!(book.summary.sellCacheMax == 6000000000, 0);
         assert!(book.summary.sellCacheMin == 6000000000, 0);
         assert!(book.summary.sellCacheQty == 31667000000, 0);
@@ -3238,12 +3435,12 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, makerUser);
         account::create_account_for_test(address_of(takerUser));
         deposit_fake_coins(ferum, 10000000000, takerUser);
-        let makerAccID = platform::get_user_identifier(makerUser);
-        open_market_account<FMA, FMB>(makerUser, makerAccID);
-        deposit_to_market_account<FMA, FMB>(makerUser, makerAccID, 1000000000000, 1000000000000);
-        let takerAccID = platform::get_user_identifier(takerUser);
-        open_market_account<FMA, FMB>(takerUser, takerAccID);
-        deposit_to_market_account<FMA, FMB>(takerUser, takerAccID, 1000000000000, 1000000000000);
+        let makerAccID = platform::account_identifier_for_test(makerUser);
+        let makerAccKey = open_market_account<FMA, FMB>(makerUser, vector[makerAccID]);
+        deposit_to_market_account<FMA, FMB>(makerUser, makerAccKey, 1000000000000, 1000000000000);
+        let takerAccID = platform::account_identifier_for_test(takerUser);
+        let takerAccKey = open_market_account<FMA, FMB>(takerUser, vector[takerAccID]);
+        deposit_to_market_account<FMA, FMB>(takerUser, takerAccKey, 1000000000000, 1000000000000);
 
         // Setup.
         let makerID1 = add_user_limit_order<FMA, FMB>(makerUser, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
@@ -3303,8 +3500,8 @@ module ferum::market {
         assert_order_used(book, makerID4);
         assert_order_used(book, makerID5);
         assert_order_used(book, makerID6);
-        assert_account_balances(book, takerAccID, 1000000000000, 907386000000);
-        assert_account_balances(book, makerAccID, 800000000000, 1000000000000);
+        assert_account_balances(book, takerAccKey, 1000000000000, 907386000000);
+        assert_account_balances(book, makerAccKey, 800000000000, 1000000000000);
         assert!(book.summary.sellCacheMax == 6000000000, 0);
         assert!(book.summary.sellCacheMin == 5000000000, 0);
         assert!(book.summary.sellCacheQty == 0, 0);
@@ -3312,7 +3509,7 @@ module ferum::market {
         assert!(book.summary.sellTreeMin == 7000000000, 0);
 
         // Crank.
-        crank<FMA, FMB>(1);
+        crank<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
@@ -3341,8 +3538,8 @@ module ferum::market {
         assert_order_unused(book, makerID4);
         assert_order_unused(book, makerID5);
         assert_order_used(book, makerID6);
-        assert_account_balances(book, makerAccID, 800000000000, 1092613800000);
-        assert_account_balances(book, takerAccID, 1163734000000, 907386200000);
+        assert_account_balances(book, makerAccKey, 800000000000, 1092613800000);
+        assert_account_balances(book, takerAccKey, 1163734000000, 907386200000);
         assert!(book.summary.sellCacheMax == 0, 0);
         assert!(book.summary.sellCacheMin == 0, 0);
         assert!(book.summary.sellCacheQty == 0, 0);
@@ -3891,12 +4088,12 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, makerUser);
         account::create_account_for_test(address_of(takerUser));
         deposit_fake_coins(ferum, 10000000000, takerUser);
-        let makerAccID = platform::get_user_identifier(makerUser);
-        open_market_account<FMA, FMB>(makerUser, makerAccID);
-        deposit_to_market_account<FMA, FMB>(makerUser, makerAccID, 1000000000000, 1000000000000);
-        let takerAccID = platform::get_user_identifier(takerUser);
-        open_market_account<FMA, FMB>(takerUser, takerAccID);
-        deposit_to_market_account<FMA, FMB>(takerUser, takerAccID, 1000000000000, 1000000000000);
+        let makerAccID = platform::account_identifier_for_test(makerUser);
+        let makerAccKey = open_market_account<FMA, FMB>(makerUser, vector[makerAccID]);
+        deposit_to_market_account<FMA, FMB>(makerUser, makerAccKey, 1000000000000, 1000000000000);
+        let takerAccID = platform::account_identifier_for_test(takerUser);
+        let takerAccKey = open_market_account<FMA, FMB>(takerUser, vector[takerAccID]);
+        deposit_to_market_account<FMA, FMB>(takerUser, takerAccKey, 1000000000000, 1000000000000);
 
         // Setup.
         add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
@@ -3929,8 +4126,8 @@ module ferum::market {
         assert_order_collateral(book, makerID, 63000000000, 0);
         assert_order_used(book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, makerAccID, 1000000000000, 937000000000);
-        assert_account_balances(book, takerAccID, 970000000000, 1000000000000);
+        assert_account_balances(book, makerAccKey, 1000000000000, 937000000000);
+        assert_account_balances(book, takerAccKey, 970000000000, 1000000000000);
         assert!(book.summary.buyCacheMax == 9000000000, 0);
         assert!(book.summary.buyCacheMin == 8000000000, 0);
         assert!(book.summary.buyCacheQty == 180000000000, 0);
@@ -3938,7 +4135,7 @@ module ferum::market {
         assert!(book.summary.buyTreeMax == 7000000000, 0);
 
         // Crank.
-        crank<FMA, FMB>(1);
+        crank<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
@@ -3955,8 +4152,8 @@ module ferum::market {
         assert_order_collateral(book, takerID, 0, 0);
         assert_order_unused(book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, makerAccID, 1030000000000, 937000000000);
-        assert_account_balances(book, takerAccID, 970000000000, 1027000000000);
+        assert_account_balances(book, makerAccKey, 1030000000000, 937000000000);
+        assert_account_balances(book, takerAccKey, 970000000000, 1027000000000);
         assert!(book.summary.buyCacheMax == 9000000000, 0);
         assert!(book.summary.buyCacheMin == 8000000000, 0);
         assert!(book.summary.buyCacheQty == 180000000000, 0);
@@ -3981,12 +4178,12 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, makerUser);
         account::create_account_for_test(address_of(takerUser));
         deposit_fake_coins(ferum, 10000000000, takerUser);
-        let makerAccID = platform::get_user_identifier(makerUser);
-        open_market_account<FMA, FMB>(makerUser, makerAccID);
-        deposit_to_market_account<FMA, FMB>(makerUser, makerAccID, 1000000000000, 1000000000000);
-        let takerAccID = platform::get_user_identifier(takerUser);
-        open_market_account<FMA, FMB>(takerUser, takerAccID);
-        deposit_to_market_account<FMA, FMB>(takerUser, takerAccID, 1000000000000, 1000000000000);
+        let makerAccID = platform::account_identifier_for_test(makerUser);
+        let makerAccKey = open_market_account<FMA, FMB>(makerUser, vector[makerAccID]);
+        deposit_to_market_account<FMA, FMB>(makerUser, makerAccKey, 1000000000000, 1000000000000);
+        let takerAccID = platform::account_identifier_for_test(takerUser);
+        let takerAccKey = open_market_account<FMA, FMB>(takerUser, vector[takerAccID]);
+        deposit_to_market_account<FMA, FMB>(takerUser, takerAccKey, 1000000000000, 1000000000000);
 
         // Setup.
         let orderID1 = add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
@@ -4018,8 +4215,8 @@ module ferum::market {
         assert_order_collateral(book, makerID, 35000000000, 0);
         assert_order_used(book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, makerAccID, 1000000000000, 965000000000);
-        assert_account_balances(book, takerAccID, 970000000000, 1000000000000);
+        assert_account_balances(book, makerAccKey, 1000000000000, 965000000000);
+        assert_account_balances(book, takerAccKey, 970000000000, 1000000000000);
         assert!(book.summary.buyCacheMax == 0, 0);
         assert!(book.summary.buyCacheMin == 0, 0);
         assert!(book.summary.buyCacheQty == 0, 0);
@@ -4027,7 +4224,7 @@ module ferum::market {
         assert!(book.summary.buyTreeMax == 7000000000, 0);
 
         // Crank.
-        crank<FMA, FMB>(1);
+        crank<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
@@ -4041,8 +4238,8 @@ module ferum::market {
         assert_order_collateral(book, takerID, 0, 0);
         assert_order_unused(book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, makerAccID, 1030000000000, 965000000000);
-        assert_account_balances(book, takerAccID, 970000000000, 1021000000000);
+        assert_account_balances(book, makerAccKey, 1030000000000, 965000000000);
+        assert_account_balances(book, takerAccKey, 970000000000, 1021000000000);
         assert!(book.summary.buyCacheMax == 0, 0);
         assert!(book.summary.buyCacheMin == 0, 0);
         assert!(book.summary.buyCacheQty == 0, 0);
@@ -4067,12 +4264,12 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, makerUser);
         account::create_account_for_test(address_of(takerUser));
         deposit_fake_coins(ferum, 10000000000, takerUser);
-        let makerAccID = platform::get_user_identifier(makerUser);
-        open_market_account<FMA, FMB>(makerUser, makerAccID);
-        deposit_to_market_account<FMA, FMB>(makerUser, makerAccID, 1000000000000, 1000000000000);
-        let takerAccID = platform::get_user_identifier(takerUser);
-        open_market_account<FMA, FMB>(takerUser, takerAccID);
-        deposit_to_market_account<FMA, FMB>(takerUser, takerAccID, 1000000000000, 1000000000000);
+        let makerAccID = platform::account_identifier_for_test(makerUser);
+        let makerAccKey = open_market_account<FMA, FMB>(makerUser, vector[makerAccID]);
+        deposit_to_market_account<FMA, FMB>(makerUser, makerAccKey, 1000000000000, 1000000000000);
+        let takerAccID = platform::account_identifier_for_test(takerUser);
+        let takerAccKey = open_market_account<FMA, FMB>(takerUser, vector[takerAccID]);
+        deposit_to_market_account<FMA, FMB>(takerUser, takerAccKey, 1000000000000, 1000000000000);
 
         // Setup.
         add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
@@ -4104,8 +4301,8 @@ module ferum::market {
         assert_order_collateral(book, makerID, 63000000000, 0);
         assert_order_used(book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, makerAccID, 1000000000000, 937000000000);
-        assert_account_balances(book, takerAccID, 970000000000, 1000000000000);
+        assert_account_balances(book, makerAccKey, 1000000000000, 937000000000);
+        assert_account_balances(book, takerAccKey, 970000000000, 1000000000000);
         assert!(book.summary.buyCacheMax == 9000000000, 0);
         assert!(book.summary.buyCacheMin == 8000000000, 0);
         assert!(book.summary.buyCacheQty == 120000000000, 0);
@@ -4113,7 +4310,7 @@ module ferum::market {
         assert!(book.summary.buyTreeMax == 7000000000, 0);
 
         // Crank.
-        crank<FMA, FMB>(1);
+        crank<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
@@ -4130,8 +4327,8 @@ module ferum::market {
         assert_order_collateral(book, takerID, 0, 0);
         assert_order_unused(book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, makerAccID, 1030000000000, 937000000000);
-        assert_account_balances(book, takerAccID, 970000000000, 1027000000000);
+        assert_account_balances(book, makerAccKey, 1030000000000, 937000000000);
+        assert_account_balances(book, takerAccKey, 970000000000, 1027000000000);
         assert!(book.summary.buyCacheMax == 9000000000, 0);
         assert!(book.summary.buyCacheMin == 8000000000, 0);
         assert!(book.summary.buyCacheQty == 120000000000, 0);
@@ -4156,12 +4353,12 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, makerUser);
         account::create_account_for_test(address_of(takerUser));
         deposit_fake_coins(ferum, 10000000000, takerUser);
-        let makerAccID = platform::get_user_identifier(makerUser);
-        open_market_account<FMA, FMB>(makerUser, makerAccID);
-        deposit_to_market_account<FMA, FMB>(makerUser, makerAccID, 1000000000000, 1000000000000);
-        let takerAccID = platform::get_user_identifier(takerUser);
-        open_market_account<FMA, FMB>(takerUser, takerAccID);
-        deposit_to_market_account<FMA, FMB>(takerUser, takerAccID, 1000000000000, 1000000000000);
+        let makerAccID = platform::account_identifier_for_test(makerUser);
+        let makerAccKey = open_market_account<FMA, FMB>(makerUser, vector[makerAccID]);
+        deposit_to_market_account<FMA, FMB>(makerUser, makerAccKey, 1000000000000, 1000000000000);
+        let takerAccID = platform::account_identifier_for_test(takerUser);
+        let takerAccKey = open_market_account<FMA, FMB>(takerUser, vector[takerAccID]);
+        deposit_to_market_account<FMA, FMB>(takerUser, takerAccKey, 1000000000000, 1000000000000);
 
         // Setup.
         let orderID1 = add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
@@ -4192,8 +4389,8 @@ module ferum::market {
         assert_order_collateral(book, makerID, 35000000000, 0);
         assert_order_used(book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, makerAccID, 1000000000000, 965000000000);
-        assert_account_balances(book, takerAccID, 970000000000, 1000000000000);
+        assert_account_balances(book, makerAccKey, 1000000000000, 965000000000);
+        assert_account_balances(book, takerAccKey, 970000000000, 1000000000000);
         assert!(book.summary.buyCacheMax == 0, 0);
         assert!(book.summary.buyCacheMin == 0, 0);
         assert!(book.summary.buyCacheQty == 0, 0);
@@ -4201,7 +4398,7 @@ module ferum::market {
         assert!(book.summary.buyTreeMax == 7000000000, 0);
 
         // Crank.
-        crank<FMA, FMB>(1);
+        crank<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
@@ -4215,8 +4412,8 @@ module ferum::market {
         assert_order_collateral(book, takerID, 0, 0);
         assert_order_unused(book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, makerAccID, 1030000000000, 965000000000);
-        assert_account_balances(book, takerAccID, 970000000000, 1021000000000);
+        assert_account_balances(book, makerAccKey, 1030000000000, 965000000000);
+        assert_account_balances(book, takerAccKey, 970000000000, 1021000000000);
         assert!(book.summary.buyCacheMax == 0, 0);
         assert!(book.summary.buyCacheMin == 0, 0);
         assert!(book.summary.buyCacheQty == 0, 0);
@@ -4241,12 +4438,12 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, makerUser);
         account::create_account_for_test(address_of(takerUser));
         deposit_fake_coins(ferum, 10000000000, takerUser);
-        let makerAccID = platform::get_user_identifier(makerUser);
-        open_market_account<FMA, FMB>(makerUser, makerAccID);
-        deposit_to_market_account<FMA, FMB>(makerUser, makerAccID, 1000000000000, 1000000000000);
-        let takerAccID = platform::get_user_identifier(takerUser);
-        open_market_account<FMA, FMB>(takerUser, takerAccID);
-        deposit_to_market_account<FMA, FMB>(takerUser, takerAccID, 1000000000000, 1000000000000);
+        let makerAccID = platform::account_identifier_for_test(makerUser);
+        let makerAccKey = open_market_account<FMA, FMB>(makerUser, vector[makerAccID]);
+        deposit_to_market_account<FMA, FMB>(makerUser, makerAccKey, 1000000000000, 1000000000000);
+        let takerAccID = platform::account_identifier_for_test(takerUser);
+        let takerAccKey = open_market_account<FMA, FMB>(takerUser, vector[takerAccID]);
+        deposit_to_market_account<FMA, FMB>(takerUser, takerAccKey, 1000000000000, 1000000000000);
 
         // Setup.
         add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
@@ -4280,8 +4477,8 @@ module ferum::market {
         assert_order_collateral(book, makerID, 63000000000, 0);
         assert_order_used(book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, makerAccID, 1000000000000, 937000000000);
-        assert_account_balances(book, takerAccID, 920000000000, 1000000000000);
+        assert_account_balances(book, makerAccKey, 1000000000000, 937000000000);
+        assert_account_balances(book, takerAccKey, 920000000000, 1000000000000);
         assert!(book.summary.buyCacheMax == 9000000000, 0);
         assert!(book.summary.buyCacheMin == 8000000000, 0);
         assert!(book.summary.buyCacheQty == 80000000000, 0);
@@ -4294,7 +4491,7 @@ module ferum::market {
         assert!(book.summary.sellTreeMin == 0, 0);
 
         // Crank.
-        crank<FMA, FMB>(1);
+        crank<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
@@ -4313,8 +4510,8 @@ module ferum::market {
         assert_order_collateral(book, takerID, 0, 10000000000);
         assert_order_used(book, takerID);
         assert_order_unused(book, makerID);
-        assert_account_balances(book, makerAccID, 1070000000000, 937000000000);
-        assert_account_balances(book, takerAccID, 920000000000, 1063000000000);
+        assert_account_balances(book, makerAccKey, 1070000000000, 937000000000);
+        assert_account_balances(book, takerAccKey, 920000000000, 1063000000000);
         assert!(book.summary.buyCacheMax == 8000000000, 0);
         assert!(book.summary.buyCacheMin == 8000000000, 0);
         assert!(book.summary.buyCacheQty == 80000000000, 0);
@@ -4347,15 +4544,15 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, makerUser2);
         account::create_account_for_test(address_of(takerUser));
         deposit_fake_coins(ferum, 10000000000, takerUser);
-        let maker1AccID = platform::get_user_identifier(makerUser1);
-        open_market_account<FMA, FMB>(makerUser1, maker1AccID);
-        deposit_to_market_account<FMA, FMB>(makerUser1, maker1AccID, 1000000000000, 1000000000000);
-        let maker2AccID = platform::get_user_identifier(makerUser2);
-        open_market_account<FMA, FMB>(makerUser2, maker2AccID);
-        deposit_to_market_account<FMA, FMB>(makerUser2, maker2AccID, 1000000000000, 1000000000000);
-        let takerAccID = platform::get_user_identifier(takerUser);
-        open_market_account<FMA, FMB>(takerUser, takerAccID);
-        deposit_to_market_account<FMA, FMB>(takerUser, takerAccID, 1000000000000, 1000000000000);
+        let maker1AccID = platform::account_identifier_for_test(makerUser1);
+        let maker1AccKey = open_market_account<FMA, FMB>(makerUser1, vector[maker1AccID]);
+        deposit_to_market_account<FMA, FMB>(makerUser1, maker1AccKey, 1000000000000, 1000000000000);
+        let maker2AccID = platform::account_identifier_for_test(makerUser2);
+        let maker2AccKey = open_market_account<FMA, FMB>(makerUser2, vector[maker2AccID]);
+        deposit_to_market_account<FMA, FMB>(makerUser2, maker2AccKey, 1000000000000, 1000000000000);
+        let takerAccID = platform::account_identifier_for_test(takerUser);
+        let takerAccKey = open_market_account<FMA, FMB>(takerUser, vector[takerAccID]);
+        deposit_to_market_account<FMA, FMB>(takerUser, takerAccKey, 1000000000000, 1000000000000);
 
         // Setup.
         let makerID3 = add_user_limit_order<FMA, FMB>(makerUser2, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
@@ -4415,9 +4612,9 @@ module ferum::market {
         assert_order_used(book, makerID3);
         assert_order_used(book, makerID4);
         assert_order_used(book, makerID5);
-        assert_account_balances(book, maker1AccID, 1000000000000, 883000000000);
-        assert_account_balances(book, maker2AccID, 1000000000000, 877000000000);
-        assert_account_balances(book, takerAccID, 700000000000, 1000000000000);
+        assert_account_balances(book, maker1AccKey, 1000000000000, 883000000000);
+        assert_account_balances(book, maker2AccKey, 1000000000000, 877000000000);
+        assert_account_balances(book, takerAccKey, 700000000000, 1000000000000);
         assert!(book.summary.buyCacheMax == 9000000000, 0);
         assert!(book.summary.buyCacheMin == 8000000000, 0);
         assert!(book.summary.buyCacheQty == 0, 0);
@@ -4425,7 +4622,7 @@ module ferum::market {
         assert!(book.summary.buyTreeMax == 7000000000, 0);
 
         // Crank.
-        crank<FMA, FMB>(1);
+        crank<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
@@ -4449,9 +4646,9 @@ module ferum::market {
         assert_order_unused(book, makerID4);
         assert_order_unused(book, makerID5);
         assert_order_unused(book, takerID);
-        assert_account_balances(book, maker1AccID, 1130000000000, 883000000000);
-        assert_account_balances(book, maker2AccID, 1170000000000, 877000000000);
-        assert_account_balances(book, takerAccID, 700000000000, 1240000000000);
+        assert_account_balances(book, maker1AccKey, 1130000000000, 883000000000);
+        assert_account_balances(book, maker2AccKey, 1170000000000, 877000000000);
+        assert_account_balances(book, takerAccKey, 700000000000, 1240000000000);
         assert!(book.summary.buyCacheMax == 0, 0);
         assert!(book.summary.buyCacheMin == 0, 0);
         assert!(book.summary.buyCacheQty == 0, 0);
@@ -4470,12 +4667,12 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, user2);
         account::create_account_for_test(address_of(user3));
         deposit_fake_coins(ferum, 10000000000, user3);
-        let user2AccID = platform::get_user_identifier(user2);
-        open_market_account<FMA, FMB>(user2, user2AccID);
-        deposit_to_market_account<FMA, FMB>(user2, user2AccID, 1000000000000, 1000000000000);
-        let user3AccID = platform::get_user_identifier(user3);
-        open_market_account<FMA, FMB>(user3, user3AccID);
-        deposit_to_market_account<FMA, FMB>(user3, user3AccID, 1000000000000, 1000000000000);
+        let user2AccID = platform::account_identifier_for_test(user2);
+        let user2AccKey = open_market_account<FMA, FMB>(user2, vector[user2AccID]);
+        deposit_to_market_account<FMA, FMB>(user2, user2AccKey, 1000000000000, 1000000000000);
+        let user3AccID = platform::account_identifier_for_test(user3);
+        let user3AccKey = open_market_account<FMA, FMB>(user3, vector[user3AccID]);
+        deposit_to_market_account<FMA, FMB>(user3, user3AccKey, 1000000000000, 1000000000000);
 
         // Setup.
         add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
@@ -4508,11 +4705,11 @@ module ferum::market {
         assert_order_collateral(book, makerID, 63000000000, 0);
         assert_order_used(book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, user2AccID, 1000000000000, 937000000000);
-        assert_account_balances(book, user3AccID, 970000000000, 1000000000000);
+        assert_account_balances(book, user2AccKey, 1000000000000, 937000000000);
+        assert_account_balances(book, user3AccKey, 970000000000, 1000000000000);
 
         // Crank.
-        crank<FMA, FMB>(1);
+        crank<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
@@ -4529,8 +4726,8 @@ module ferum::market {
         assert_order_collateral(book, makerID, 36000000000, 0);
         assert_order_unused(book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, user2AccID, 1030000000000, 937000000000);
-        assert_account_balances(book, user3AccID, 970000000000, 1027000000000);
+        assert_account_balances(book, user2AccKey, 1030000000000, 937000000000);
+        assert_account_balances(book, user3AccKey, 970000000000, 1027000000000);
     }
 
     #[test(aptos=@0x1, ferum=@ferum, user1=@0x3, user2=@0x4, user3=@0x5)]
@@ -4544,12 +4741,12 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, user2);
         account::create_account_for_test(address_of(user3));
         deposit_fake_coins(ferum, 10000000000, user3);
-        let user2AccID = platform::get_user_identifier(user2);
-        open_market_account<FMA, FMB>(user2, user2AccID);
-        deposit_to_market_account<FMA, FMB>(user2, user2AccID, 1000000000000, 1000000000000);
-        let user3AccID = platform::get_user_identifier(user3);
-        open_market_account<FMA, FMB>(user3, user3AccID);
-        deposit_to_market_account<FMA, FMB>(user3, user3AccID, 1000000000000, 1000000000000);
+        let user2AccID = platform::account_identifier_for_test(user2);
+        let user2AccKey = open_market_account<FMA, FMB>(user2, vector[user2AccID]);
+        deposit_to_market_account<FMA, FMB>(user2, user2AccKey, 1000000000000, 1000000000000);
+        let user3AccID = platform::account_identifier_for_test(user3);
+        let user3AccKey = open_market_account<FMA, FMB>(user3, vector[user3AccID]);
+        deposit_to_market_account<FMA, FMB>(user3, user3AccKey, 1000000000000, 1000000000000);
 
         // Setup.
         let order1 = add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
@@ -4580,11 +4777,11 @@ module ferum::market {
         assert_order_collateral(book, makerID, 35000000000, 0);
         assert_order_used(book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, user2AccID, 1000000000000, 965000000000);
-        assert_account_balances(book, user3AccID, 970000000000, 1000000000000);
+        assert_account_balances(book, user2AccKey, 1000000000000, 965000000000);
+        assert_account_balances(book, user3AccKey, 970000000000, 1000000000000);
 
         // Crank.
-        crank<FMA, FMB>(1);
+        crank<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
@@ -4598,8 +4795,8 @@ module ferum::market {
         assert_order_collateral(book, makerID, 14000000000, 0);
         assert_order_unused(book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, user2AccID, 1030000000000, 965000000000);
-        assert_account_balances(book, user3AccID, 970000000000, 1021000000000);
+        assert_account_balances(book, user2AccKey, 1030000000000, 965000000000);
+        assert_account_balances(book, user3AccKey, 970000000000, 1021000000000);
     }
 
     #[test(aptos=@0x1, ferum=@ferum, user1=@0x3, user2=@0x4, user3=@0x5)]
@@ -4613,12 +4810,12 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, user2);
         account::create_account_for_test(address_of(user3));
         deposit_fake_coins(ferum, 10000000000, user3);
-        let user2AccID = platform::get_user_identifier(user2);
-        open_market_account<FMA, FMB>(user2, user2AccID);
-        deposit_to_market_account<FMA, FMB>(user2, user2AccID, 1000000000000, 1000000000000);
-        let user3AccID = platform::get_user_identifier(user3);
-        open_market_account<FMA, FMB>(user3, user3AccID);
-        deposit_to_market_account<FMA, FMB>(user3, user3AccID, 1000000000000, 1000000000000);
+        let user2AccID = platform::account_identifier_for_test(user2);
+        let user2AccKey = open_market_account<FMA, FMB>(user2, vector[user2AccID]);
+        deposit_to_market_account<FMA, FMB>(user2, user2AccKey, 1000000000000, 1000000000000);
+        let user3AccID = platform::account_identifier_for_test(user3);
+        let user3AccKey = open_market_account<FMA, FMB>(user3, vector[user3AccID]);
+        deposit_to_market_account<FMA, FMB>(user3, user3AccKey, 1000000000000, 1000000000000);
 
         // Setup.
         add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
@@ -4650,8 +4847,8 @@ module ferum::market {
         assert_order_collateral(book, makerID, 63000000000, 0);
         assert_order_used(book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, user2AccID, 1000000000000, 937000000000);
-        assert_account_balances(book, user3AccID, 930000000000, 1000000000000);
+        assert_account_balances(book, user2AccKey, 1000000000000, 937000000000);
+        assert_account_balances(book, user3AccKey, 930000000000, 1000000000000);
         assert!(book.summary.buyCacheMax == 9000000000, 0);
         assert!(book.summary.buyCacheMin == 8000000000, 0);
         assert!(book.summary.buyCacheQty == 80000000000, 0);
@@ -4659,7 +4856,7 @@ module ferum::market {
         assert!(book.summary.buyTreeMax == 7000000000, 0);
 
         // Crank.
-        crank<FMA, FMB>(1);
+        crank<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
@@ -4675,8 +4872,8 @@ module ferum::market {
         assert_order_collateral(book, makerID, 0, 0);
         assert_order_unused(book, takerID);
         assert_order_unused(book, makerID);
-        assert_account_balances(book, user2AccID, 1070000000000, 937000000000);
-        assert_account_balances(book, user3AccID, 930000000000, 1063000000000);
+        assert_account_balances(book, user2AccKey, 1070000000000, 937000000000);
+        assert_account_balances(book, user3AccKey, 930000000000, 1063000000000);
         assert!(book.summary.buyCacheMax == 8000000000, 0);
         assert!(book.summary.buyCacheMin == 8000000000, 0);
         assert!(book.summary.buyCacheQty == 80000000000, 0);
@@ -4695,12 +4892,12 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, user2);
         account::create_account_for_test(address_of(user3));
         deposit_fake_coins(ferum, 10000000000, user3);
-        let user2AccID = platform::get_user_identifier(user2);
-        open_market_account<FMA, FMB>(user2, user2AccID);
-        deposit_to_market_account<FMA, FMB>(user2, user2AccID, 1000000000000, 1000000000000);
-        let user3AccID = platform::get_user_identifier(user3);
-        open_market_account<FMA, FMB>(user3, user3AccID);
-        deposit_to_market_account<FMA, FMB>(user3, user3AccID, 1000000000000, 1000000000000);
+        let user2AccID = platform::account_identifier_for_test(user2);
+        let user2AccKey = open_market_account<FMA, FMB>(user2, vector[user2AccID]);
+        deposit_to_market_account<FMA, FMB>(user2, user2AccKey, 1000000000000, 1000000000000);
+        let user3AccID = platform::account_identifier_for_test(user3);
+        let user3AccKey = open_market_account<FMA, FMB>(user3, vector[user3AccID]);
+        deposit_to_market_account<FMA, FMB>(user3, user3AccKey, 1000000000000, 1000000000000);
 
         // Setup.
         let orderID2 = add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
@@ -4739,8 +4936,8 @@ module ferum::market {
         assert_order_used(book, takerID);
         assert_order_used(book, makerID1);
         assert_order_used(book, makerID2);
-        assert_account_balances(book, user2AccID, 1000000000000, 941000000000);
-        assert_account_balances(book, user3AccID, 930000000000, 1000000000000);
+        assert_account_balances(book, user2AccKey, 1000000000000, 941000000000);
+        assert_account_balances(book, user3AccKey, 930000000000, 1000000000000);
         assert!(book.summary.buyCacheMax == 0, 0);
         assert!(book.summary.buyCacheMin == 0, 0);
         assert!(book.summary.buyCacheQty == 0, 0);
@@ -4748,7 +4945,7 @@ module ferum::market {
         assert!(book.summary.buyTreeMax == 7000000000, 0);
 
         // Crank.
-        crank<FMA, FMB>(1);
+        crank<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
@@ -4764,8 +4961,8 @@ module ferum::market {
         assert_order_unused(book, takerID);
         assert_order_unused(book, makerID1);
         assert_order_used(book, makerID2);
-        assert_account_balances(book, user2AccID, 1070000000000, 941000000000);
-        assert_account_balances(book, user3AccID, 930000000000, 1047000000000);
+        assert_account_balances(book, user2AccKey, 1070000000000, 941000000000);
+        assert_account_balances(book, user3AccKey, 930000000000, 1047000000000);
         assert!(book.summary.buyCacheMax == 0, 0);
         assert!(book.summary.buyCacheMin == 0, 0);
         assert!(book.summary.buyCacheQty == 0, 0);
@@ -4790,12 +4987,12 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, makerUser);
         account::create_account_for_test(address_of(takerUser));
         deposit_fake_coins(ferum, 10000000000, takerUser);
-        let makerAccID = platform::get_user_identifier(makerUser);
-        open_market_account<FMA, FMB>(makerUser, makerAccID);
-        deposit_to_market_account<FMA, FMB>(makerUser, makerAccID, 1000000000000, 1000000000000);
-        let takerAccID = platform::get_user_identifier(takerUser);
-        open_market_account<FMA, FMB>(takerUser, takerAccID);
-        deposit_to_market_account<FMA, FMB>(takerUser, takerAccID, 1000000000000, 1000000000000);
+        let makerAccID = platform::account_identifier_for_test(makerUser);
+        let makerAccKey = open_market_account<FMA, FMB>(makerUser, vector[makerAccID]);
+        deposit_to_market_account<FMA, FMB>(makerUser, makerAccKey, 1000000000000, 1000000000000);
+        let takerAccID = platform::account_identifier_for_test(takerUser);
+        let takerAccKey = open_market_account<FMA, FMB>(takerUser, vector[takerAccID]);
+        deposit_to_market_account<FMA, FMB>(takerUser, takerAccKey, 1000000000000, 1000000000000);
 
         // Setup.
         add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 80000000000);
@@ -4829,8 +5026,8 @@ module ferum::market {
         assert_order_collateral(book, makerID, 0, 70000000000);
         assert_order_used(book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, makerAccID, 930000000000, 1000000000000);
-        assert_account_balances(book, takerAccID, 1000000000000, 956000000000);
+        assert_account_balances(book, makerAccKey, 930000000000, 1000000000000);
+        assert_account_balances(book, takerAccKey, 1000000000000, 956000000000);
         assert!(book.summary.sellCacheMax == 6000000000, 0);
         assert!(book.summary.sellCacheMin == 5000000000, 0);
         assert!(book.summary.sellCacheQty == 80000000000, 0);
@@ -4843,7 +5040,7 @@ module ferum::market {
         assert!(book.summary.buyTreeMax == 0, 0);
 
         // Crank.
-        crank<FMA, FMB>(1);
+        crank<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
@@ -4862,8 +5059,8 @@ module ferum::market {
         assert_order_collateral(book, takerID, 5500000000, 0);
         assert_order_used(book, takerID);
         assert_order_unused(book, makerID);
-        assert_account_balances(book, makerAccID, 930000000000, 1035000000000);
-        assert_account_balances(book, takerAccID, 1070000000000, 959500000000);
+        assert_account_balances(book, makerAccKey, 930000000000, 1035000000000);
+        assert_account_balances(book, takerAccKey, 1070000000000, 959500000000);
         assert!(book.summary.sellCacheMax == 6000000000, 0);
         assert!(book.summary.sellCacheMin == 6000000000, 0);
         assert!(book.summary.sellCacheQty == 80000000000, 0);
@@ -4896,15 +5093,15 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, makerUser2);
         account::create_account_for_test(address_of(takerUser));
         deposit_fake_coins(ferum, 10000000000, takerUser);
-        let maker1AccID = platform::get_user_identifier(makerUser1);
-        open_market_account<FMA, FMB>(makerUser1, maker1AccID);
-        deposit_to_market_account<FMA, FMB>(makerUser1, maker1AccID, 1000000000000, 1000000000000);
-        let maker2AccID = platform::get_user_identifier(makerUser2);
-        open_market_account<FMA, FMB>(makerUser2, maker2AccID);
-        deposit_to_market_account<FMA, FMB>(makerUser2, maker2AccID, 1000000000000, 1000000000000);
-        let takerAccID = platform::get_user_identifier(takerUser);
-        open_market_account<FMA, FMB>(takerUser, takerAccID);
-        deposit_to_market_account<FMA, FMB>(takerUser, takerAccID, 1000000000000, 1000000000000);
+        let maker1AccID = platform::account_identifier_for_test(makerUser1);
+        let maker1AccKey = open_market_account<FMA, FMB>(makerUser1, vector[maker1AccID]);
+        deposit_to_market_account<FMA, FMB>(makerUser1, maker1AccKey, 1000000000000, 1000000000000);
+        let maker2AccID = platform::account_identifier_for_test(makerUser2);
+        let maker2AccKey = open_market_account<FMA, FMB>(makerUser2, vector[maker2AccID]);
+        deposit_to_market_account<FMA, FMB>(makerUser2, maker2AccKey, 1000000000000, 1000000000000);
+        let takerAccID = platform::account_identifier_for_test(takerUser);
+        let takerAccKey = open_market_account<FMA, FMB>(takerUser, vector[takerAccID]);
+        deposit_to_market_account<FMA, FMB>(takerUser, takerAccKey, 1000000000000, 1000000000000);
 
         // Setup.
         let makerID3 = add_user_limit_order<FMA, FMB>(makerUser2, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 80000000000);
@@ -4964,9 +5161,9 @@ module ferum::market {
         assert_order_used(book, makerID3);
         assert_order_used(book, makerID4);
         assert_order_used(book, makerID5);
-        assert_account_balances(book, maker1AccID, 870000000000, 1000000000000);
-        assert_account_balances(book, maker2AccID, 830000000000, 1000000000000);
-        assert_account_balances(book, takerAccID, 1000000000000, 745000000000);
+        assert_account_balances(book, maker1AccKey, 870000000000, 1000000000000);
+        assert_account_balances(book, maker2AccKey, 830000000000, 1000000000000);
+        assert_account_balances(book, takerAccKey, 1000000000000, 745000000000);
         assert!(book.summary.sellCacheMax == 6000000000, 0);
         assert!(book.summary.sellCacheMin == 5000000000, 0);
         assert!(book.summary.sellCacheQty == 0, 0);
@@ -4974,7 +5171,7 @@ module ferum::market {
         assert!(book.summary.sellTreeMin == 7000000000, 0);
 
         // Crank.
-        crank<FMA, FMB>(1);
+        crank<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
@@ -4998,9 +5195,9 @@ module ferum::market {
         assert_order_unused(book, makerID4);
         assert_order_unused(book, makerID5);
         assert_order_unused(book, takerID);
-        assert_account_balances(book, maker1AccID, 870000000000, 1065000000000);
-        assert_account_balances(book, maker2AccID, 830000000000, 1115000000000);
-        assert_account_balances(book, takerAccID, 1300000000000, 820000000000);
+        assert_account_balances(book, maker1AccKey, 870000000000, 1065000000000);
+        assert_account_balances(book, maker2AccKey, 830000000000, 1115000000000);
+        assert_account_balances(book, takerAccKey, 1300000000000, 820000000000);
         assert!(book.summary.sellCacheMax == 0, 0);
         assert!(book.summary.sellCacheMin == 0, 0);
         assert!(book.summary.sellCacheQty == 0, 0);
@@ -5019,12 +5216,12 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, user2);
         account::create_account_for_test(address_of(user3));
         deposit_fake_coins(ferum, 10000000000, user3);
-        let user2AccID = platform::get_user_identifier(user2);
-        open_market_account<FMA, FMB>(user2, user2AccID);
-        deposit_to_market_account<FMA, FMB>(user2, user2AccID, 1000000000000, 1000000000000);
-        let user3AccID = platform::get_user_identifier(user3);
-        open_market_account<FMA, FMB>(user3, user3AccID);
-        deposit_to_market_account<FMA, FMB>(user3, user3AccID, 1000000000000, 1000000000000);
+        let user2AccID = platform::account_identifier_for_test(user2);
+        let user2AccKey = open_market_account<FMA, FMB>(user2, vector[user2AccID]);
+        deposit_to_market_account<FMA, FMB>(user2, user2AccKey, 1000000000000, 1000000000000);
+        let user3AccID = platform::account_identifier_for_test(user3);
+        let user3AccKey = open_market_account<FMA, FMB>(user3, vector[user3AccID]);
+        deposit_to_market_account<FMA, FMB>(user3, user3AccKey, 1000000000000, 1000000000000);
 
         // Setup.
         add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 80000000000);
@@ -5057,11 +5254,11 @@ module ferum::market {
         assert_order_collateral(book, makerID, 0, 70000000000);
         assert_order_used(book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, user2AccID, 930000000000, 1000000000000);
-        assert_account_balances(book, user3AccID, 1000000000000, 983500000000);
+        assert_account_balances(book, user2AccKey, 930000000000, 1000000000000);
+        assert_account_balances(book, user3AccKey, 1000000000000, 983500000000);
 
         // Crank.
-        crank<FMA, FMB>(1);
+        crank<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 4, crankQty: 0)"),
@@ -5078,8 +5275,8 @@ module ferum::market {
         assert_order_collateral(book, makerID, 0, 40000000000);
         assert_order_unused(book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, user2AccID, 930000000000, 1015000000000);
-        assert_account_balances(book, user3AccID, 1030000000000, 985000000000);
+        assert_account_balances(book, user2AccKey, 930000000000, 1015000000000);
+        assert_account_balances(book, user3AccKey, 1030000000000, 985000000000);
     }
 
     #[test(aptos=@0x1, ferum=@ferum, user1=@0x3, user2=@0x4, user3=@0x5)]
@@ -5093,12 +5290,12 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, user2);
         account::create_account_for_test(address_of(user3));
         deposit_fake_coins(ferum, 10000000000, user3);
-        let user2AccID = platform::get_user_identifier(user2);
-        open_market_account<FMA, FMB>(user2, user2AccID);
-        deposit_to_market_account<FMA, FMB>(user2, user2AccID, 1000000000000, 1000000000000);
-        let user3AccID = platform::get_user_identifier(user3);
-        open_market_account<FMA, FMB>(user3, user3AccID);
-        deposit_to_market_account<FMA, FMB>(user3, user3AccID, 1000000000000, 1000000000000);
+        let user2AccID = platform::account_identifier_for_test(user2);
+        let user2AccKey = open_market_account<FMA, FMB>(user2, vector[user2AccID]);
+        deposit_to_market_account<FMA, FMB>(user2, user2AccKey, 1000000000000, 1000000000000);
+        let user3AccID = platform::account_identifier_for_test(user3);
+        let user3AccKey = open_market_account<FMA, FMB>(user3, vector[user3AccID]);
+        deposit_to_market_account<FMA, FMB>(user3, user3AccKey, 1000000000000, 1000000000000);
 
         // Setup.
         let orderID1 = add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 80000000000);
@@ -5129,11 +5326,11 @@ module ferum::market {
         assert_order_collateral(book, makerID, 0, 50000000000);
         assert_order_used(book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, user2AccID, 950000000000, 1000000000000);
-        assert_account_balances(book, user3AccID, 1000000000000, 974500000000);
+        assert_account_balances(book, user2AccKey, 950000000000, 1000000000000);
+        assert_account_balances(book, user3AccKey, 1000000000000, 974500000000);
 
         // Crank.
-        crank<FMA, FMB>(1);
+        crank<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 4, crankQty: 0)"),
@@ -5147,8 +5344,8 @@ module ferum::market {
         assert_order_collateral(book, makerID, 0, 20000000000);
         assert_order_unused(book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, user2AccID, 950000000000, 1021000000000);
-        assert_account_balances(book, user3AccID, 1030000000000, 979000000000);
+        assert_account_balances(book, user2AccKey, 950000000000, 1021000000000);
+        assert_account_balances(book, user3AccKey, 1030000000000, 979000000000);
     }
 
     #[test(aptos=@0x1, ferum=@ferum, user1=@0x3, user2=@0x4, user3=@0x5)]
@@ -5162,12 +5359,12 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, user2);
         account::create_account_for_test(address_of(user3));
         deposit_fake_coins(ferum, 10000000000, user3);
-        let user2AccID = platform::get_user_identifier(user2);
-        open_market_account<FMA, FMB>(user2, user2AccID);
-        deposit_to_market_account<FMA, FMB>(user2, user2AccID, 1000000000000, 1000000000000);
-        let user3AccID = platform::get_user_identifier(user3);
-        open_market_account<FMA, FMB>(user3, user3AccID);
-        deposit_to_market_account<FMA, FMB>(user3, user3AccID, 1000000000000, 1000000000000);
+        let user2AccID = platform::account_identifier_for_test(user2);
+        let user2AccKey = open_market_account<FMA, FMB>(user2, vector[user2AccID]);
+        deposit_to_market_account<FMA, FMB>(user2, user2AccKey, 1000000000000, 1000000000000);
+        let user3AccID = platform::account_identifier_for_test(user3);
+        let user3AccKey = open_market_account<FMA, FMB>(user3, vector[user3AccID]);
+        deposit_to_market_account<FMA, FMB>(user3, user3AccKey, 1000000000000, 1000000000000);
 
         // Setup.
         add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 80000000000);
@@ -5199,8 +5396,8 @@ module ferum::market {
         assert_order_collateral(book, makerID, 0, 70000000000);
         assert_order_used(book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, user2AccID, 930000000000, 1000000000000);
-        assert_account_balances(book, user3AccID, 1000000000000, 961500000000);
+        assert_account_balances(book, user2AccKey, 930000000000, 1000000000000);
+        assert_account_balances(book, user3AccKey, 1000000000000, 961500000000);
         assert!(book.summary.sellCacheMax == 6000000000, 0);
         assert!(book.summary.sellCacheMin == 5000000000, 0);
         assert!(book.summary.sellCacheQty == 80000000000, 0);
@@ -5208,7 +5405,7 @@ module ferum::market {
         assert!(book.summary.sellTreeMin == 7000000000, 0);
 
         // Crank.
-        crank<FMA, FMB>(1);
+        crank<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 4, crankQty: 0)"),
@@ -5224,8 +5421,8 @@ module ferum::market {
         assert_order_collateral(book, makerID, 0, 0);
         assert_order_unused(book, takerID);
         assert_order_unused(book, makerID);
-        assert_account_balances(book, user2AccID, 930000000000, 1035000000000);
-        assert_account_balances(book, user3AccID, 1070000000000, 965000000000);
+        assert_account_balances(book, user2AccKey, 930000000000, 1035000000000);
+        assert_account_balances(book, user3AccKey, 1070000000000, 965000000000);
         assert!(book.summary.sellCacheMax == 6000000000, 0);
         assert!(book.summary.sellCacheMin == 6000000000, 0);
         assert!(book.summary.sellCacheQty == 80000000000, 0);
@@ -5244,12 +5441,12 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, user2);
         account::create_account_for_test(address_of(user3));
         deposit_fake_coins(ferum, 10000000000, user3);
-        let user2AccID = platform::get_user_identifier(user2);
-        open_market_account<FMA, FMB>(user2, user2AccID);
-        deposit_to_market_account<FMA, FMB>(user2, user2AccID, 1000000000000, 1000000000000);
-        let user3AccID = platform::get_user_identifier(user3);
-        open_market_account<FMA, FMB>(user3, user3AccID);
-        deposit_to_market_account<FMA, FMB>(user3, user3AccID, 1000000000000, 1000000000000);
+        let user2AccID = platform::account_identifier_for_test(user2);
+        let user2AccKey = open_market_account<FMA, FMB>(user2, vector[user2AccID]);
+        deposit_to_market_account<FMA, FMB>(user2, user2AccKey, 1000000000000, 1000000000000);
+        let user3AccID = platform::account_identifier_for_test(user3);
+        let user3AccKey = open_market_account<FMA, FMB>(user3, vector[user3AccID]);
+        deposit_to_market_account<FMA, FMB>(user3, user3AccKey, 1000000000000, 1000000000000);
 
         // Setup.
         let orderID1 = add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 80000000000);
@@ -5288,8 +5485,8 @@ module ferum::market {
         assert_order_used(book, takerID);
         assert_order_used(book, makerID1);
         assert_order_used(book, makerID2);
-        assert_account_balances(book, user2AccID, 920000000000, 1000000000000);
-        assert_account_balances(book, user3AccID, 1000000000000, 940500000000);
+        assert_account_balances(book, user2AccKey, 920000000000, 1000000000000);
+        assert_account_balances(book, user3AccKey, 1000000000000, 940500000000);
         assert!(book.summary.sellCacheMax == 0, 0);
         assert!(book.summary.sellCacheMin == 0, 0);
         assert!(book.summary.sellCacheQty == 0, 0);
@@ -5297,7 +5494,7 @@ module ferum::market {
         assert!(book.summary.sellTreeMin == 7000000000, 0);
 
         // Crank.
-        crank<FMA, FMB>(1);
+        crank<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 4, crankQty: 0)"),
@@ -5313,8 +5510,8 @@ module ferum::market {
         assert_order_unused(book, takerID);
         assert_order_unused(book, makerID1);
         assert_order_used(book, makerID2);
-        assert_account_balances(book, user2AccID, 920000000000, 1051000000000);
-        assert_account_balances(book, user3AccID, 1070000000000, 949000000000);
+        assert_account_balances(book, user2AccKey, 920000000000, 1051000000000);
+        assert_account_balances(book, user3AccKey, 1070000000000, 949000000000);
         assert!(book.summary.sellCacheMax == 0, 0);
         assert!(book.summary.sellCacheMin == 0, 0);
         assert!(book.summary.sellCacheQty == 0, 0);
@@ -8324,7 +8521,7 @@ module ferum::market {
 
     // </editor-fold>
 
-    // <editor-fold defaultstate="collapsed" desc="Test utils">
+    // <editor-fold defaultstate="collapsed" desc="Market Test utils">
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_setup_ferum(aptos: &signer, ferum: &signer, user: &signer)
@@ -8334,10 +8531,10 @@ module ferum::market {
         assert!(marketAddr == get_market_addr<FMA, FMB>(), 0);
         assert!(marketAddr == address_of(ferum), 0);
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
-        let userAccIdentifier = platform::get_user_identifier(user);
-        assert!(table::contains(&book.marketAccounts, userAccIdentifier), 0);
-        assert_instrument_balance(book, address_of(user), 10000000000);
-        assert_quote_balance(book, address_of(user), 10000000000);
+        let userAccIdentifier = platform::account_identifier_for_test(user);
+        let accountKey = account_key_from_identifier(userAccIdentifier);
+        assert!(table::contains(&book.marketAccounts, accountKey), 0);
+        assert_account_balances(book, accountKey, 10000000000, 10000000000);
     }
 
     #[test_only]
@@ -8654,16 +8851,16 @@ module ferum::market {
     }
 
     #[test_only]
-    fun assert_instrument_balance<I, Q>(book: &Orderbook<I, Q>, user: address, expected: u64) {
-        let userAccIdentifier = platform::get_user_identifier_from_address(user);
-        let acc = table::borrow(&book.marketAccounts, userAccIdentifier);
+    fun assert_instrument_balance<I, Q>(book: &Orderbook<I, Q>, user: &signer, expected: u64) {
+        let userAccIdentifier = platform::account_identifier_for_test(user);
+        let acc = table::borrow(&book.marketAccounts, account_key_from_identifier(userAccIdentifier));
         assert!(coin::value(&acc.instrumentBalance) == expected, 0);
     }
 
     #[test_only]
-    fun assert_quote_balance<I, Q>(book: &Orderbook<I, Q>, user: address, expected: u64) {
-        let userAccIdentifier = platform::get_user_identifier_from_address(user);
-        let acc = table::borrow(&book.marketAccounts, userAccIdentifier);
+    fun assert_quote_balance<I, Q>(book: &Orderbook<I, Q>, user: &signer, expected: u64) {
+        let userAccIdentifier = platform::account_identifier_for_test(user);
+        let acc = table::borrow(&book.marketAccounts, account_key_from_identifier(userAccIdentifier));
         assert!(coin::value(&acc.quoteBalance) == expected, 0);
     }
 
@@ -8761,6 +8958,7 @@ module ferum::market {
     fun assert_order_unused<I, Q>(book: &Orderbook<I, Q>, orderID: u32) {
         let order = table::borrow(&book.ordersTable.objects, orderID);
         assert!(order.priceLevelID == 0, 0);
+        assert!(order.metadata.ownerAddress == @0, 0);
         let currOrderID = book.ordersTable.unusedStack;
         let found = false;
         while (currOrderID != 0) {
@@ -8778,6 +8976,7 @@ module ferum::market {
     fun assert_order_used<I, Q>(book: &Orderbook<I, Q>, orderID: u32) {
         let order = table::borrow(&book.ordersTable.objects, orderID);
         assert!(order.next == 0, 0);
+        assert!(order.metadata.ownerAddress != @0, 0);
         let currNodeID = book.ordersTable.unusedStack;
         let found = false;
         while (currNodeID != 0) {
@@ -8793,11 +8992,11 @@ module ferum::market {
     #[test_only]
     fun assert_account_balances<I, Q>(
         book: &Orderbook<I, Q>,
-        accountIdentifier: UserIdentifier,
+        accountKey: MarketAccountKey,
         instrumentBalance: u64,
         quoteBalance: u64,
     ) {
-        let account = table::borrow(&book.marketAccounts, accountIdentifier);
+        let account = table::borrow(&book.marketAccounts, accountKey);
         if (coin::value(&account.instrumentBalance) != utils::fp_convert(instrumentBalance, coin::decimals<I>(), FP_NO_PRECISION_LOSS)) {
             debug::print(&s(b"Actual instrument balance (in I coin decimals)"));
             debug::print(&coin::value(&account.instrumentBalance));
@@ -8814,14 +9013,14 @@ module ferum::market {
     fun add_user_limit_order<I, Q>(user: &signer, side: u8, behaviour: u8, price: u64, qty: u64): u32
         acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
-        add_order<I, Q>(user, platform::get_user_identifier(user), side, behaviour, price, qty, 0, 0)
+        add_order_entry<I, Q>(user, side, behaviour, price, qty, 0, 0)
     }
 
     #[test_only]
     fun add_user_market_order<I, Q>(user: &signer, side: u8, behaviour: u8, qty: u64, maxBuyCollateral: u64): u32
         acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
-        add_order<I, Q>(user, platform::get_user_identifier(user), side, behaviour, 0, qty, 0, maxBuyCollateral)
+        add_order_entry<I, Q>(user, side, behaviour, 0, qty, 0, maxBuyCollateral)
     }
 
     #[test_only]
@@ -8837,9 +9036,9 @@ module ferum::market {
         init_ferum(ferum);
         new_fee_type_entry(ferum, s(b"test"), 0, 0, 0);
         init_market_entry<I, Q>(ferum, 4, 4, maxCacheSize, s(b"test"));
-        let userIdentifier = platform::get_user_identifier(user);
-        open_market_account<I, Q>(user, userIdentifier);
-        deposit_to_market_account<I, Q>(user, userIdentifier, 1000000000000, 1000000000000);
+        let userIdentifier = platform::account_identifier_for_test(user);
+        let accountKey = open_market_account<I, Q>(user, vector[userIdentifier]);
+        deposit_to_market_account<I, Q>(user, accountKey, 1000000000000, 1000000000000);
         let marketAddr = get_market_addr<I, Q>();
         // Pre-emptive borrows so test signatures are consistent.
         borrow_global<IndexingEventHandles<I, Q>>(marketAddr);
@@ -8853,15 +9052,9 @@ module ferum::market {
 
     // </editor-fold>
 
-    // <editor-fold defaultstate="collapsed" desc="Inlined admin">
+    // </editor-fold>
 
-    // Errors
-    const ERR_NOT_ALLOWED: u64 = 200;
-    const ERR_MARKET_NOT_EXISTS: u64 = 201;
-    const ERR_MARKET_EXISTS: u64 = 202;
-    const ERR_INVALID_FEE_TYPE: u64 = 203;
-    const ERR_FEE_TYPE_EXISTS: u64 = 204;
-    const ERR_FE_UNINITED: u64 = 205;
+    // <editor-fold defaultstate="collapsed" desc="Inlined admin">
 
     // Structs.
     // Global info object for ferum.
@@ -9069,10 +9262,6 @@ module ferum::market {
     // </editor-fold>
 
     // <editor-fold defaultstate="collapsed" desc="Inlined fees">
-
-    // Errors.
-    const ERR_INVALID_FEE_STRUCTURE: u64 = 301;
-    const ERR_TIER_NOT_FOUND: u64 = 302;
 
     // Differing teirs users can qualify for.
     struct UserFeeTier has store, drop {
@@ -9527,17 +9716,13 @@ module ferum::market {
 
     // <editor-fold defaultstate="collapsed" desc="Inlined Cache">
 
-    const ERR_CACHE_DUPLICATE_ITEM: u64 = 1;
-    const ERR_CACHE_INVALID_TYPE: u64 = 2;
-    const ERR_CACHE_ITEM_NOT_FOUND: u64 = 3;
-
     struct CacheNode<T: store> has store, drop {
         key: u64,
         value: T,
     }
 
     struct Cache<T: store> has store {
-        side: u8,
+        side: u8, // The cache uses the side enums.
         list: vector<CacheNode<T>>,
     }
 
@@ -9877,9 +10062,6 @@ module ferum::market {
 
     // <editor-fold defaultstate="collapsed" desc="Inlined NodeList">
 
-    const ERR_EMPTY_LIST: u64 = 1;
-    const ERR_LIST_ELEM_NOT_FOUND: u64 = 2;
-
     struct ListIterator has drop {
         prevNodeID: u32,
         nodeID: u32,
@@ -9914,7 +10096,7 @@ module ferum::market {
     }
 
     inline fun list_pop<T: store>(list: &mut NodeList<T>): T {
-        assert!(list.length > 0, ERR_EMPTY_LIST);
+        assert!(list.length > 0, ERR_LIST_EMPTY);
         let nodeID = list.head;
         let node = table::borrow_mut(&mut list.nodes, nodeID);
         // Inlined pop from front.
@@ -9940,7 +10122,7 @@ module ferum::market {
 
     // Returns elements from first node of the list in reversed order.
     inline fun list_pop_node_reversed<T: store>(list: &mut NodeList<T>): vector<T> {
-        assert!(list.length > 0, ERR_EMPTY_LIST);
+        assert!(list.length > 0, ERR_LIST_EMPTY);
         let nodeID = list.head;
         let node = table::borrow_mut(&mut list.nodes, nodeID);
         let out = vector[];
@@ -10552,31 +10734,6 @@ module ferum::market {
 
     // <editor-fold defaultstate="collapsed" desc="Inlined B-Tree">
 
-    // Constants.
-
-    const MAX_U64: u64 = 18446744073709551615;
-    const MAX_U16: u64 = 65535;
-
-    // Child types used for deletions.
-    const CHILD_TYPE_NULL: u8 = 0;
-    const CHILD_TYPE_LEFT: u8 = 1;
-    const CHILD_TYPE_RIGHT: u8 = 2;
-
-    // Iterator types.
-    const DECREASING_ITERATOR: u8 = 1; // Used for buys.
-    const INCREASING_ITERATOR: u8 = 2; // Used for sells.
-
-    // Errors
-
-    const ERR_DUPLICATE_ITEM: u64 = 1;
-    const ERR_ELEM_DOES_NOT_EXIST: u64 = 4;
-    const ERR_INVALID_TREE_DEGREE: u64 = 5;
-    const ERR_INVALID_ITERATOR_TYPE: u64 = 6;
-    const ERR_EMPTY_ITERATOR: u64 = 7;
-    const ERR_DUPLICATE_ENTRY: u64 = 8;
-    const ERR_INVALID_CACHE_SIZE: u64 = 9;
-    const ERR_INVALID_TREE_TYPE: u64 = 10;
-
     // Structs
 
     struct TreeIterator has drop {
@@ -10659,8 +10816,8 @@ module ferum::market {
     }
 
     inline fun new_tree<T: copy + store + drop>(m: u64): Tree<T> {
-        assert!(m >= 4, ERR_INVALID_TREE_DEGREE);
-        assert!(m % 2 == 0, ERR_INVALID_TREE_DEGREE);
+        assert!(m >= 4, ERR_TREE_INVALID_TREE_DEGREE);
+        assert!(m % 2 == 0, ERR_TREE_INVALID_TREE_DEGREE);
         Tree {
             root: 0,
             treeSize: 0,
@@ -10774,7 +10931,7 @@ module ferum::market {
                     insertIdx = insertIdx + 1;
                     continue
                 };
-                assert!(!isLeafNode || elem.key != key, ERR_DUPLICATE_ENTRY);
+                assert!(!isLeafNode || elem.key != key, ERR_TREE_DUPLICATE_ENTRY);
                 break
             };
             let prevElemChild = if (insertIdx == 0) {
@@ -10991,7 +11148,7 @@ module ferum::market {
             }
         };
 
-        assert!(found, ERR_ELEM_DOES_NOT_EXIST);
+        assert!(found, ERR_TREE_ELEM_DOES_NOT_EXIST);
 
         // Once the item has been found, we need to start deleting.
         let m = tree.m;
@@ -11378,7 +11535,7 @@ module ferum::market {
                 let node = table::borrow(&tree.nodes, tree.max);
                 (tree.max, vector::length(&node.elements) - 1)
             } else {
-                abort ERR_INVALID_ITERATOR_TYPE
+                abort ERR_TREE_INVALID_ITERATOR_TYPE
             };
             TreeIterator {
                 pos: TreePosition {
@@ -11405,21 +11562,21 @@ module ferum::market {
     inline fun tree_get_mut<T: copy + store + drop>(tree: &mut Tree<T>, pos: &TreePosition): (u64, &mut T) {
         let node = table::borrow_mut(&mut tree.nodes, pos.nodeID);
         let elem = vector::borrow_mut(&mut node.elements, pos.idx);
-        assert!(vector::length(&elem.value) > 0, ERR_ELEM_DOES_NOT_EXIST);
+        assert!(vector::length(&elem.value) > 0, ERR_TREE_ELEM_DOES_NOT_EXIST);
         (elem.key, vector::borrow_mut(&mut elem.value, 0))
     }
 
     inline fun tree_get<T: copy + store + drop>(tree: &Tree<T>, pos: &TreePosition): (u64, &T) {
         let node = table::borrow(&tree.nodes, pos.nodeID);
         let elem = vector::borrow(&node.elements, pos.idx);
-        assert!(vector::length(&elem.value) > 0, ERR_ELEM_DOES_NOT_EXIST);
+        assert!(vector::length(&elem.value) > 0, ERR_TREE_ELEM_DOES_NOT_EXIST);
         (elem.key, vector::borrow(&elem.value, 0))
     }
 
     inline fun tree_pop_max<T: copy + store + drop>(tree: &mut Tree<T>): (u64, T) {
         let node = table::borrow(&tree.nodes, tree.max);
         let elem = vector::borrow(&node.elements, vector::length(&node.elements) - 1);
-        assert!(vector::length(&elem.value) > 0, ERR_ELEM_DOES_NOT_EXIST);
+        assert!(vector::length(&elem.value) > 0, ERR_TREE_ELEM_DOES_NOT_EXIST);
         let price = elem.key;
         let elem = *vector::borrow(&elem.value, 0);
         tree_delete(tree, price);
@@ -11429,7 +11586,7 @@ module ferum::market {
     inline fun tree_pop_min<T: copy + store + drop>(tree: &mut Tree<T>): (u64, T) {
         let node = table::borrow(&tree.nodes, tree.min);
         let elem = vector::borrow(&node.elements, 0);
-        assert!(vector::length(&elem.value) > 0, ERR_ELEM_DOES_NOT_EXIST);
+        assert!(vector::length(&elem.value) > 0, ERR_TREE_ELEM_DOES_NOT_EXIST);
         let price = elem.key;
         let elem = *vector::borrow(&elem.value, 0);
         tree_delete(tree, price);
@@ -11437,7 +11594,7 @@ module ferum::market {
     }
 
     inline fun tree_next<T: copy + store + drop>(tree: &Tree<T>, it: &mut TreeIterator) {
-        assert!(it.pos.nodeID != 0, ERR_EMPTY_ITERATOR);
+        assert!(it.pos.nodeID != 0, ERR_TREE_EMPTY_ITERATOR);
         let node = table::borrow(&tree.nodes, it.pos.nodeID);
         if (it.type == DECREASING_ITERATOR) {
             if (it.pos.idx > 0) {

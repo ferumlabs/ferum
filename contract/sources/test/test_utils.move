@@ -3,6 +3,7 @@ module ferum::test_utils {
     use std::vector;
     #[test_only]
     use aptos_std::table;
+    #[test_only]
     use std::string;
 
     //
