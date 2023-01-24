@@ -21,10 +21,6 @@
 //   - Random protocol cant add an order for a non protocol market account
 //   - Protocol can add an order for user from protocol market accounts
 //   - User cannot add an order from a protocol market account
-// - Order types
-//   - fok
-//   - ioc
-//   - post
 
 module ferum::market {
     use aptos_framework::coin;

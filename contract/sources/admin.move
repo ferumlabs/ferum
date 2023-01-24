@@ -10,7 +10,6 @@ module ferum::admin {
     // use aptos_framework::account;
 
     friend ferum::market;
-    // friend ferum::slv;
 
     //
     // Enums
@@ -44,7 +43,7 @@ module ferum::admin {
         // fees: Fees,
     }
 
-    // // Essentially a map of all fee types to FeeStructures.
+    // Essentially a map of all fee types to FeeStructures.
     // struct Fees has store {
     //     stable: FeeStructure,
     //     default: FeeStructure,
