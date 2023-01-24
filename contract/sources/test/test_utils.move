@@ -182,6 +182,7 @@ module ferum::test_utils {
         }
     }
 
+    #[test_only]
     public fun s(bytes: vector<u8>): string::String {
         string::utf8(bytes)
     }

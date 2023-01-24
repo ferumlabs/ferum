@@ -53,6 +53,7 @@ module ferum::market {
     use aptos_std::table_with_length as twl;
     #[test_only]
     use ferum::test_utils as ftu;
+    #[test_only]
     use ferum::test_utils::s;
     use aptos_framework::event::{EventHandle, emit_event};
     use ferum::platform;
@@ -64,6 +65,7 @@ module ferum::market {
     use ferum::platform::UserIdentifier;
     use std::string;
     use aptos_std::type_info;
+    use ferum::token;
 
     //
     // Errors
@@ -184,26 +186,42 @@ module ferum::market {
     }
 
     struct MarketAccount<phantom I, phantom Q> has store {
+        // List of ids of orders which are still active for this account.
         activeOrders: vector<u32>,
+        // The total instrument coin balance for this order.
         instrumentBalance: coin::Coin<I>,
+        // The total quote coin balance for this order.
         quoteBalance: coin::Coin<Q>,
     }
 
     struct Order<phantom I, phantom Q> has store {
+        // Metadata of the order.
         metadata: OrderMetadata,
+        // The buy collateral for this order. Will be 0 if the order is a sell order.
         buyCollateral: coin::Coin<Q>,
+        // The sell collateral for this order. Will be 0 if the order is a buy order.
         sellCollateral: coin::Coin<I>,
+        // The id of the price level this order belongs to. Note that the id can be 0 even when the order is in use.
+        // This happens when the order is a taker order with filled qty which is still pending a crank turn but was
+        // never added to the book.
         priceLevelID: u16,
+        // Pointer to the next order in the unused stack. 0 if this order is currently in use.
         next: u32,
     }
 
     struct PriceLevelOrder has store, copy, drop {
+        // The id of the order.
         id: u32,
+        // The unfilled qty of the order. Note that this qty also includes qty that has been executed but is still
+        // pending a crank turn.
         qty: u64,
     }
 
     struct PriceLevel has store {
+        // The list of orders at this price level.
         orders: NodeList<PriceLevelOrder>,
+        // Pointer to the next price level in the unused stack. 0 if this
+        // price level is currently in use.
         next: u16,
     }
 
@@ -272,6 +290,8 @@ module ferum::market {
     }
 
     struct Orderbook<phantom I, phantom Q> has key, store {
+        // Top level summary variables for this market. Used primarily to avoid having to load both the table and
+        // cache.
         summary: MarketSummary,
         // The maximum number of elements that can go in the cache.
         maxCacheSize: u8,
@@ -320,6 +340,11 @@ module ferum::market {
         finalizations: EventHandle<IndexingFinalizeEvent>
     }
 
+    struct MarketProceeds<phantom I, phantom Q> has key {
+        instrumentProceeds: coin::Coin<I>,
+        quoteProceeds: coin::Coin<Q>,
+    }
+
     // Struct encapsulating price at a given timestamp for the market.
     // struct Quote has drop, store {
     //     // Type info for the instrument coin type for the order.
@@ -354,6 +379,7 @@ module ferum::market {
         owner: &signer, instrumentDecimals: u8, quoteDecimals: u8, maxCacheSize: u8, feeType: string::String
     ) acquires FerumInfo {
         let ownerAddr = address_of(owner);
+        assert!(ownerAddr == @ferum, ERR_NOT_ALLOWED);
         assert!(!exists<Orderbook<I, Q>>(ownerAddr), ERR_BOOK_EXISTS);
         let (iCoinDecimals, qCoinDecimals) = validate_coins<I, Q>();
         assert!(iCoinDecimals >= instrumentDecimals && qCoinDecimals >= quoteDecimals, ERR_INVALID_DECIMAL_CONFIG);
@@ -476,6 +502,7 @@ module ferum::market {
         let sellTree = &mut borrow_global_mut<MarketSellTree<I, Q>>(marketAddr).tree;
         let buyTree = &mut borrow_global_mut<MarketBuyTree<I, Q>>(marketAddr).tree;
         let eventHandles = borrow_global_mut<IndexingEventHandles<I, Q>>(marketAddr);
+        let feeStructure = get_fee_structure(book.feeType);
         let instrumentDecimals = coin::decimals<I>();
         let quoteDecimals = coin::decimals<Q>();
         while (i < limit) {
@@ -495,6 +522,7 @@ module ferum::market {
                     &mut eventHandles.finalizations,
                     instrumentDecimals,
                     quoteDecimals,
+                    feeStructure,
                 );
                 j = j + 1;
                 i = i + 1;
@@ -512,7 +540,11 @@ module ferum::market {
     // Public functions.
 
     public fun open_market_account<I, Q>(owner: &signer, userIdentifier: UserIdentifier) acquires FerumInfo, Orderbook {
-        assert!(address_of(owner) == platform::get_user_address(&userIdentifier), ERR_NOT_OWNER);
+        let ownerAddr = address_of(owner);
+        assert!(ownerAddr == platform::get_user_address(&userIdentifier), ERR_NOT_OWNER);
+        if (!coin::is_account_registered<token::Fe>(ownerAddr)) {
+            coin::register<token::Fe>(owner);
+        };
         let marketAddr = get_market_addr<I, Q>();
         let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
         table::add(&mut book.marketAccounts, userIdentifier, MarketAccount<I, Q>{
@@ -555,6 +587,7 @@ module ferum::market {
         finalizeEventHandle: &mut EventHandle<IndexingFinalizeEvent>,
         instrumentDecimals: u8,
         quoteDecimals: u8,
+        feeStructure: &FeeStructure,
     ) {
         let priceLevelsTable = &mut book.priceLevelsTable;
         let ordersTable = &mut book.ordersTable;
@@ -569,6 +602,19 @@ module ferum::market {
         let takerSellCollateral = coin::extract_all(&mut takerOrder.sellCollateral);
         let takerInstrumentProceeds = coin::zero<I>();
         let takerQuoteProceeds = coin::zero<Q>();
+        let (takerProtocolAddress, takerUserAddress) = platform::get_addresses_from_user_identifier(&takerAccountIdentifier);
+        let takerUserFeBalance = if (!coin::is_account_registered<token::Fe>(takerUserAddress)) {
+            0
+        } else {
+            coin::balance<token::Fe>(takerUserAddress)
+        };
+        let (_, _takerUserFee) = get_user_fee(feeStructure, takerUserFeBalance);
+        let takerProtocolFeBalance = if (!coin::is_account_registered<token::Fe>(takerProtocolAddress)) {
+            0
+        } else {
+            coin::balance<token::Fe>(takerProtocolAddress)
+        };
+        let _takerProtocolSplit = get_protocol_fee(feeStructure, takerProtocolFeBalance);
         // First, update the price level and orders in the price level.
         let qty = event.qty;
         let numElemsToDrop = 0;
@@ -593,6 +639,19 @@ module ferum::market {
                 makerOrder.metadata.unfilledQty = makerOrder.metadata.unfilledQty - execFillQty;
                 let makerAccountIdentifier = makerOrder.metadata.userIdentifier;
                 let makerAccount = table::borrow_mut(marketAccounts, makerAccountIdentifier);
+                let (makerProtocolAddress, makerUserAddress) = platform::get_addresses_from_user_identifier(&makerAccountIdentifier);
+                let makerUserFeBalance = if (!coin::is_account_registered<token::Fe>(makerUserAddress)) {
+                    0
+                } else {
+                    coin::balance<token::Fe>(makerUserAddress)
+                };
+                let (_, _makerUserFee) = get_user_fee(feeStructure, makerUserFeBalance);
+                let makerProtocolFeBalance = if (!coin::is_account_registered<token::Fe>(makerProtocolAddress)) {
+                    0
+                } else {
+                    coin::balance<token::Fe>(makerProtocolAddress)
+                };
+                let _makerProtocolSplit = get_protocol_fee(feeStructure, makerProtocolFeBalance);
                 // Settle execution and update the price store element.
                 if (makerSide == SIDE_BUY) {
                     // Settle.
@@ -600,16 +659,19 @@ module ferum::market {
                     let instrAmt = utils::fp_convert(execFillQty, instrumentDecimals, FP_NO_PRECISION_LOSS);
                     let instrCoinAmt = coin::extract(&mut takerSellCollateral, instrAmt);
                     coin::merge(&mut makerAccount.instrumentBalance, instrCoinAmt);
+                    // TODO: charge maker fee.
                     // Give the taker quote coin.
                     let quoteAmt = utils::fp_convert(utils::fp_mul(makerPrice, execFillQty, FP_NO_PRECISION_LOSS), quoteDecimals, FP_NO_PRECISION_LOSS);
                     let quoteCoinAmt = coin::extract(&mut makerOrder.buyCollateral, quoteAmt);
                     coin::merge(&mut takerQuoteProceeds, quoteCoinAmt);
+                    // TODO: charge taker fee.
                 } else {
                     // Settle.
                     // Give the maker quote coin.
                     let quoteAmt = utils::fp_convert(utils::fp_mul(makerPrice, execFillQty, FP_NO_PRECISION_LOSS), quoteDecimals, FP_NO_PRECISION_LOSS);
                     let quoteCoinAmt = coin::extract(&mut takerBuyCollateral, quoteAmt);
                     coin::merge(&mut makerAccount.quoteBalance, quoteCoinAmt);
+                    // TODO: charge maker fee.
                     // Give the taker instrument coin.
                     let instrAmt = utils::fp_convert(execFillQty, instrumentDecimals, FP_NO_PRECISION_LOSS);
                     let instrCoinAmt = coin::extract(&mut makerOrder.sellCollateral, instrAmt);
@@ -623,6 +685,7 @@ module ferum::market {
                             coin::merge(&mut takerQuoteProceeds, excessCollateralAmt);
                         };
                     };
+                    // TODO: charge taker fee.
                 };
                 // Update price store and price level.
                 if (is_price_store_elem_in_cache(&book.summary, makerSide, makerPrice)) {
@@ -8766,6 +8829,7 @@ module ferum::market {
         acquires FerumInfo, Orderbook, IndexingEventHandles, MarketSellCache, MarketSellTree, MarketBuyCache, MarketBuyTree, EventQueue
     {
         timestamp::set_time_has_started_for_testing(aptos);
+        token::init_fe(ferum);
         account::create_account_for_test(address_of(ferum));
         account::create_account_for_test(address_of(user));
         create_fake_coins(ferum, 8);
@@ -8797,6 +8861,7 @@ module ferum::market {
     const ERR_MARKET_EXISTS: u64 = 202;
     const ERR_INVALID_FEE_TYPE: u64 = 203;
     const ERR_FEE_TYPE_EXISTS: u64 = 204;
+    const ERR_FE_UNINITED: u64 = 205;
 
     // Structs.
     // Global info object for ferum.
@@ -8907,6 +8972,7 @@ module ferum::market {
 
     inline fun assert_ferum_inited() {
         assert!(exists<FerumInfo>(@ferum), ERR_NOT_ALLOWED);
+        assert!(coin::is_coin_initialized<token::Fe>(), ERR_FE_UNINITED);
     }
 
     inline fun register_market<I, Q>(marketAddr: address) acquires FerumInfo {
@@ -8945,20 +9011,20 @@ module ferum::market {
     // Tests
 
     #[test(owner = @ferum)]
-    fun test_init_ferum(owner: &signer) {
+    fun test_admin_init_ferum(owner: &signer) {
         // Tests that an account can init ferum.
         init_ferum(owner);
     }
 
     #[test(owner = @0x1)]
     #[expected_failure]
-    fun test_init_not_ferum(owner: &signer) {
+    fun test_admin_init_not_ferum(owner: &signer) {
         // Tests that an account that's not ferum can't init.
         init_ferum(owner);
     }
 
     #[test(owner = @ferum)]
-    fun test_register_market(owner: &signer) acquires FerumInfo {
+    fun test_admin_register_market(owner: &signer) acquires FerumInfo {
         // Tests that a market can be registered.
         account::create_account_for_test(address_of(owner));
         init_ferum(owner);
@@ -8970,7 +9036,7 @@ module ferum::market {
 
     #[test(owner = @ferum)]
     #[expected_failure]
-    fun test_register_other_combination(owner: &signer) acquires FerumInfo {
+    fun test_admin_register_other_combination(owner: &signer) acquires FerumInfo {
         // Tests that when market<I, Q> is registered, market<Q, I> is not.
         init_ferum(owner);
         create_fake_coins(owner, 8);
@@ -9028,6 +9094,7 @@ module ferum::market {
     // Tier structure encapsulating different types of tiers.
     struct Tier<T: store + drop> has store, drop {
         // Minimum Fe a protocol needs to hold to qualify for this fee tier.
+        // Represented as a fixed point number with the same number of decimal points as the Fe token (8).
         minFerumTokens: u64,
         // Information about this tier.
         value: T,
