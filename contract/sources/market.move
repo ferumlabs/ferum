@@ -50,6 +50,11 @@
 //
 // Unless otherwise stated, all numeric values are fixedpoint number with 10 decimal places.
 //
+// Inlining:
+//
+// Certain modules are inlined but will potentially move to their own module files once the Move inline functionality
+// is better finalized.
+//
 module ferum::market {
     use aptos_framework::coin;
     use aptos_framework::timestamp;
