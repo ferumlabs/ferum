@@ -68,7 +68,6 @@ module ferum::market {
     use ferum::platform::AccountIdentifier;
     use ferum::platform;
     use ferum::token;
-    use ferum::utils;
 
     #[test_only]
     use aptos_std::table_with_length as twl;
@@ -681,12 +680,12 @@ module ferum::market {
         assert!(owns_account(owner, &accountKey, marketAcc), ERR_NOT_OWNER);
         if (coinIAmt > 0) {
             let coinIDecimals = coin::decimals<I>();
-            let coinAmt = coin::withdraw<I>(owner, utils::fp_convert(coinIAmt, coinIDecimals, FP_NO_PRECISION_LOSS));
+            let coinAmt = coin::withdraw<I>(owner, fp_convert(coinIAmt, coinIDecimals, FP_NO_PRECISION_LOSS));
             coin::merge(&mut marketAcc.instrumentBalance, coinAmt);
         };
         if (coinQAmt > 0) {
             let coinQDecimals = coin::decimals<Q>();
-            let coinAmt = coin::withdraw<Q>(owner, utils::fp_convert(coinQAmt, coinQDecimals, FP_NO_PRECISION_LOSS));
+            let coinAmt = coin::withdraw<Q>(owner, fp_convert(coinQAmt, coinQDecimals, FP_NO_PRECISION_LOSS));
             coin::merge(&mut marketAcc.quoteBalance, coinAmt);
         };
     }
@@ -704,12 +703,12 @@ module ferum::market {
         assert!(owns_account(owner, &accountKey, marketAcc), ERR_NOT_OWNER);
         if (coinIAmt > 0) {
             let coinIDecimals = coin::decimals<I>();
-            let coinAmt = coin::withdraw<I>(owner, utils::fp_convert(coinIAmt, coinIDecimals, FP_NO_PRECISION_LOSS));
+            let coinAmt = coin::withdraw<I>(owner, fp_convert(coinIAmt, coinIDecimals, FP_NO_PRECISION_LOSS));
             coin::merge(&mut marketAcc.instrumentBalance, coinAmt);
         };
         if (coinQAmt > 0) {
             let coinQDecimals = coin::decimals<Q>();
-            let coinAmt = coin::withdraw<Q>(owner, utils::fp_convert(coinQAmt, coinQDecimals, FP_NO_PRECISION_LOSS));
+            let coinAmt = coin::withdraw<Q>(owner, fp_convert(coinQAmt, coinQDecimals, FP_NO_PRECISION_LOSS));
             coin::merge(&mut marketAcc.quoteBalance, coinAmt);
         };
     }
@@ -896,30 +895,30 @@ module ferum::market {
                 if (makerSide == SIDE_BUY) {
                     // Settle.
                     // Give the maker instrument coin.
-                    let instrAmt = utils::fp_convert(execFillQty, instrumentDecimals, FP_NO_PRECISION_LOSS);
+                    let instrAmt = fp_convert(execFillQty, instrumentDecimals, FP_NO_PRECISION_LOSS);
                     let instrCoinAmt = coin::extract(&mut takerSellCollateral, instrAmt);
                     coin::merge(&mut makerAccount.instrumentBalance, instrCoinAmt);
                     // TODO: charge maker fee.
                     // Give the taker quote coin.
-                    let quoteAmt = utils::fp_convert(utils::fp_mul(makerPrice, execFillQty, FP_NO_PRECISION_LOSS), quoteDecimals, FP_NO_PRECISION_LOSS);
+                    let quoteAmt = fp_convert(fp_mul(makerPrice, execFillQty, FP_NO_PRECISION_LOSS), quoteDecimals, FP_NO_PRECISION_LOSS);
                     let quoteCoinAmt = coin::extract(&mut makerOrder.buyCollateral, quoteAmt);
                     coin::merge(&mut takerQuoteProceeds, quoteCoinAmt);
                     // TODO: charge taker fee.
                 } else {
                     // Settle.
                     // Give the maker quote coin.
-                    let quoteAmt = utils::fp_convert(utils::fp_mul(makerPrice, execFillQty, FP_NO_PRECISION_LOSS), quoteDecimals, FP_NO_PRECISION_LOSS);
+                    let quoteAmt = fp_convert(fp_mul(makerPrice, execFillQty, FP_NO_PRECISION_LOSS), quoteDecimals, FP_NO_PRECISION_LOSS);
                     let quoteCoinAmt = coin::extract(&mut takerBuyCollateral, quoteAmt);
                     coin::merge(&mut makerAccount.quoteBalance, quoteCoinAmt);
                     // TODO: charge maker fee.
                     // Give the taker instrument coin.
-                    let instrAmt = utils::fp_convert(execFillQty, instrumentDecimals, FP_NO_PRECISION_LOSS);
+                    let instrAmt = fp_convert(execFillQty, instrumentDecimals, FP_NO_PRECISION_LOSS);
                     let instrCoinAmt = coin::extract(&mut makerOrder.sellCollateral, instrAmt);
                     coin::merge(&mut takerInstrumentProceeds, instrCoinAmt);
                     if (takerPrice != 0 && takerPrice > makerPrice) {
                         // Pre-emptively release collateral to the taker because it can't be used (due to limit price).
                         let takerMakerPriceDiff = takerPrice - makerPrice;
-                        let excessCollateral = utils::fp_convert(utils::fp_mul(takerMakerPriceDiff, execFillQty, FP_NO_PRECISION_LOSS), quoteDecimals, FP_NO_PRECISION_LOSS);
+                        let excessCollateral = fp_convert(fp_mul(takerMakerPriceDiff, execFillQty, FP_NO_PRECISION_LOSS), quoteDecimals, FP_NO_PRECISION_LOSS);
                         if (excessCollateral > 0) {
                             let excessCollateralAmt = coin::extract(&mut takerBuyCollateral, excessCollateral);
                             coin::merge(&mut takerQuoteProceeds, excessCollateralAmt);
@@ -1193,9 +1192,9 @@ module ferum::market {
     ): u32 acquires MarketSellTree, MarketBuyTree, MarketSellCache, MarketBuyCache, IndexingEventHandles {
         // Validate inputs.
         // <editor-fold defaultstate="collapsed" desc="Input Validation">
-        utils::fp_round(qty, book.iDecimals, FP_NO_PRECISION_LOSS);
-        utils::fp_round(price, book.qDecimals, FP_NO_PRECISION_LOSS);
-        utils::fp_round(marketBuyMaxCollateral, book.qDecimals, FP_NO_PRECISION_LOSS);
+        fp_round(qty, book.iDecimals, FP_NO_PRECISION_LOSS);
+        fp_round(price, book.qDecimals, FP_NO_PRECISION_LOSS);
+        fp_round(marketBuyMaxCollateral, book.qDecimals, FP_NO_PRECISION_LOSS);
         assert!(side == SIDE_BUY || side == SIDE_SELL, ERR_INVALID_SIDE);
         assert!(behaviour == BEHAVIOUR_IOC || behaviour == BEHAVIOUR_GTC || behaviour == BEHAVIOUR_FOK || behaviour == BEHAVIOUR_POST, ERR_INVALID_BEHAVIOUR);
         if (price == 0) {
@@ -1317,16 +1316,16 @@ module ferum::market {
         assert!(owns_account(owner, &accountKey, marketAccount), ERR_NOT_OWNER);
         let (buyCollateral, sellCollateral) = if (side == SIDE_BUY) {
             let quoteCoinAmt = if (price == 0) {
-                utils::fp_convert(marketBuyMaxCollateral, coin::decimals<Q>(), FP_NO_PRECISION_LOSS)
+                fp_convert(marketBuyMaxCollateral, coin::decimals<Q>(), FP_NO_PRECISION_LOSS)
             } else {
-                utils::fp_convert(utils::fp_mul(price, qty, FP_NO_PRECISION_LOSS), coin::decimals<Q>(), FP_NO_PRECISION_LOSS)
+                fp_convert(fp_mul(price, qty, FP_NO_PRECISION_LOSS), coin::decimals<Q>(), FP_NO_PRECISION_LOSS)
             };
             (
                 coin::extract<Q>(&mut marketAccount.quoteBalance, quoteCoinAmt),
                 coin::zero<I>(),
             )
         } else {
-            let instrumentCoinAmt = utils::fp_convert(qty, coin::decimals<I>(), FP_NO_PRECISION_LOSS);
+            let instrumentCoinAmt = fp_convert(qty, coin::decimals<I>(), FP_NO_PRECISION_LOSS);
             (
                 coin::zero<Q>(),
                 coin::extract(&mut marketAccount.instrumentBalance, instrumentCoinAmt),
@@ -1482,12 +1481,12 @@ module ferum::market {
         // Release collateral.
         if (order.metadata.side == SIDE_BUY) {
             let quoteDecimals = coin::decimals<Q>();
-            let quoteAmt = utils::fp_convert(utils::fp_mul(price, qtyCancelled, FP_NO_PRECISION_LOSS), quoteDecimals, FP_NO_PRECISION_LOSS);
+            let quoteAmt = fp_convert(fp_mul(price, qtyCancelled, FP_NO_PRECISION_LOSS), quoteDecimals, FP_NO_PRECISION_LOSS);
             let quoteCoinAmt = coin::extract(&mut order.buyCollateral, quoteAmt);
             coin::merge(&mut marketAccount.quoteBalance, quoteCoinAmt);
         } else {
             let instrumentDecimals = coin::decimals<I>();
-            let instrumentAmt = utils::fp_convert(qtyCancelled, instrumentDecimals, FP_NO_PRECISION_LOSS);
+            let instrumentAmt = fp_convert(qtyCancelled, instrumentDecimals, FP_NO_PRECISION_LOSS);
             let instrumentCoinAmt = coin::extract(&mut order.sellCollateral, instrumentAmt);
             coin::merge(&mut marketAccount.instrumentBalance, instrumentCoinAmt);
         };
@@ -1753,7 +1752,7 @@ module ferum::market {
         timestampSecs: u64,
         instrumentDecimals: u8,
     ): u64 {
-        let smallestInstrumentAmt = utils::exp64(DECIMAL_PLACES - instrumentDecimals);
+        let smallestInstrumentAmt = exp64(DECIMAL_PLACES - instrumentDecimals);
         let size = vector::length(&cache.list);
         let i = size;
         let qtyExecuted = 0;
@@ -1782,26 +1781,26 @@ module ferum::market {
                 cacheNode.value.qty
             };
             if (order.metadata.price == 0 && order.metadata.side == SIDE_BUY) {
-                let usedBuyCollateral = utils::fp_mul(fillQty, bookPrice, FP_NO_PRECISION_LOSS);
+                let usedBuyCollateral = fp_mul(fillQty, bookPrice, FP_NO_PRECISION_LOSS);
                 if (order.metadata.marketBuyRemainingCollateral < usedBuyCollateral) {
                     // Need to consider remaining buy collateral for market buy orders. If the remaining buy collateral is
                     // not enough to cover the fillQty, clamp fillQty to what the remaining buy collateral can cover.
-                    fillQty = utils::fp_round(
-                        utils::fp_div(order.metadata.marketBuyRemainingCollateral, bookPrice, FP_TRUNC),
+                    fillQty = fp_round(
+                        fp_div(order.metadata.marketBuyRemainingCollateral, bookPrice, FP_TRUNC),
                         instrumentDecimals,
                         FP_TRUNC,
                     );
                     if (fillQty == 0) {
                         break
                     };
-                    usedBuyCollateral = utils::fp_mul(fillQty, bookPrice, FP_NO_PRECISION_LOSS);
+                    usedBuyCollateral = fp_mul(fillQty, bookPrice, FP_NO_PRECISION_LOSS);
                 };
                 // Update the remaining buy collateral.
                 order.metadata.marketBuyRemainingCollateral = order.metadata.marketBuyRemainingCollateral - usedBuyCollateral;
                 // Detect if the amount of collateral has gotten so small that no more executions at the current price
                 // or higher are possible. In this case, set marketBuyRemainingCollateral to 0 because there is no remaining
                 // collateral left for this market order.
-                if (order.metadata.marketBuyRemainingCollateral < utils::fp_mul(smallestInstrumentAmt, bookPrice, FP_ROUND_UP)) {
+                if (order.metadata.marketBuyRemainingCollateral < fp_mul(smallestInstrumentAmt, bookPrice, FP_ROUND_UP)) {
                     order.metadata.marketBuyRemainingCollateral = 0;
                 };
             };
@@ -1848,7 +1847,7 @@ module ferum::market {
         // Qty removals from the tree need to be deferred because remove qty can result in the remove of a node and
         // that messes up iteration.
         let qtysToRemove = vector[];
-        let smallestInstrumentAmt = utils::exp64(DECIMAL_PLACES - instrumentDecimals);
+        let smallestInstrumentAmt = exp64(DECIMAL_PLACES - instrumentDecimals);
         let it = tree_iterate(tree, if (order.metadata.side == SIDE_BUY) {
             SIDE_SELL
         } else {
@@ -1877,26 +1876,26 @@ module ferum::market {
                 orderTreeElem.qty
             };
             if (order.metadata.price == 0 && order.metadata.side == SIDE_BUY) {
-                let usedBuyCollateral = utils::fp_mul(fillQty, bookPrice, FP_NO_PRECISION_LOSS);
+                let usedBuyCollateral = fp_mul(fillQty, bookPrice, FP_NO_PRECISION_LOSS);
                 if (order.metadata.marketBuyRemainingCollateral < usedBuyCollateral) {
                     // Need to consider remaining buy collateral for market buy orders. If the remaining buy collateral is
                     // not enough to cover the fillQty, clamp fillQty to what the remaining buy collateral can cover.
-                    fillQty = utils::fp_round(
-                        utils::fp_div(order.metadata.marketBuyRemainingCollateral, bookPrice, FP_TRUNC),
+                    fillQty = fp_round(
+                        fp_div(order.metadata.marketBuyRemainingCollateral, bookPrice, FP_TRUNC),
                         instrumentDecimals,
                         FP_TRUNC,
                     );
                     if (fillQty == 0) {
                         break
                     };
-                    usedBuyCollateral = utils::fp_mul(fillQty, bookPrice, FP_NO_PRECISION_LOSS);
+                    usedBuyCollateral = fp_mul(fillQty, bookPrice, FP_NO_PRECISION_LOSS);
                 };
                 // Update the remaining buy collateral.
                 order.metadata.marketBuyRemainingCollateral = order.metadata.marketBuyRemainingCollateral - usedBuyCollateral;
                 // Detect if the amount of collateral has gotten so small that no more executions at the current price
                 // or higher are possible. In this case, set marketBuyRemainingCollateral to 0 because there is no remaining
                 // collateral left for this market order.
-                if (order.metadata.marketBuyRemainingCollateral < utils::fp_mul(smallestInstrumentAmt, bookPrice, FP_ROUND_UP)) {
+                if (order.metadata.marketBuyRemainingCollateral < fp_mul(smallestInstrumentAmt, bookPrice, FP_ROUND_UP)) {
                     order.metadata.marketBuyRemainingCollateral = 0;
                 };
             };
@@ -8876,12 +8875,12 @@ module ferum::market {
     #[test_only]
     fun assert_order_collateral<I, Q>(book: &Orderbook<I, Q>, orderID: u32, buy: u64, sell: u64) {
         let order = table::borrow(&book.ordersTable.objects, orderID);
-        if (coin::value(&order.buyCollateral) != utils::fp_convert(buy, coin::decimals<Q>(), FP_NO_PRECISION_LOSS)) {
+        if (coin::value(&order.buyCollateral) != fp_convert(buy, coin::decimals<Q>(), FP_NO_PRECISION_LOSS)) {
             debug::print(&s(b"Actual buy collateral (in Q coin decimals)"));
             debug::print(&coin::value(&order.buyCollateral));
             abort 0
         };
-        if (coin::value(&order.sellCollateral) != utils::fp_convert(sell, coin::decimals<I>(), FP_NO_PRECISION_LOSS)) {
+        if (coin::value(&order.sellCollateral) != fp_convert(sell, coin::decimals<I>(), FP_NO_PRECISION_LOSS)) {
             debug::print(&s(b"Actual sell collateral (in I coin decimals)"));
             debug::print(&coin::value(&order.sellCollateral));
             abort 0
@@ -9006,12 +9005,12 @@ module ferum::market {
         quoteBalance: u64,
     ) {
         let account = table::borrow(&book.marketAccounts, accountKey);
-        if (coin::value(&account.instrumentBalance) != utils::fp_convert(instrumentBalance, coin::decimals<I>(), FP_NO_PRECISION_LOSS)) {
+        if (coin::value(&account.instrumentBalance) != fp_convert(instrumentBalance, coin::decimals<I>(), FP_NO_PRECISION_LOSS)) {
             debug::print(&s(b"Actual instrument balance (in I coin decimals)"));
             debug::print(&coin::value(&account.instrumentBalance));
             abort 0
         };
-        if (coin::value(&account.quoteBalance) != utils::fp_convert(quoteBalance, coin::decimals<Q>(), FP_NO_PRECISION_LOSS)) {
+        if (coin::value(&account.quoteBalance) != fp_convert(quoteBalance, coin::decimals<Q>(), FP_NO_PRECISION_LOSS)) {
             debug::print(&s(b"Actual quote balance (in Q coin decimals)"));
             debug::print(&coin::value(&account.quoteBalance));
             abort 0
@@ -9068,6 +9067,285 @@ module ferum::market {
     }
 
     // </editor-fold>
+
+    // </editor-fold>
+
+    // <editor-fold defaultstate="collapsed" desc="Inlined utils">
+
+    // Programatic way to get a power of 10.
+    inline fun exp128(e: u8): u128 {
+        if (e == 0) {
+            1
+        } else if (e == 1) {
+            10
+        } else if (e == 2) {
+            100
+        } else if (e == 3) {
+            1000
+        } else if (e == 4) {
+            10000
+        } else if (e == 5) {
+            100000
+        } else if (e == 6) {
+            1000000
+        } else if (e == 7) {
+            10000000
+        } else if (e == 8) {
+            100000000
+        } else if (e == 9) {
+            1000000000
+        } else if (e == 10) {
+            10000000000
+        } else if (e == 11) {
+            100000000000
+        } else if (e == 12) {
+            1000000000000
+        } else if (e == 13) {
+            10000000000000
+        } else if (e == 14) {
+            100000000000000
+        } else if (e == 15) {
+            100000000000000
+        } else if (e == 16) {
+            100000000000000
+        } else if (e == 17) {
+            100000000000000
+        } else if (e == 18) {
+            100000000000000
+        } else if (e == 19) {
+            100000000000000
+        } else if (e == 20) {
+            100000000000000
+        } else {
+            abort ERR_EXCEED_MAX_EXP
+        }
+    }
+
+    // Programatic way to get a power of 10.
+    fun exp64(e: u8): u64 {
+        if (e == 0) {
+            1
+        } else if (e == 1) {
+            10
+        } else if (e == 2) {
+            100
+        } else if (e == 3) {
+            1000
+        } else if (e == 4) {
+            10000
+        } else if (e == 5) {
+            100000
+        } else if (e == 6) {
+            1000000
+        } else if (e == 7) {
+            10000000
+        } else if (e == 8) {
+            100000000
+        } else if (e == 9) {
+            1000000000
+        } else if (e == 10) {
+            10000000000
+        } else if (e == 11) {
+            100000000000
+        } else if (e == 12) {
+            1000000000000
+        } else if (e == 13) {
+            10000000000000
+        } else if (e == 14) {
+            100000000000000
+        } else if (e == 15) {
+            100000000000000
+        } else if (e == 16) {
+            100000000000000
+        } else if (e == 17) {
+            100000000000000
+        } else if (e == 18) {
+            100000000000000
+        } else if (e == 19) {
+            100000000000000
+        } else if (e == 20) {
+            100000000000000
+        } else {
+            abort ERR_EXCEED_MAX_EXP
+        }
+    }
+
+    fun fp_mul(a: u64, b: u64, mode: u8): u64 {
+        let a128 = (a as u128);
+        let b128 = (b as u128);
+        let amt = (a128 * b128) / DECIMAL_PLACES_EXP_U128;
+        if (mode != FP_TRUNC) {
+            let precisionLoss = amt * DECIMAL_PLACES_EXP_U128 < a128 * b128;
+            if (precisionLoss) {
+                if (mode == FP_ROUND_UP) {
+                    amt = amt + 1;
+                } else if (mode == FP_NO_PRECISION_LOSS) {
+                    abort ERR_FP_PRECISION_LOSS
+                };
+            };
+        };
+        (amt as u64)
+    }
+
+    fun fp_div(a: u64, b: u64, mode: u8): u64 {
+        let a128 = (a as u128);
+        let b128 = (b as u128);
+        let amt = (a128 * DECIMAL_PLACES_EXP_U128) / b128;
+        if (mode != FP_TRUNC) {
+            let precisionLoss = amt * b128 < a128 * DECIMAL_PLACES_EXP_U128;
+            if (precisionLoss) {
+                if (mode == FP_ROUND_UP) {
+                    amt = amt + 1;
+                } else if (mode == FP_NO_PRECISION_LOSS) {
+                    abort ERR_FP_PRECISION_LOSS
+                };
+            };
+        };
+        (amt as u64)
+    }
+
+    // TODO: inline when bug is fixed:
+    // thread 'main' panicked at 'called `Result::unwrap()` on an `Err` value: value (366) cannot exceed (255)'
+    fun fp_convert(a: u64, decimals: u8, mode: u8): u64 {
+        let decimalMultAdj = exp64(DECIMAL_PLACES - decimals);
+        let intPart = a / DECIMAL_PLACES_EXP_U64;
+        let decimalPart = (a % DECIMAL_PLACES_EXP_U64) / decimalMultAdj;
+        let val = intPart * exp64(decimals) + decimalPart;
+        if (mode != FP_TRUNC) {
+            let precisionLoss =  decimalPart * decimalMultAdj < a % DECIMAL_PLACES_EXP_U64;
+            if (precisionLoss) {
+                if (mode == FP_ROUND_UP) {
+                    val = val + 1;
+                } else if (mode == FP_NO_PRECISION_LOSS) {
+                    abort ERR_FP_PRECISION_LOSS
+                };
+            };
+        };
+        val
+    }
+
+    inline fun fp_round(a: u64, decimals: u8, mode: u8): u64 {
+        assert!(decimals < DECIMAL_PLACES, ERR_FP_PRECISION_LOSS);
+        let decimalsExp = exp64(DECIMAL_PLACES - decimals);
+        let val = a / decimalsExp * decimalsExp;
+        if (mode != FP_TRUNC) {
+            let precisionLoss =  val < a;
+            if (precisionLoss) {
+                if (mode == FP_ROUND_UP) {
+                    val = val + decimalsExp;
+                } else if (mode == FP_NO_PRECISION_LOSS) {
+                    abort ERR_FP_PRECISION_LOSS
+                };
+            };
+        };
+        val
+    }
+
+    #[test]
+    fun test_fp_convert() {
+        let converted = fp_convert(51230000000, 4, FP_NO_PRECISION_LOSS);
+        assert!(converted == 51230, 0);
+
+        let converted = fp_convert(51230000000, 5, FP_NO_PRECISION_LOSS);
+        assert!(converted == 512300, 0);
+
+        let converted = fp_convert(51230000000, 10, FP_NO_PRECISION_LOSS);
+        assert!(converted == 51230000000, 0);
+
+        let converted = fp_convert(51230000000, 3, FP_NO_PRECISION_LOSS);
+        assert!(converted == 5123, 0);
+
+        let converted = fp_convert(1000000000000, 8, FP_NO_PRECISION_LOSS);
+        assert!(converted == 10000000000, 0);
+    }
+
+    #[test]
+    #[expected_failure(abort_code=ERR_FP_PRECISION_LOSS)]
+    fun test_fp_convert_precision_loss() {
+        fp_convert(51230000000, 2, FP_NO_PRECISION_LOSS);
+    }
+
+    #[test]
+    fun test_fp_convert_lose_precision_round_up_trunc() {
+        let converted = fp_convert(51230000000, 2, FP_ROUND_UP);
+        assert!(converted == 513, 0);
+        let converted = fp_convert(51230000000, 2, FP_TRUNC);
+        assert!(converted == 512, 0);
+    }
+
+    #[test]
+    fun test_fp_round() {
+        let rounded = fp_round(51230000000, 4, FP_NO_PRECISION_LOSS);
+        assert!(rounded == 51230000000, 0);
+    }
+
+    #[test]
+    #[expected_failure(abort_code=ERR_FP_PRECISION_LOSS)]
+    fun test_fp_round_precision_loss() {
+        fp_round(51230000000, 2, FP_NO_PRECISION_LOSS);
+    }
+
+    #[test]
+    fun test_fp_round_lose_precision_round_up_trunc() {
+        let rounded = fp_round(51230000000, 2, FP_ROUND_UP);
+        assert!(rounded == 51300000000, 0);
+        let rounded = fp_round(51230000000, 2, FP_TRUNC);
+        assert!(rounded == 51200000000, 0);
+    }
+
+    #[test]
+    fun test_fp_mul() {
+        let product = fp_mul(10560000000000, 20560000000000, FP_NO_PRECISION_LOSS);
+        assert!(product == 21711360000000000, 0);
+    }
+
+    #[test]
+    fun test_fp_mul_with_decimals() {
+        let product = fp_mul(10560000000, 2056000000000, FP_NO_PRECISION_LOSS);
+        assert!(product == 2171136000000, 0);
+    }
+
+    #[test]
+    fun test_fp_mul_precision_loss_round_up_trunc() {
+        let product = fp_mul(1, 1, FP_TRUNC);
+        assert!(product == 0, 0);
+        product = fp_mul(1, 1, FP_ROUND_UP);
+        assert!(product == 1, 0);
+    }
+
+    #[test]
+    #[expected_failure(abort_code=ERR_FP_PRECISION_LOSS)]
+    fun test_fp_mul_precision_loss() {
+        fp_mul(1, 1, FP_NO_PRECISION_LOSS);
+    }
+
+    #[test]
+    fun test_fp_div() {
+        let q = fp_div(10560000000000, 30000000000, FP_NO_PRECISION_LOSS);
+        assert!(q == 3520000000000, 0);
+    }
+
+    #[test]
+    fun test_fp_div_precision_loss_round_up_trunc() {
+        let q = fp_div(1, 3, FP_ROUND_UP);
+        assert!(q == 3333333334, 0);
+        q = fp_div(1, 3, FP_TRUNC);
+        assert!(q == 3333333333, 0);
+    }
+
+    #[test]
+    #[expected_failure(abort_code=ERR_FP_PRECISION_LOSS)]
+    fun test_fp_div_precision_loss() {
+        fp_div(1, 3, FP_NO_PRECISION_LOSS);
+    }
+
+    #[test]
+    #[expected_failure]
+    fun test_fp_div_exceed_max() {
+        let a = 1;
+        let b = MAX_U64;
+        fp_div(b, a, FP_TRUNC);
+    }
 
     // </editor-fold>
 
