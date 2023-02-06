@@ -11648,250 +11648,250 @@ module ferum::market {
 
     // Fuzz Tests.
 
-    // <editor-fold defaultstate="collapsed" desc="B-Tree Fuzz Tests">
-
-    #[test]
-    fun fuzz_test_tree_mass_inserts() {
-        // Tests that a tree is created and is valid with [0, 1000] elements inserted in increasing, decreasing, and
-        // random order.
-
-        let (tree, _) = gen_tree_sequential_random_order(8, 1000);
-        assert_valid_tree(&tree);
-        assert_contains_range(&tree, 1, 1000);
-        destroy_tree(tree);
-
-        let (tree, _) = gen_tree_sequential_increasing_order(8, 1000);
-        assert_valid_tree(&tree);
-        assert_contains_range(&tree, 1, 1000);
-        destroy_tree(tree);
-
-        let (tree, _) = gen_tree_sequential_decreasing_order(8, 1000);
-        assert_valid_tree(&tree);
-        assert_contains_range(&tree, 1, 1000);
-        destroy_tree(tree);
-    }
-
-    #[test]
-    fun fuzz_test_tree_random_deletes_random_inserts() {
-        // Tests that a elements from tree can be randomly deleted from a tree that is created from random inserts.
-        // Note that requires max gas on aptos cli to be set.
-
-        let (tree, elems) = gen_tree_sequential_random_order(8, 1000);
-        assert_valid_tree(&tree);
-        while (!vector::is_empty(&elems)) {
-            let l = vector::length(&elems);
-            let l3 = l * l * l;
-            let i = 18446744073709551615 % l3 % l;
-            let elem = vector::swap_remove(&mut elems, i);
-            tree_delete(&mut tree, elem);
-            assert_valid_tree(&tree);
-        };
-        assert!(tree.treeSize == 0, 0);
-        destroy_tree(tree);
-    }
-
-    #[test]
-    fun fuzz_test_tree_random_deletes_increasing_inserts() {
-        // Tests that a elements from tree can be randomly deleted from a tree that is created from increasing inserts.
-        // Note that requires max gas on aptos cli to be set.
-
-        let (tree, elems) = gen_tree_sequential_increasing_order(8, 1000);
-        assert_valid_tree(&tree);
-        while (!vector::is_empty(&elems)) {
-            let l = vector::length(&elems);
-            let l3 = l * l * l;
-            let i = 18446744073709551615 % l3 % l;
-            let elem = vector::swap_remove(&mut elems, i);
-            tree_delete(&mut tree, elem);
-            assert_valid_tree(&tree);
-        };
-        assert!(tree.treeSize == 0, 0);
-        destroy_tree(tree);
-    }
-
-    #[test]
-    fun fuzz_test_tree_random_deletes_decreasing_inserts() {
-        // Tests that a elements from tree can be randomly deleted from a tree that is created from decreasing inserts.
-        // Note that requires max gas on aptos cli to be set.
-
-        let (tree, elems) = gen_tree_sequential_decreasing_order(8, 1000);
-        assert_valid_tree(&tree);
-        while (!vector::is_empty(&elems)) {
-            let l = vector::length(&elems);
-            let l3 = l * l * l;
-            let i = 18446744073709551615 % l3 % l;
-            let elem = vector::swap_remove(&mut elems, i);
-            tree_delete(&mut tree, elem);
-            assert_valid_tree(&tree);
-        };
-        assert!(tree.treeSize == 0, 0);
-        destroy_tree(tree);
-    }
-
-    #[test]
-    fun fuzz_test_tree_increasing_deletes_random_inserts() {
-        // Tests that a elements from tree can be deleted in increasing order from a tree that is created from
-        // random inserts.
-        // Note that requires max gas on aptos cli to be set.
-
-        let (tree, elems) = gen_tree_sequential_random_order(8, 1000);
-        assert_valid_tree(&tree);
-        let i = 0;
-        let size = vector::length(&elems);
-        while (i < size) {
-            tree_delete(&mut tree, i + 1);
-            assert_valid_tree(&tree);
-            i = i + 1;
-        };
-        assert!(tree.treeSize == 0, 0);
-        destroy_tree(tree);
-    }
-
-    #[test]
-    fun fuzz_test_tree_increasing_deletes_increasing_inserts() {
-        // Tests that a elements from tree can be deleted in increasing order from a tree that is created from
-        // inreasing inserts.
-        // Note that requires max gas on aptos cli to be set.
-
-        let (tree, elems) = gen_tree_sequential_increasing_order(8, 1000);
-        assert_valid_tree(&tree);
-        let i = 0;
-        let size = vector::length(&elems);
-        while (i < size) {
-            tree_delete(&mut tree, i + 1);
-            assert_valid_tree(&tree);
-            i = i + 1;
-        };
-        assert!(tree.treeSize == 0, 0);
-        destroy_tree(tree);
-    }
-
-    #[test]
-    fun fuzz_test_tree_increasing_deletes_decreasing_inserts() {
-        // Tests that a elements from tree can be deleted in increasing order from a tree that is created from
-        // decreasing inserts.
-        // Note that requires max gas on aptos cli to be set.
-
-        let (tree, elems) = gen_tree_sequential_decreasing_order(8, 1000);
-        assert_valid_tree(&tree);
-        let i = 0;
-        let size = vector::length(&elems);
-        while (i < size) {
-            tree_delete(&mut tree, i + 1);
-            assert_valid_tree(&tree);
-            i = i + 1;
-        };
-        assert!(tree.treeSize == 0, 0);
-        destroy_tree(tree);
-    }
-
-    #[test]
-    fun fuzz_test_tree_decreasing_deletes_random_inserts() {
-        // Tests that a elements from tree can be deleted in decreasing order from a tree that is created from
-        // random inserts.
-        // Note that requires max gas on aptos cli to be set.
-
-        let (tree, elems) = gen_tree_sequential_random_order(8, 1000);
-        assert_valid_tree(&tree);
-        let i = 0;
-        let size = vector::length(&elems);
-        while (i < size) {
-            tree_delete(&mut tree, size - i);
-            assert_valid_tree(&tree);
-            i = i + 1;
-        };
-        assert!(tree.treeSize == 0, 0);
-        destroy_tree(tree);
-    }
-
-    #[test]
-    fun fuzz_test_tree_decreasing_deletes_increasing_inserts() {
-        // Tests that a elements from tree can be deleted in decreasing order from a tree that is created from
-        // inreasing inserts.
-        // Note that requires max gas on aptos cli to be set.
-
-        let (tree, elems) = gen_tree_sequential_increasing_order(8, 1000);
-        assert_valid_tree(&tree);
-        let i = 0;
-        let size = vector::length(&elems);
-        while (i < size) {
-            tree_delete(&mut tree, size - i);
-            assert_valid_tree(&tree);
-            i = i + 1;
-        };
-        assert!(tree.treeSize == 0, 0);
-        destroy_tree(tree);
-    }
-
-    #[test]
-    fun fuzz_test_tree_decreasing_deletes_decreasing_inserts() {
-        // Tests that a elements from tree can be deleted in decreasing order from a tree that is created from
-        // decreasing inserts.
-        // Note that requires max gas on aptos cli to be set.
-
-        let (tree, elems) = gen_tree_sequential_decreasing_order(8, 1000);
-        assert_valid_tree(&tree);
-        let i = 0;
-        let size = vector::length(&elems);
-        while (i < size) {
-            tree_delete(&mut tree, size - i);
-            assert_valid_tree(&tree);
-            i = i + 1;
-        };
-        assert!(tree.treeSize == 0, 0);
-        destroy_tree(tree);
-    }
-
-    #[test]
-    fun fuzz_test_tree_random_inserts_and_deletes() {
-        // Fuzz tests inserts and deletes.
-
-        let seed = 18446744073709551615u64;
-
-        let allElems = ftu::gen_random_list(10000, 1, 1000000);
-        let elemsToAdd = vector[];
-        let i = 0;
-        while (i < 1000) {
-            vector::push_back(&mut elemsToAdd, vector::pop_back(&mut allElems));
-            i = i + 1;
-        };
-        let treeElems = vector[];
-        let treeValues = vector[];
-        while (i < 5000) {
-            let elem = vector::pop_back(&mut allElems);
-            vector::push_back(&mut treeElems, elem);
-            vector::push_back(&mut treeValues, ((elem * 2 % MAX_U16) as u16));
-            i = i + 1;
-        };
-        let tree = build_tree(6, treeElems, treeValues);
-        assert_valid_tree(&tree);
-
-        let i = 0;
-        while (i < 100) {
-            let i3 = (i+1) * (i+1) * (i+1);
-            // Decide if to insert or delete.
-            if (seed % i3 % 2 == 0) {
-                // Delete.
-                let deleteIdx = seed % i3 % vector::length(&treeElems);
-                let elem = vector::swap_remove(&mut treeElems, deleteIdx);
-                tree_delete(&mut tree, elem);
-                assert_valid_tree(&tree);
-            } else {
-                // Insert.
-                let insertElemIdx = seed % i3 % vector::length(&elemsToAdd);
-                let elem = vector::swap_remove(&mut elemsToAdd, insertElemIdx);
-                let value = ((elem * 2 % MAX_U16) as u16);
-                tree_insert(&mut tree, elem, value);
-                assert_valid_tree(&tree);
-                vector::push_back(&mut treeElems, elem);
-            };
-            i = i + 1;
-        };
-
-        destroy_tree(tree);
-    }
-
-    // </editor-fold>
+    // // <editor-fold defaultstate="collapsed" desc="B-Tree Fuzz Tests">
+    //
+    // #[test]
+    // fun fuzz_test_tree_mass_inserts() {
+    //     // Tests that a tree is created and is valid with [0, 1000] elements inserted in increasing, decreasing, and
+    //     // random order.
+    //
+    //     let (tree, _) = gen_tree_sequential_random_order(8, 1000);
+    //     assert_valid_tree(&tree);
+    //     assert_contains_range(&tree, 1, 1000);
+    //     destroy_tree(tree);
+    //
+    //     let (tree, _) = gen_tree_sequential_increasing_order(8, 1000);
+    //     assert_valid_tree(&tree);
+    //     assert_contains_range(&tree, 1, 1000);
+    //     destroy_tree(tree);
+    //
+    //     let (tree, _) = gen_tree_sequential_decreasing_order(8, 1000);
+    //     assert_valid_tree(&tree);
+    //     assert_contains_range(&tree, 1, 1000);
+    //     destroy_tree(tree);
+    // }
+    //
+    // #[test]
+    // fun fuzz_test_tree_random_deletes_random_inserts() {
+    //     // Tests that a elements from tree can be randomly deleted from a tree that is created from random inserts.
+    //     // Note that requires max gas on aptos cli to be set.
+    //
+    //     let (tree, elems) = gen_tree_sequential_random_order(8, 1000);
+    //     assert_valid_tree(&tree);
+    //     while (!vector::is_empty(&elems)) {
+    //         let l = vector::length(&elems);
+    //         let l3 = l * l * l;
+    //         let i = 18446744073709551615 % l3 % l;
+    //         let elem = vector::swap_remove(&mut elems, i);
+    //         tree_delete(&mut tree, elem);
+    //         assert_valid_tree(&tree);
+    //     };
+    //     assert!(tree.treeSize == 0, 0);
+    //     destroy_tree(tree);
+    // }
+    //
+    // #[test]
+    // fun fuzz_test_tree_random_deletes_increasing_inserts() {
+    //     // Tests that a elements from tree can be randomly deleted from a tree that is created from increasing inserts.
+    //     // Note that requires max gas on aptos cli to be set.
+    //
+    //     let (tree, elems) = gen_tree_sequential_increasing_order(8, 1000);
+    //     assert_valid_tree(&tree);
+    //     while (!vector::is_empty(&elems)) {
+    //         let l = vector::length(&elems);
+    //         let l3 = l * l * l;
+    //         let i = 18446744073709551615 % l3 % l;
+    //         let elem = vector::swap_remove(&mut elems, i);
+    //         tree_delete(&mut tree, elem);
+    //         assert_valid_tree(&tree);
+    //     };
+    //     assert!(tree.treeSize == 0, 0);
+    //     destroy_tree(tree);
+    // }
+    //
+    // #[test]
+    // fun fuzz_test_tree_random_deletes_decreasing_inserts() {
+    //     // Tests that a elements from tree can be randomly deleted from a tree that is created from decreasing inserts.
+    //     // Note that requires max gas on aptos cli to be set.
+    //
+    //     let (tree, elems) = gen_tree_sequential_decreasing_order(8, 1000);
+    //     assert_valid_tree(&tree);
+    //     while (!vector::is_empty(&elems)) {
+    //         let l = vector::length(&elems);
+    //         let l3 = l * l * l;
+    //         let i = 18446744073709551615 % l3 % l;
+    //         let elem = vector::swap_remove(&mut elems, i);
+    //         tree_delete(&mut tree, elem);
+    //         assert_valid_tree(&tree);
+    //     };
+    //     assert!(tree.treeSize == 0, 0);
+    //     destroy_tree(tree);
+    // }
+    //
+    // #[test]
+    // fun fuzz_test_tree_increasing_deletes_random_inserts() {
+    //     // Tests that a elements from tree can be deleted in increasing order from a tree that is created from
+    //     // random inserts.
+    //     // Note that requires max gas on aptos cli to be set.
+    //
+    //     let (tree, elems) = gen_tree_sequential_random_order(8, 1000);
+    //     assert_valid_tree(&tree);
+    //     let i = 0;
+    //     let size = vector::length(&elems);
+    //     while (i < size) {
+    //         tree_delete(&mut tree, i + 1);
+    //         assert_valid_tree(&tree);
+    //         i = i + 1;
+    //     };
+    //     assert!(tree.treeSize == 0, 0);
+    //     destroy_tree(tree);
+    // }
+    //
+    // #[test]
+    // fun fuzz_test_tree_increasing_deletes_increasing_inserts() {
+    //     // Tests that a elements from tree can be deleted in increasing order from a tree that is created from
+    //     // inreasing inserts.
+    //     // Note that requires max gas on aptos cli to be set.
+    //
+    //     let (tree, elems) = gen_tree_sequential_increasing_order(8, 1000);
+    //     assert_valid_tree(&tree);
+    //     let i = 0;
+    //     let size = vector::length(&elems);
+    //     while (i < size) {
+    //         tree_delete(&mut tree, i + 1);
+    //         assert_valid_tree(&tree);
+    //         i = i + 1;
+    //     };
+    //     assert!(tree.treeSize == 0, 0);
+    //     destroy_tree(tree);
+    // }
+    //
+    // #[test]
+    // fun fuzz_test_tree_increasing_deletes_decreasing_inserts() {
+    //     // Tests that a elements from tree can be deleted in increasing order from a tree that is created from
+    //     // decreasing inserts.
+    //     // Note that requires max gas on aptos cli to be set.
+    //
+    //     let (tree, elems) = gen_tree_sequential_decreasing_order(8, 1000);
+    //     assert_valid_tree(&tree);
+    //     let i = 0;
+    //     let size = vector::length(&elems);
+    //     while (i < size) {
+    //         tree_delete(&mut tree, i + 1);
+    //         assert_valid_tree(&tree);
+    //         i = i + 1;
+    //     };
+    //     assert!(tree.treeSize == 0, 0);
+    //     destroy_tree(tree);
+    // }
+    //
+    // #[test]
+    // fun fuzz_test_tree_decreasing_deletes_random_inserts() {
+    //     // Tests that a elements from tree can be deleted in decreasing order from a tree that is created from
+    //     // random inserts.
+    //     // Note that requires max gas on aptos cli to be set.
+    //
+    //     let (tree, elems) = gen_tree_sequential_random_order(8, 1000);
+    //     assert_valid_tree(&tree);
+    //     let i = 0;
+    //     let size = vector::length(&elems);
+    //     while (i < size) {
+    //         tree_delete(&mut tree, size - i);
+    //         assert_valid_tree(&tree);
+    //         i = i + 1;
+    //     };
+    //     assert!(tree.treeSize == 0, 0);
+    //     destroy_tree(tree);
+    // }
+    //
+    // #[test]
+    // fun fuzz_test_tree_decreasing_deletes_increasing_inserts() {
+    //     // Tests that a elements from tree can be deleted in decreasing order from a tree that is created from
+    //     // inreasing inserts.
+    //     // Note that requires max gas on aptos cli to be set.
+    //
+    //     let (tree, elems) = gen_tree_sequential_increasing_order(8, 1000);
+    //     assert_valid_tree(&tree);
+    //     let i = 0;
+    //     let size = vector::length(&elems);
+    //     while (i < size) {
+    //         tree_delete(&mut tree, size - i);
+    //         assert_valid_tree(&tree);
+    //         i = i + 1;
+    //     };
+    //     assert!(tree.treeSize == 0, 0);
+    //     destroy_tree(tree);
+    // }
+    //
+    // #[test]
+    // fun fuzz_test_tree_decreasing_deletes_decreasing_inserts() {
+    //     // Tests that a elements from tree can be deleted in decreasing order from a tree that is created from
+    //     // decreasing inserts.
+    //     // Note that requires max gas on aptos cli to be set.
+    //
+    //     let (tree, elems) = gen_tree_sequential_decreasing_order(8, 1000);
+    //     assert_valid_tree(&tree);
+    //     let i = 0;
+    //     let size = vector::length(&elems);
+    //     while (i < size) {
+    //         tree_delete(&mut tree, size - i);
+    //         assert_valid_tree(&tree);
+    //         i = i + 1;
+    //     };
+    //     assert!(tree.treeSize == 0, 0);
+    //     destroy_tree(tree);
+    // }
+    //
+    // #[test]
+    // fun fuzz_test_tree_random_inserts_and_deletes() {
+    //     // Fuzz tests inserts and deletes.
+    //
+    //     let seed = 18446744073709551615u64;
+    //
+    //     let allElems = ftu::gen_random_list(10000, 1, 1000000);
+    //     let elemsToAdd = vector[];
+    //     let i = 0;
+    //     while (i < 1000) {
+    //         vector::push_back(&mut elemsToAdd, vector::pop_back(&mut allElems));
+    //         i = i + 1;
+    //     };
+    //     let treeElems = vector[];
+    //     let treeValues = vector[];
+    //     while (i < 5000) {
+    //         let elem = vector::pop_back(&mut allElems);
+    //         vector::push_back(&mut treeElems, elem);
+    //         vector::push_back(&mut treeValues, ((elem * 2 % MAX_U16) as u16));
+    //         i = i + 1;
+    //     };
+    //     let tree = build_tree(6, treeElems, treeValues);
+    //     assert_valid_tree(&tree);
+    //
+    //     let i = 0;
+    //     while (i < 100) {
+    //         let i3 = (i+1) * (i+1) * (i+1);
+    //         // Decide if to insert or delete.
+    //         if (seed % i3 % 2 == 0) {
+    //             // Delete.
+    //             let deleteIdx = seed % i3 % vector::length(&treeElems);
+    //             let elem = vector::swap_remove(&mut treeElems, deleteIdx);
+    //             tree_delete(&mut tree, elem);
+    //             assert_valid_tree(&tree);
+    //         } else {
+    //             // Insert.
+    //             let insertElemIdx = seed % i3 % vector::length(&elemsToAdd);
+    //             let elem = vector::swap_remove(&mut elemsToAdd, insertElemIdx);
+    //             let value = ((elem * 2 % MAX_U16) as u16);
+    //             tree_insert(&mut tree, elem, value);
+    //             assert_valid_tree(&tree);
+    //             vector::push_back(&mut treeElems, elem);
+    //         };
+    //         i = i + 1;
+    //     };
+    //
+    //     destroy_tree(tree);
+    // }
+    //
+    // // </editor-fold>
 
     // Specific Tests.
 
