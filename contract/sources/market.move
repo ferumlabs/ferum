@@ -63,6 +63,7 @@ module ferum::market {
     use std::vector;
     use std::string;
     use aptos_std::type_info;
+    use aptos_std::table_with_length;
     use aptos_framework::event::{EventHandle, emit_event};
     use aptos_framework::account::new_event_handle;
     use ferum::platform::AccountIdentifier;
@@ -72,8 +73,6 @@ module ferum::market {
     #[test_only]
     use aptos_std::table_with_length as twl;
     #[test_only]
-    use std::debug;
-    #[test_only]
     use aptos_framework::account;
     #[test_only]
     use ferum::coin_test_helpers::{FMA, FMB, create_fake_coins, deposit_fake_coins};
@@ -81,12 +80,15 @@ module ferum::market {
     use ferum::test_utils as ftu;
     #[test_only]
     use ferum::test_utils::s;
+    #[test_only]
+    use aptos_std::debug;
 
     // <editor-fold defaultstate="collapsed" desc="Errors">
 
     // <editor-fold defaultstate="collapsed" desc="Market Errors">
 
     const ERR_COIN_UNINITIALIZED: u64 = 401;
+    const ERR_COIN_UNREGISTERED_FERUM: u64 = 413;
     const ERR_UNKNOWN_ORDER: u64 = 402;
     const ERR_NOT_OWNER: u64 = 403;
     const ERR_COIN_EXCEEDS_MAX_SUPPORTED_DECIMALS: u64 = 404;
@@ -445,6 +447,12 @@ module ferum::market {
     ) acquires FerumInfo {
         let ownerAddr = address_of(owner);
         assert!(ownerAddr == @ferum, ERR_NOT_ALLOWED);
+        if (!coin::is_account_registered<I>(@ferum)) {
+            coin::register<I>(owner);
+        };
+        if (!coin::is_account_registered<Q>(@ferum)) {
+            coin::register<Q>(owner);
+        };
         let (iCoinDecimals, qCoinDecimals) = validate_coins<I, Q>();
         assert!(iCoinDecimals >= instrumentDecimals && qCoinDecimals >= quoteDecimals, ERR_INVALID_DECIMAL_CONFIG);
         let minDecimals = if (iCoinDecimals < qCoinDecimals) {
@@ -813,6 +821,12 @@ module ferum::market {
 
     // <editor-fold defaultstate="collapsed" desc="Market private functions">
 
+    // Temporary struct used to store instrument and quote balances.
+    struct MarketBalance<phantom I, phantom Q> has store {
+        instrument: coin::Coin<I>,
+        quote: coin::Coin<Q>,
+    }
+
     fun processExecEvent<I, Q>(
         book: &mut Orderbook<I, Q>,
         buyCache: &mut Cache<PriceStoreElem>,
@@ -831,13 +845,21 @@ module ferum::market {
         let marketAccounts = &mut book.marketAccounts;
         let makerPriceLevel = table::borrow_mut(&mut priceLevelsTable.objects, event.priceLevelID);
         let currNodeID = makerPriceLevel.orders.head;
+        let protocolProceeds = table_with_length::new<address, MarketBalance<I, Q>>();
+        let protocolList = vector::empty();
+        let ferumFeeProceeds = MarketBalance<I, Q> {
+            instrument: coin::zero(),
+            quote: coin::zero(),
+        };
         // Get taker user address.
         let takerOrder = table::borrow_mut(&mut ordersTable.objects, event.takerOrderID);
         let takerPrice = takerOrder.metadata.price;
         let takerBuyCollateral = coin::extract_all(&mut takerOrder.buyCollateral);
         let takerSellCollateral = coin::extract_all(&mut takerOrder.sellCollateral);
-        let takerInstrumentProceeds = coin::zero<I>();
-        let takerQuoteProceeds = coin::zero<Q>();
+        let takerProceeds = MarketBalance<I, Q> {
+            instrument: coin::zero<I>(),
+            quote: coin::zero<Q>()
+        };
         let takerAccountKey = takerOrder.metadata.accountKey;
         let takerUserAddress = takerAccountKey.userAddress;
         let takerProtocolAddress = takerAccountKey.protocolAddress;
@@ -846,13 +868,13 @@ module ferum::market {
         } else {
             coin::balance<token::Fe>(takerUserAddress)
         };
-        let (_, _takerUserFee) = get_user_fee(feeStructure, takerUserFeBalance);
+        let (_, takerUserFee) = get_user_fee(feeStructure, takerUserFeBalance);
         let takerProtocolFeBalance = if (!coin::is_account_registered<token::Fe>(takerProtocolAddress)) {
             0
         } else {
             coin::balance<token::Fe>(takerProtocolAddress)
         };
-        let _takerProtocolSplit = get_protocol_fee(feeStructure, takerProtocolFeBalance);
+        let takerProtocolSplit = get_protocol_fee(feeStructure, takerProtocolFeBalance);
         // First, update the price level and orders in the price level.
         let qty = event.qty;
         let numElemsToDrop = 0;
@@ -884,47 +906,89 @@ module ferum::market {
                 } else {
                     coin::balance<token::Fe>(makerUserAddress)
                 };
-                let (_, _makerUserFee) = get_user_fee(feeStructure, makerUserFeBalance);
+                let (_, makerUserFee) = get_user_fee(feeStructure, makerUserFeBalance);
                 let makerProtocolFeBalance = if (!coin::is_account_registered<token::Fe>(makerProtocolAddress)) {
                     0
                 } else {
                     coin::balance<token::Fe>(makerProtocolAddress)
                 };
-                let _makerProtocolSplit = get_protocol_fee(feeStructure, makerProtocolFeBalance);
+                let makerProtocolSplit = get_protocol_fee(feeStructure, makerProtocolFeBalance);
                 // Settle execution and update the price store element.
                 if (makerSide == SIDE_BUY) {
                     // Settle.
                     // Give the maker instrument coin.
-                    let instrAmt = fp_convert(execFillQty, instrumentDecimals, FP_NO_PRECISION_LOSS);
-                    let instrCoinAmt = coin::extract(&mut takerSellCollateral, instrAmt);
-                    coin::merge(&mut makerAccount.instrumentBalance, instrCoinAmt);
-                    // TODO: charge maker fee.
+                    let (makerProceedsAmt, makerProtocolFeeAmt, makerFerumFeeAmt) = calc_fee_coin_amts(
+                        instrumentDecimals,
+                        execFillQty,
+                        makerUserFee,
+                        makerProtocolSplit,
+                    );
+                    let makerProtocolFeeCoinAmt = coin::extract(&mut takerSellCollateral, makerProtocolFeeAmt);
+                    let makerFerumFeeCoinAmt = coin::extract(&mut takerSellCollateral, makerFerumFeeAmt);
+                    let makerProceedsCoinAmt = coin::extract(&mut takerSellCollateral, makerProceedsAmt);
+                    create_protocol_balance_if_needed(&mut protocolList, &mut protocolProceeds, makerProtocolAddress);
+                    let makerProtocolBalance = table_with_length::borrow_mut(&mut protocolProceeds, makerProtocolAddress);
+                    coin::merge(&mut makerProtocolBalance.instrument, makerProtocolFeeCoinAmt);
+                    coin::merge(&mut ferumFeeProceeds.instrument, makerFerumFeeCoinAmt);
+                    coin::merge(&mut makerAccount.instrumentBalance, makerProceedsCoinAmt);
                     // Give the taker quote coin.
-                    let quoteAmt = fp_convert(fp_mul(makerPrice, execFillQty, FP_NO_PRECISION_LOSS), quoteDecimals, FP_NO_PRECISION_LOSS);
-                    let quoteCoinAmt = coin::extract(&mut makerOrder.buyCollateral, quoteAmt);
-                    coin::merge(&mut takerQuoteProceeds, quoteCoinAmt);
-                    // TODO: charge taker fee.
+                    let takerNotional = fp_round(fp_mul(makerPrice, execFillQty, FP_NO_PRECISION_LOSS), quoteDecimals, FP_NO_PRECISION_LOSS);
+                    let (takerProceedsAmt, takerProtocolFeeAmt, takerFerumFeeAmt) = calc_fee_coin_amts(
+                        quoteDecimals,
+                        takerNotional,
+                        takerUserFee,
+                        takerProtocolSplit,
+                    );
+                    let takerProtocolFeeCoinAmt = coin::extract(&mut makerOrder.buyCollateral, takerProtocolFeeAmt);
+                    let takerFerumFeeCoinAmt = coin::extract(&mut makerOrder.buyCollateral, takerFerumFeeAmt);
+                    let takerProceedsCoinAmt = coin::extract(&mut makerOrder.buyCollateral, takerProceedsAmt);
+                    create_protocol_balance_if_needed(&mut protocolList, &mut protocolProceeds, takerProtocolAddress);
+                    let takerProtocolBalance = table_with_length::borrow_mut(&mut protocolProceeds, takerProtocolAddress);
+                    coin::merge(&mut takerProtocolBalance.quote, takerProtocolFeeCoinAmt);
+                    coin::merge(&mut ferumFeeProceeds.quote, takerFerumFeeCoinAmt);
+                    coin::merge(&mut takerProceeds.quote, takerProceedsCoinAmt);
                 } else {
                     // Settle.
                     // Give the maker quote coin.
-                    let quoteAmt = fp_convert(fp_mul(makerPrice, execFillQty, FP_NO_PRECISION_LOSS), quoteDecimals, FP_NO_PRECISION_LOSS);
-                    let quoteCoinAmt = coin::extract(&mut takerBuyCollateral, quoteAmt);
-                    coin::merge(&mut makerAccount.quoteBalance, quoteCoinAmt);
-                    // TODO: charge maker fee.
+                    let makerNotional = fp_round(fp_mul(makerPrice, execFillQty, FP_NO_PRECISION_LOSS), quoteDecimals, FP_NO_PRECISION_LOSS);
+                    let (makerProceedsAmt, makerProtocolFeeAmt, makerFerumFeeAmt) = calc_fee_coin_amts(
+                        quoteDecimals,
+                        makerNotional,
+                        makerUserFee,
+                        makerProtocolSplit,
+                    );
+                    let makerProtocolFeeCoinAmt = coin::extract(&mut takerBuyCollateral, makerProtocolFeeAmt);
+                    let makerFerumFeeCoinAmt = coin::extract(&mut takerBuyCollateral, makerFerumFeeAmt);
+                    let makerProceedsCoinAmt = coin::extract(&mut takerBuyCollateral, makerProceedsAmt);
+                    create_protocol_balance_if_needed(&mut protocolList, &mut protocolProceeds, makerProtocolAddress);
+                    let makerProtocolBalance = table_with_length::borrow_mut(&mut protocolProceeds, makerProtocolAddress);
+                    coin::merge(&mut makerProtocolBalance.quote, makerProtocolFeeCoinAmt);
+                    coin::merge(&mut ferumFeeProceeds.quote, makerFerumFeeCoinAmt);
+                    coin::merge(&mut makerAccount.quoteBalance, makerProceedsCoinAmt);
                     // Give the taker instrument coin.
-                    let instrAmt = fp_convert(execFillQty, instrumentDecimals, FP_NO_PRECISION_LOSS);
-                    let instrCoinAmt = coin::extract(&mut makerOrder.sellCollateral, instrAmt);
-                    coin::merge(&mut takerInstrumentProceeds, instrCoinAmt);
+                    let (takerProceedsAmt, takerProtocolFeeAmt, takerFerumFeeAmt) = calc_fee_coin_amts(
+                        instrumentDecimals,
+                        execFillQty,
+                        takerUserFee,
+                        takerProtocolSplit,
+                    );
+                    let takerProtocolFeeCoinAmt = coin::extract(&mut makerOrder.sellCollateral, takerProtocolFeeAmt);
+                    let takerFerumFeeCoinAmt = coin::extract(&mut makerOrder.sellCollateral, takerFerumFeeAmt);
+                    let takerProceedsCoinAmt = coin::extract(&mut makerOrder.sellCollateral, takerProceedsAmt);
+                    create_protocol_balance_if_needed(&mut protocolList, &mut protocolProceeds, takerProtocolAddress);
+                    let takerProtocolBalance = table_with_length::borrow_mut(&mut protocolProceeds, takerProtocolAddress);
+                    coin::merge(&mut takerProtocolBalance.instrument, takerProtocolFeeCoinAmt);
+                    coin::merge(&mut ferumFeeProceeds.instrument, takerFerumFeeCoinAmt);
+                    coin::merge(&mut takerProceeds.instrument, takerProceedsCoinAmt);
                     if (takerPrice != 0 && takerPrice > makerPrice) {
                         // Pre-emptively release collateral to the taker because it can't be used (due to limit price).
                         let takerMakerPriceDiff = takerPrice - makerPrice;
                         let excessCollateral = fp_convert(fp_mul(takerMakerPriceDiff, execFillQty, FP_NO_PRECISION_LOSS), quoteDecimals, FP_NO_PRECISION_LOSS);
                         if (excessCollateral > 0) {
-                            let excessCollateralAmt = coin::extract(&mut takerBuyCollateral, excessCollateral);
-                            coin::merge(&mut takerQuoteProceeds, excessCollateralAmt);
+                            let excessCollateralCoinAmt = coin::extract(&mut takerBuyCollateral, excessCollateral);
+                            coin::merge(&mut takerProceeds.quote, excessCollateralCoinAmt);
                         };
                     };
-                    // TODO: charge taker fee.
                 };
                 // Update price store and price level.
                 if (is_price_store_elem_in_cache(&book.summary, makerSide, makerPrice)) {
@@ -1014,6 +1078,10 @@ module ferum::market {
         takerOrder.metadata.takerCrankPendingQty = takerOrder.metadata.takerCrankPendingQty - event.qty;
         takerOrder.metadata.unfilledQty = takerOrder.metadata.unfilledQty - event.qty;
         // Tranfer over proceeds from the taker order.
+        let MarketBalance {
+            quote: takerQuoteProceeds,
+            instrument: takerInstrumentProceeds,
+        } = takerProceeds;
         coin::merge(&mut takerAccount.instrumentBalance, takerInstrumentProceeds);
         coin::merge(&mut takerAccount.quoteBalance, takerQuoteProceeds);
         // Merge back the borrowed collateral.
@@ -1053,6 +1121,20 @@ module ferum::market {
         };
         // Remove orders from the PriceLevel.
         list_drop_from_front(&mut makerPriceLevel.orders, numElemsToDrop);
+        // Settle protocol balances.
+        if (!table_with_length::contains(&protocolProceeds, @ferum)) {
+            table_with_length::add(&mut protocolProceeds, @ferum, ferumFeeProceeds);
+        } else {
+            let existingFerumProceeds = table_with_length::borrow_mut(&mut protocolProceeds, @ferum);
+            let MarketBalance {
+                instrument,
+                quote,
+            } = ferumFeeProceeds;
+            coin::merge(&mut existingFerumProceeds.instrument, instrument);
+            coin::merge(&mut existingFerumProceeds.quote, quote);
+        };
+
+        settle_protocol_balances(protocolList, protocolProceeds);
     }
 
     fun rebalance_cache<I, Q>(
@@ -1967,6 +2049,8 @@ module ferum::market {
         assert!(qDecimals <= MAX_DECIMALS, ERR_COIN_EXCEEDS_MAX_SUPPORTED_DECIMALS);
         assert!(coin::is_coin_initialized<I>(), ERR_COIN_UNINITIALIZED);
         assert!(iDecimals <= MAX_DECIMALS, ERR_COIN_EXCEEDS_MAX_SUPPORTED_DECIMALS);
+        assert!(coin::is_account_registered<I>(@ferum), ERR_COIN_UNREGISTERED_FERUM);
+        assert!(coin::is_account_registered<Q>(@ferum), ERR_COIN_UNREGISTERED_FERUM);
         (iDecimals, qDecimals)
     }
 
@@ -2065,6 +2149,61 @@ module ferum::market {
             protocolAddress,
             userAddress,
         }
+    }
+
+    // Returns the notional split up into
+    // - amount which should be deposited into counter party's account
+    // - amount which should go to the referring protocol as a fee
+    // - amount which should fgo to ferum as a fee
+    //
+    // All inputs are fixed point numbers. Outputs will be fixed point numbers with `decimals` decimal places.
+    inline fun calc_fee_coin_amts(
+        decimals: u8,
+        notional: u64,
+        feeRate: u64,
+        protocolSplit: u64,
+    ): (u64, u64, u64) {
+        let fee = fp_round(fp_mul(notional, feeRate, FP_ROUND_UP), decimals, FP_ROUND_UP);
+        let protocolSplit = fp_round(fp_mul(fee, protocolSplit, FP_TRUNC), decimals, FP_TRUNC);
+        let ferumSplit = fee - protocolSplit;
+        let notionalAmt = fp_convert(notional - fee, decimals, FP_NO_PRECISION_LOSS);
+        let protocolSplitAmt = fp_convert(protocolSplit, decimals, FP_NO_PRECISION_LOSS);
+        let ferumSplitAmt = fp_convert(ferumSplit, decimals, FP_NO_PRECISION_LOSS);
+        (notionalAmt, protocolSplitAmt, ferumSplitAmt)
+    }
+
+    fun create_protocol_balance_if_needed<I, Q>(
+        protocolList: &mut vector<address>,
+        balances: &mut table_with_length::TableWithLength<address, MarketBalance<I, Q>>,
+        protocol: address,
+    ) {
+        if (!table_with_length::contains(balances, protocol)) {
+            table_with_length::add(balances, protocol, MarketBalance {
+                instrument: coin::zero(),
+                quote: coin::zero(),
+            });
+            vector::push_back(protocolList, protocol);
+        };
+    }
+
+    inline fun settle_protocol_balances<I, Q>(
+        protocolList: vector<address>,
+        balances: table_with_length::TableWithLength<address, MarketBalance<I, Q>>,
+    ) {
+        let i = 0;
+        let size = vector::length(&mut protocolList);
+        while (i < size) {
+            let protocol = vector::pop_back(&mut protocolList);
+            let balance = table_with_length::remove(&mut balances, protocol);
+            let MarketBalance {
+                instrument,
+                quote,
+            } = balance;
+            coin::deposit(protocol, instrument);
+            coin::deposit(protocol, quote);
+            i = i + 1;
+        };
+        table_with_length::destroy_empty(balances);
     }
 
     // </editor-fold>
