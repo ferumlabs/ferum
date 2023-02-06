@@ -8543,7 +8543,7 @@ module ferum::market {
         let userAccIdentifier = platform::account_identifier_for_test(user);
         let accountKey = account_key_from_identifier(userAccIdentifier);
         assert!(table::contains(&book.marketAccounts, accountKey), 0);
-        assert_account_balances(book, accountKey, 10000000000, 10000000000);
+        assert_account_balances(book, accountKey, 1000000000000, 1000000000000);
     }
 
     #[test_only]
@@ -9237,6 +9237,7 @@ module ferum::market {
     fun test_admin_register_market(owner: &signer) acquires FerumInfo {
         // Tests that a market can be registered.
         account::create_account_for_test(address_of(owner));
+        token::init_fe(owner);
         init_ferum(owner);
         create_fake_coins(owner, 8);
         register_market<FMA, FMB>(address_of(owner));
@@ -9258,6 +9259,7 @@ module ferum::market {
 
     #[test(owner = @ferum)]
     fun test_admin_fee_types(owner: &signer) acquires FerumInfo {
+        token::init_fe(owner);
         init_ferum(owner);
         new_fee_type_entry(owner, s(b"test"), 5000000, 5000000, 5000000000);
         add_user_fee_tier_entry(owner, s(b"test"), 100, 6000000, 0);
@@ -10468,7 +10470,6 @@ module ferum::market {
         list_drop_from_front(&mut list, 2);
         assert_list(&list, vector[3]);
         list_drop_from_front(&mut list, 1);
-        debug::print(&list.head);
         assert_list(&list, vector[]);
         list_push(&mut list, 100);
         list_push(&mut list, 20);
