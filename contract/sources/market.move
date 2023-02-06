@@ -705,19 +705,26 @@ module ferum::market {
         coinQAmt: u64, // Fixedpoint value.
     ) acquires FerumInfo, Orderbook {
         let marketAddr = get_market_addr<I, Q>();
+        let ownerAddr = address_of(owner);
         let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
         assert!(table::contains(&book.marketAccounts, accountKey), ERR_NO_MARKET_ACCOUNT);
         let marketAcc = table::borrow_mut(&mut book.marketAccounts, accountKey);
         assert!(owns_account(owner, &accountKey, marketAcc), ERR_NOT_OWNER);
         if (coinIAmt > 0) {
             let coinIDecimals = coin::decimals<I>();
-            let coinAmt = coin::withdraw<I>(owner, fp_convert(coinIAmt, coinIDecimals, FP_NO_PRECISION_LOSS));
-            coin::merge(&mut marketAcc.instrumentBalance, coinAmt);
+            let coinAmt = coin::extract<I>(
+                &mut marketAcc.instrumentBalance,
+                fp_convert(coinIAmt, coinIDecimals, FP_NO_PRECISION_LOSS),
+            );
+            coin::deposit(ownerAddr, coinAmt);
         };
         if (coinQAmt > 0) {
             let coinQDecimals = coin::decimals<Q>();
-            let coinAmt = coin::withdraw<Q>(owner, fp_convert(coinQAmt, coinQDecimals, FP_NO_PRECISION_LOSS));
-            coin::merge(&mut marketAcc.quoteBalance, coinAmt);
+            let coinAmt = coin::extract<Q>(
+                &mut marketAcc.quoteBalance,
+                fp_convert(coinQAmt, coinQDecimals, FP_NO_PRECISION_LOSS),
+            );
+            coin::deposit(ownerAddr, coinAmt);
         };
     }
 
