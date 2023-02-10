@@ -94,12 +94,16 @@ module ferum::market {
     const ERR_COIN_EXCEEDS_MAX_SUPPORTED_DECIMALS: u64 = 404;
     const ERR_INVALID_BEHAVIOUR: u64 = 405;
     const ERR_INVALID_DECIMAL_CONFIG: u64 = 406;
+    const ERR_INVALID_NOTIONAL_UNIT: u64 = 406;
+    const ERR_INVALID_CRANKER_SPLIT: u64 = 406;
     const ERR_INVALID_SIDE: u64 = 407;
     const ERR_ORDER_EXECUTED_BUT_IS_PENDING_CRANK: u64 = 408;
     const ERR_PRICE_STORE_ELEM_NOT_FOUND: u64 = 409;
     const ERR_CRANK_UNFULFILLED_QTY: u64 = 410;
     const ERR_NO_MARKET_ACCOUNT: u64 = 411;
     const ERR_INVALID_MAX_COLLATERAL_AMT: u64 = 412;
+    const ERR_NOTIONAL_NOT_UNIT_MULTIPLE: u64 = 412;
+    const ERR_NOT_EMPTY_MARKET: u64 = 412;
 
     // </editor-fold>
 
@@ -352,6 +356,13 @@ module ferum::market {
         iDecimals: u8,
         // Number of decimals for the quote coin.
         qDecimals: u8,
+        // Wether or not this orderbook is active.
+        isActive: bool,
+        // The percentage of the fee paid by the cranker. Represented as a 10 digit fixedpoint number.
+        crankerFeeSplit: u64,
+        // The notional for the order should be a multiple of the notional unit. Notional == price * qty.
+        // Represented as a 10 digit fixedpoint number.
+        notionalUnit: u64,
         // Fee type for this market.
         feeType: string::String,
         // All the price levels for this book.
@@ -442,6 +453,8 @@ module ferum::market {
         owner: &signer,
         instrumentDecimals: u8,
         quoteDecimals: u8,
+        crankerFeeSplit: u64, // Fixedpoint.
+        notionalUnit: u64, // Fixedpoint.
         maxCacheSize: u8,
         feeType: string::String
     ) acquires FerumInfo {
@@ -461,7 +474,12 @@ module ferum::market {
             qCoinDecimals
         };
         assert!(instrumentDecimals + quoteDecimals <= minDecimals, ERR_INVALID_DECIMAL_CONFIG);
-        get_fee_structure(feeType); // Asserts that the feeType maps to a valid fee structure.
+        let minPrice = exp64(DECIMAL_PLACES - quoteDecimals);
+        let minQty = exp64(DECIMAL_PLACES - instrumentDecimals);
+        assert!(notionalUnit >= fp_mul(minPrice, minQty, FP_NO_PRECISION_LOSS), ERR_INVALID_NOTIONAL_UNIT);
+        let feeStructure = get_fee_structure(feeType); // Also asserts that the feeType maps to a valid fee structure.
+        let maxProtocolFeeSplit = get_max_protocol_fee(feeStructure);
+        assert!(maxProtocolFeeSplit + crankerFeeSplit < 10000000000, ERR_INVALID_CRANKER_SPLIT);
 
         let finalizeEvents = new_event_handle<IndexingFinalizeEvent>(owner);
         let executionEvents = new_event_handle<IndexingExecutionEvent>(owner);
@@ -481,6 +499,9 @@ module ferum::market {
             maxCacheSize,
             iDecimals: instrumentDecimals,
             qDecimals: quoteDecimals,
+            crankerFeeSplit,
+            notionalUnit,
+            isActive: true,
             feeType,
             priceLevelsTable: PriceLevelReuseTable {
                 objects: table::new(),
@@ -642,6 +663,41 @@ module ferum::market {
         orderID: u32,
     ) acquires FerumInfo, Orderbook, MarketBuyTree, MarketBuyCache, MarketSellTree, MarketSellCache, IndexingEventHandles {
         cancel_order<I, Q>(owner, orderID);
+    }
+
+    public entry fun set_notional_unit_entry<I, Q>(
+        owner: &signer,
+        notionalUnit: u64, // Fixedpoint.
+    ) acquires FerumInfo, Orderbook, MarketBuyTree, MarketBuyCache, MarketSellTree, MarketSellCache {
+        let ownerAddr = address_of(owner);
+        assert!(ownerAddr == @ferum, ERR_NOT_ALLOWED);
+        assert_ferum_inited();
+
+        let marketAddr = get_market_addr<I, Q>();
+        let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
+        assert_market_empty<I, Q>(marketAddr);
+
+        let minPrice = exp64(DECIMAL_PLACES - book.qDecimals);
+        let minQty = exp64(DECIMAL_PLACES - book.iDecimals);
+        assert!(notionalUnit >= fp_mul(minPrice, minQty, FP_NO_PRECISION_LOSS), ERR_INVALID_NOTIONAL_UNIT);
+        book.notionalUnit = notionalUnit;
+    }
+
+    public entry fun set_cranker_fee_split_entry<I, Q>(
+        owner: &signer,
+        crankerFeeSplit: u64, // Fixedpoint.
+    ) acquires FerumInfo, Orderbook, MarketBuyTree, MarketBuyCache, MarketSellTree, MarketSellCache {
+        let ownerAddr = address_of(owner);
+        assert!(ownerAddr == @ferum, ERR_NOT_ALLOWED);
+        assert_ferum_inited();
+
+        let marketAddr = get_market_addr<I, Q>();
+        let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
+        assert_market_empty<I, Q>(marketAddr);
+
+        let feeStructure = get_fee_structure(book.feeType);
+        let maxProtocolFeeSplit = get_max_protocol_fee(feeStructure);
+        assert!(maxProtocolFeeSplit + crankerFeeSplit < 10000000000, ERR_INVALID_CRANKER_SPLIT);
     }
 
     // </editor-fold>
@@ -1281,6 +1337,8 @@ module ferum::market {
     ): u32 acquires MarketSellTree, MarketBuyTree, MarketSellCache, MarketBuyCache, IndexingEventHandles {
         // Validate inputs.
         // <editor-fold defaultstate="collapsed" desc="Input Validation">
+        let notional = fp_mul(price, qty, FP_NO_PRECISION_LOSS);
+        assert!(notional / book.notionalUnit * book.notionalUnit == notional, ERR_NOTIONAL_NOT_UNIT_MULTIPLE);
         fp_round(qty, book.iDecimals, FP_NO_PRECISION_LOSS);
         fp_round(price, book.qDecimals, FP_NO_PRECISION_LOSS);
         fp_round(marketBuyMaxCollateral, book.qDecimals, FP_NO_PRECISION_LOSS);
@@ -2213,6 +2271,17 @@ module ferum::market {
         table_with_length::destroy_empty(balances);
     }
 
+    inline fun assert_market_empty<I, Q>(marketAddr: address) acquires MarketBuyTree, MarketBuyCache, MarketSellTree, MarketSellCache {
+        let sellCache = &borrow_global<MarketSellCache<I, Q>>(marketAddr).cache;
+        let buyCache = &borrow_global<MarketBuyCache<I, Q>>(marketAddr).cache;
+        let sellTree = &borrow_global<MarketSellTree<I, Q>>(marketAddr).tree;
+        let buyTree = &borrow_global<MarketBuyTree<I, Q>>(marketAddr).tree;
+        assert!(vector::length(&sellCache.list) == 0, ERR_NOT_EMPTY_MARKET);
+        assert!(vector::length(&buyCache.list) == 0, ERR_NOT_EMPTY_MARKET);
+        assert!(sellTree.treeSize == 0, ERR_NOT_EMPTY_MARKET);
+        assert!(buyTree.treeSize == 0, ERR_NOT_EMPTY_MARKET);
+    }
+
     // </editor-fold>
 
     // <editor-fold defaultstate="collapsed" desc="Market tests">
@@ -3055,6 +3124,59 @@ module ferum::market {
         ]);
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_order_used(book, takerID);
+    }
+
+    // </editor-fold>
+
+    // <editor-fold defaultstate="collapsed" desc="Validation">
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    #[expected_failure(abort_code=ERR_NOTIONAL_NOT_UNIT_MULTIPLE)]
+    fun test_market_invalid_notional_unit(aptos: &signer, ferum: &signer, user: &signer)
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        setup_ferum_test<FMA, FMB>(aptos, ferum, user, 4);
+        set_notional_unit_entry<FMA, FMB>(ferum, 700);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 30000000000);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    #[expected_failure(abort_code=ERR_INVALID_NOTIONAL_UNIT)]
+    fun test_market_set_invalid_notional_unit(aptos: &signer, ferum: &signer, user: &signer)
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        setup_ferum_test<FMA, FMB>(aptos, ferum, user, 4);
+        set_notional_unit_entry<FMA, FMB>(ferum, 10);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    #[expected_failure(abort_code=ERR_NOT_EMPTY_MARKET)]
+    fun test_market_set_notional_unit_non_empty_market(aptos: &signer, ferum: &signer, user: &signer)
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        setup_ferum_test<FMA, FMB>(aptos, ferum, user, 4);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        set_notional_unit_entry<FMA, FMB>(ferum, 100);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    #[expected_failure(abort_code=ERR_INVALID_CRANKER_SPLIT)]
+    fun test_market_set_invalid_crank_split(aptos: &signer, ferum: &signer, user: &signer)
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        setup_ferum_test<FMA, FMB>(aptos, ferum, user, 4);
+        add_protocol_fee_tier_entry(ferum, s(b"test"), 10, 5000000000);
+        set_cranker_fee_split_entry<FMA, FMB>(ferum, 5100000000);
+    }
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    #[expected_failure(abort_code=ERR_NOT_EMPTY_MARKET)]
+    fun test_market_set_crank_split_non_empty_market(aptos: &signer, ferum: &signer, user: &signer)
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        setup_ferum_test<FMA, FMB>(aptos, ferum, user, 4);
+        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        set_cranker_fee_split_entry<FMA, FMB>(ferum, 400000000);
     }
 
     // </editor-fold>
@@ -9197,7 +9319,7 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, user);
         init_ferum(ferum);
         new_fee_type_entry(ferum, s(b"test"), 0, 0, 0);
-        init_market_entry<I, Q>(ferum, 4, 4, maxCacheSize, s(b"test"));
+        init_market_entry<I, Q>(ferum, 4, 4, 0, 100, maxCacheSize, s(b"test"));
         let userIdentifier = platform::account_identifier_for_test(user);
         let accountKey = open_market_account<I, Q>(user, vector[userIdentifier]);
         deposit_to_market_account<I, Q>(user, accountKey, 1000000000000, 1000000000000);
@@ -9527,7 +9649,7 @@ module ferum::market {
         feeType: string::String,
         takerFee: u64,
         makerFee: u64,
-        protocolFeeBps: u64,
+        protocolFee: u64,
     ) acquires FerumInfo {
         let ownerAddr = address_of(owner);
         assert_ferum_inited();
@@ -9537,7 +9659,7 @@ module ferum::market {
         table::add(&mut info.feeStructures, feeType, new_fee_tiers_with_defaults(
             takerFee,
             makerFee,
-            protocolFeeBps,
+            protocolFee,
         ));
     }
 
@@ -9771,6 +9893,21 @@ module ferum::market {
     inline fun get_protocol_fee(structure: &FeeStructure, tokenHoldingsAmt: u64): u64 {
         let tier = find_tier<ProtocolFeeTier>(&structure.protocolTiers, tokenHoldingsAmt);
         tier.value.protocolFee
+    }
+
+    // Returns the max % protocols get from user fees based on the protocol's fee tier.
+    inline fun get_max_protocol_fee(structure: &FeeStructure): u64 {
+        let maxFee = 0;
+        let i = 0;
+        let size = vector::length(&structure.protocolTiers);
+        while (i < size) {
+            let fee = vector::borrow(&structure.protocolTiers, i).value.protocolFee;
+            if (fee > maxFee) {
+                maxFee = fee;
+            };
+            i = i + 1;
+        };
+        maxFee
     }
 
     // Returns (taker, maker) fees for users based on the user's token holdings.
