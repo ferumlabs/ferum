@@ -232,6 +232,8 @@ module ferum::market {
         quoteBalance: coin::Coin<Q>,
         // Signer that created this market account.
         ownerAddress: address,
+        // Counter for orders produced by this account.
+        orderCounter: u32,
     }
 
     // Stores all the properties defining an order.
@@ -258,6 +260,8 @@ module ferum::market {
         ownerAddress: address,
         // Key of market account this order was placed for.
         accountKey: MarketAccountKey,
+        // Counter for this market account.
+        accountCounter: u32,
         // The remaining collateral for a market buy order.
         marketBuyRemainingCollateral: u64,
     }
@@ -407,12 +411,13 @@ module ferum::market {
     // Wrapper to store all event handles.
     struct IndexingEventHandles<phantom I, phantom Q> has key {
         executions: EventHandle<IndexingExecutionEvent>,
-        finalizations: EventHandle<IndexingFinalizeEvent>
+        finalizations: EventHandle<IndexingFinalizeEvent>,
+        priceUpdates: EventHandle<IndexingPriceUpdateEvent>,
+
     }
 
     // Struct encapsulating price at a given timestamp for the market.
-    // TODO: add indexing method.
-    struct PriceUpdateEvent has drop, store {
+    struct IndexingPriceUpdateEvent has drop, store {
         // Type info for the instrument coin type for the order.
         instrumentType: type_info::TypeInfo,
         // Type info for the quote coin type for the order.
@@ -484,6 +489,7 @@ module ferum::market {
 
         let finalizeEvents = new_event_handle<IndexingFinalizeEvent>(owner);
         let executionEvents = new_event_handle<IndexingExecutionEvent>(owner);
+        let priceUpdateEvents = new_event_handle<IndexingPriceUpdateEvent>(owner);
         move_to(owner, Orderbook<I, Q>{
             summary: MarketSummary {
                 sellCacheQty: 0,
@@ -534,6 +540,7 @@ module ferum::market {
         move_to(owner, IndexingEventHandles<I, Q>{
             executions: executionEvents,
             finalizations: finalizeEvents,
+            priceUpdates: priceUpdateEvents,
         });
         register_market<I, Q>(ownerAddr);
     }
@@ -729,6 +736,7 @@ module ferum::market {
             instrumentBalance: coin::zero(),
             quoteBalance: coin::zero(),
             ownerAddress: ownerAddr,
+            orderCounter: 1,
         });
         accountKey
     }
@@ -861,18 +869,7 @@ module ferum::market {
                 buyCollateral: coin::zero(),
                 sellCollateral: coin::zero(),
                 priceLevelID: 0,
-                metadata: OrderMetadata{
-                    side: 0,
-                    behaviour: 0,
-                    price: 0,
-                    originalQty: 0,
-                    unfilledQty: 0,
-                    takerCrankPendingQty: 0,
-                    clientOrderID: 0,
-                    accountKey: sentinal_market_account_key(),
-                    ownerAddress: @0,
-                    marketBuyRemainingCollateral: 0,
-                },
+                metadata: default_order_metadata(),
             };
             let orderID = table.currID;
             table.currID = table.currID + 1;
@@ -885,6 +882,22 @@ module ferum::market {
     // </editor-fold>
 
     // <editor-fold defaultstate="collapsed" desc="Market private functions">
+
+    inline fun default_order_metadata(): OrderMetadata {
+        OrderMetadata{
+            side: 0,
+            behaviour: 0,
+            price: 0,
+            originalQty: 0,
+            unfilledQty: 0,
+            takerCrankPendingQty: 0,
+            clientOrderID: 0,
+            accountKey: sentinal_market_account_key(),
+            accountCounter: 0,
+            ownerAddress: @0,
+            marketBuyRemainingCollateral: 0,
+        }
+    }
 
     // Temporary struct used to store instrument and quote balances.
     struct MarketBalance<phantom I, phantom Q> has store {
@@ -1145,18 +1158,7 @@ module ferum::market {
                         originalQty: makerOrder.metadata.originalQty,
                         timestampSecs: event.timestampSecs,
                     });
-                    makerOrder.metadata = OrderMetadata {
-                        side: 0,
-                        behaviour: 0,
-                        price: 0,
-                        originalQty: 0,
-                        unfilledQty: 0,
-                        takerCrankPendingQty: 0,
-                        clientOrderID: 0,
-                        accountKey: sentinal_market_account_key(),
-                        ownerAddress: @0,
-                        marketBuyRemainingCollateral: 0,
-                    };
+                    makerOrder.metadata = default_order_metadata();
                     // Release any unsettled collateral.
                     if (coin::value(&makerOrder.buyCollateral) > 0) {
                         coin::merge(&mut makerAccount.quoteBalance, coin::extract_all(&mut makerOrder.buyCollateral));
@@ -1197,18 +1199,7 @@ module ferum::market {
                 originalQty: takerOrder.metadata.originalQty,
                 timestampSecs: event.timestampSecs,
             });
-            takerOrder.metadata = OrderMetadata {
-                side: 0,
-                behaviour: 0,
-                price: 0,
-                originalQty: 0,
-                unfilledQty: 0,
-                takerCrankPendingQty: 0,
-                clientOrderID: 0,
-                accountKey: sentinal_market_account_key(),
-                ownerAddress: @0,
-                marketBuyRemainingCollateral: 0,
-            };
+            takerOrder.metadata = default_order_metadata();
             // Release any unsettled collateral.
             if (coin::value(&takerOrder.buyCollateral) > 0) {
                 coin::merge(&mut takerAccount.quoteBalance, coin::extract_all(&mut takerOrder.buyCollateral));
@@ -1517,9 +1508,11 @@ module ferum::market {
             takerCrankPendingQty: 0,
             clientOrderID,
             accountKey,
+            accountCounter: marketAccount.orderCounter,
             ownerAddress: address_of(owner),
             marketBuyRemainingCollateral: marketBuyMaxCollateral,
         };
+        marketAccount.orderCounter = marketAccount.orderCounter + 1;
         coin::merge(&mut order.buyCollateral, buyCollateral);
         coin::merge(&mut order.sellCollateral, sellCollateral);
         // Get some side dependant variables.
@@ -1575,18 +1568,7 @@ module ferum::market {
                 );
                 order.next = ordersTable.unusedStack;
                 order.priceLevelID = 0;
-                order.metadata = OrderMetadata {
-                    side: 0,
-                    behaviour: 0,
-                    price: 0,
-                    originalQty: 0,
-                    unfilledQty: 0,
-                    takerCrankPendingQty: 0,
-                    clientOrderID: 0,
-                    accountKey: sentinal_market_account_key(),
-                    ownerAddress: @0,
-                    marketBuyRemainingCollateral: 0,
-                };
+                order.metadata = default_order_metadata();
                 ordersTable.unusedStack = orderID;
                 return 0
             };
@@ -1676,35 +1658,9 @@ module ferum::market {
             );
             order.next = ordersTable.unusedStack;
             order.priceLevelID = 0;
-            order.metadata = OrderMetadata {
-                side: 0,
-                behaviour: 0,
-                price: 0,
-                originalQty: 0,
-                unfilledQty: 0,
-                takerCrankPendingQty: 0,
-                clientOrderID: 0,
-                ownerAddress: @0,
-                accountKey: sentinal_market_account_key(),
-                marketBuyRemainingCollateral: 0,
-            };
+            order.metadata = default_order_metadata();
             ordersTable.unusedStack = orderID;
         };
-    }
-
-    inline fun emit_finalized_event<I, Q>(
-        marketAddr: address,
-        accountKey: MarketAccountKey,
-        price: u64,
-        originalQty: u64,
-    ) acquires IndexingEventHandles {
-        let finalizeEventHandle = &mut borrow_global_mut<IndexingEventHandles<I, Q>>(marketAddr).finalizations;
-        emit_event(finalizeEventHandle, IndexingFinalizeEvent {
-            accountKey,
-            price,
-            originalQty,
-            timestampSecs: timestamp::now_seconds(),
-        });
     }
 
     fun remove_order_from_price_store_and_level<I, Q>(
@@ -2330,6 +2286,21 @@ module ferum::market {
         assert!(vector::length(&buyCache.list) == 0, ERR_NOT_EMPTY_MARKET);
         assert!(sellTree.treeSize == 0, ERR_NOT_EMPTY_MARKET);
         assert!(buyTree.treeSize == 0, ERR_NOT_EMPTY_MARKET);
+    }
+
+    inline fun emit_finalized_event<I, Q>(
+        marketAddr: address,
+        accountKey: MarketAccountKey,
+        price: u64,
+        originalQty: u64,
+    ) acquires IndexingEventHandles {
+        let finalizeEventHandle = &mut borrow_global_mut<IndexingEventHandles<I, Q>>(marketAddr).finalizations;
+        emit_event(finalizeEventHandle, IndexingFinalizeEvent {
+            accountKey,
+            price,
+            originalQty,
+            timestampSecs: timestamp::now_seconds(),
+        });
     }
 
     // </editor-fold>
