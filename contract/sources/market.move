@@ -245,7 +245,7 @@ module ferum::market {
         orderCounter: u32,
     }
 
-    // Stores all the properties defining an order.
+    // Stores all the properties defining an order. All fields on this struct are immutable unless otherwise specified.
     struct OrderMetadata has drop, copy, store {
         // Side for this order. See the OrderSide enum.
         side: u8,
@@ -258,9 +258,11 @@ module ferum::market {
         // The remaining qty of the order + any pending crank qty. The order is fully filled if
         // unfilledQty - <pending crank qty> == 0. <pending crank qty> is equal to the takerCrankPendingQty, stored on
         // the order, and the maker crank pending qty, which is only stored in the price store for efficiancy.
+        // Mutable field.
         unfilledQty: u64,
         // Qty of a taker order which was executed but is still waiting for the crank to be turned so executions can
         // be created.
+        // Mutable field.
         takerCrankPendingQty: u64,
         // Optional metadata provided for this order.
         clientOrderID: u32,
@@ -270,6 +272,7 @@ module ferum::market {
         // ID which uniquely identifies this order.
         orderID: OrderID,
         // The remaining collateral for a market buy order.
+        // Mutable field.
         marketBuyRemainingCollateral: u64,
     }
 
@@ -398,20 +401,27 @@ module ferum::market {
         queue: NodeList<ExecutionQueueEvent>,
     }
 
+    // Struct to contain fee information about an execution.
+    struct ExecFeeInfo has store, drop {
+        ferumFee: u64, // Fixedpoint value.
+        crankerFee: u64, // Fixedpoint value.
+        protocolFee: u64, // Fixedpoint value.
+    }
+
     // Representation of an execution emitted as an Aptos event.
     struct IndexingExecutionEvent has store, drop {
-        makerAccountKey: MarketAccountKey,
-        takerAccountKey: MarketAccountKey,
+        makerOrderMetadata: OrderMetadata,
+        takerOrderMetadata: OrderMetadata,
         price: u64, // Fixedpoint value.
         qty: u64, // Fixedpoint value.
+        takerFeeInfo: ExecFeeInfo,
+        makerFeeInfo: ExecFeeInfo,
         timestampSecs: u64
     }
 
     // Representation of an order finalization emitted as an Aptos event.
     struct IndexingFinalizeEvent has store, drop {
-        accountKey: MarketAccountKey,
-        originalQty: u64,
-        price: u64, // Fixedpoint value.
+        orderMetadata: OrderMetadata,
         timestampSecs: u64,
     }
 
@@ -989,7 +999,7 @@ module ferum::market {
                 };
                 let makerProtocolSplit = get_protocol_fee(feeStructure, makerProtocolFeBalance);
                 // Settle execution and update the price store element.
-                if (makerSide == SIDE_BUY) {
+                let (makerFeeInfo, takerFeeInfo) = if (makerSide == SIDE_BUY) {
                     // Settle.
                     // Handle instrument coin.
                     let (makerProceedsAmt, makerProtocolFeeAmt, makerCrankFeeAmt, makerFerumFeeAmt) = calc_fee_coin_amts(
@@ -1013,6 +1023,12 @@ module ferum::market {
                     // Ferum.
                     let makerFerumFeeCoinAmt = coin::extract(&mut takerSellCollateral, makerFerumFeeAmt);
                     coin::merge(&mut ferumFeeProceeds.instrument, makerFerumFeeCoinAmt);
+                    // Construct fee info.
+                    let makerFeeInfo = ExecFeeInfo {
+                        ferumFee: fp_from(makerFerumFeeAmt, instrumentDecimals),
+                        crankerFee: fp_from(makerCrankFeeAmt, instrumentDecimals),
+                        protocolFee: fp_from(makerProtocolFeeAmt, instrumentDecimals),
+                    };
 
                     // Handle quote coin.
                     let takerNotional = fp_round(fp_mul(makerPrice, execFillQty, FP_NO_PRECISION_LOSS), quoteDecimals, FP_NO_PRECISION_LOSS);
@@ -1037,6 +1053,13 @@ module ferum::market {
                     // Ferum.
                     let takerFerumFeeCoinAmt = coin::extract(&mut makerOrder.buyCollateral, takerFerumFeeAmt);
                     coin::merge(&mut ferumFeeProceeds.quote, takerFerumFeeCoinAmt);
+                    // Construct fee info.
+                    let takerFeeInfo = ExecFeeInfo {
+                        ferumFee: fp_from(takerFerumFeeAmt, quoteDecimals),
+                        crankerFee: fp_from(takerCrankFeeAmt, quoteDecimals),
+                        protocolFee: fp_from(takerProtocolFeeAmt, quoteDecimals),
+                    };
+                    (makerFeeInfo, takerFeeInfo)
                 } else {
                     // Settle.
                     // Handle quote coin.
@@ -1062,6 +1085,12 @@ module ferum::market {
                     // Ferum.
                     let makerFerumFeeCoinAmt = coin::extract(&mut takerBuyCollateral, makerFerumFeeAmt);
                     coin::merge(&mut ferumFeeProceeds.quote, makerFerumFeeCoinAmt);
+                    // Construct fee info.
+                    let makerFeeInfo = ExecFeeInfo {
+                        ferumFee: fp_from(makerFerumFeeAmt, quoteDecimals),
+                        crankerFee: fp_from(makerCrankFeeAmt, quoteDecimals),
+                        protocolFee: fp_from(makerProtocolFeeAmt, quoteDecimals),
+                    };
 
                     // Handle instrument coin.
                     let (takerProceedsAmt, takerProtocolFeeAmt, takerCrankFeeAmt, takerFerumFeeAmt) = calc_fee_coin_amts(
@@ -1094,6 +1123,13 @@ module ferum::market {
                             coin::merge(&mut takerProceeds.quote, excessCollateralCoinAmt);
                         };
                     };
+                    // Construct fee info.
+                    let takerFeeInfo = ExecFeeInfo {
+                        ferumFee: fp_from(takerFerumFeeAmt, instrumentDecimals),
+                        crankerFee: fp_from(takerCrankFeeAmt, instrumentDecimals),
+                        protocolFee: fp_from(takerProtocolFeeAmt, instrumentDecimals),
+                    };
+                    (makerFeeInfo, takerFeeInfo)
                 };
                 // Update price store and price level.
                 if (is_price_store_elem_in_cache(&book.summary, makerSide, makerPrice)) {
@@ -1133,10 +1169,13 @@ module ferum::market {
                 };
                 // Emit an execution event.
                 emit_event(execEventHandle, IndexingExecutionEvent {
-                    makerAccountKey,
-                    takerAccountKey,
+                    makerOrderMetadata: makerOrder.metadata,
+                    // TODO: use correct value.
+                    takerOrderMetadata: makerOrder.metadata,
                     price: makerOrder.metadata.price,
                     qty: execFillQty,
+                    makerFeeInfo,
+                    takerFeeInfo,
                     timestampSecs: event.timestampSecs,
                 });
                 // If the maker order is finalized and all crank pending qty has been flushed, add the order to the
@@ -1144,9 +1183,7 @@ module ferum::market {
                 // Shouldn't have to worry about market orders because they will never be in the book.
                 if (is_finalized(makerOrder)) {
                     emit_event(finalizeEventHandle, IndexingFinalizeEvent {
-                        accountKey: makerAccountKey,
-                        price: makerOrder.metadata.price,
-                        originalQty: makerOrder.metadata.originalQty,
+                        orderMetadata: makerOrder.metadata,
                         timestampSecs: event.timestampSecs,
                     });
                     makerOrder.metadata = default_order_metadata();
@@ -1185,9 +1222,7 @@ module ferum::market {
         // unused order stack, and emit a finalize event.
         if (is_finalized(takerOrder)) {
             emit_event(finalizeEventHandle, IndexingFinalizeEvent {
-                accountKey: takerAccountKey,
-                price: takerOrder.metadata.price,
-                originalQty: takerOrder.metadata.originalQty,
+                orderMetadata: takerOrder.metadata,
                 timestampSecs: event.timestampSecs,
             });
             takerOrder.metadata = default_order_metadata();
@@ -1385,15 +1420,37 @@ module ferum::market {
             side == SIDE_BUY && price >= minAsk && minAsk != 0
         );
 
+        // Get the market account.
+        assert!(table::contains(&book.marketAccounts, accountKey), ERR_NO_MARKET_ACCOUNT);
+        let marketAccount = table::borrow_mut(&mut book.marketAccounts, accountKey);
+        assert!(marketAccount.orderCounter < MAX_U32, ERR_ACCOUNT_EXCEED_MAX_ORDERS);
+        assert!(owns_account(owner, &accountKey, marketAccount), ERR_NOT_OWNER);
+        // Preemptively create order metadata.
+        let orderMetadata = OrderMetadata{
+            side,
+            behaviour,
+            price,
+            originalQty: qty,
+            unfilledQty: qty,
+            takerCrankPendingQty: 0,
+            clientOrderID,
+            orderID: OrderID {
+                accountKey,
+                counter: marketAccount.orderCounter
+            },
+            ownerAddress: address_of(owner),
+            marketBuyRemainingCollateral: marketBuyMaxCollateral,
+        };
+
         // Perform checks on order behaviour and cancel before trying to add to the book.
         // <editor-fold defaultstate="collapsed" desc="Order Behaviour Checks">
         if (behaviour == BEHAVIOUR_IOC && price != 0 && !crossesSpread) {
             // Cancel limit IOC orders that don't cross the spread because they won't execute.
-            emit_finalized_event<I, Q>(marketAddr, accountKey, price, qty);
+            emit_finalized_event<I, Q>(marketAddr, orderMetadata);
             return 0
         } else if (behaviour == BEHAVIOUR_POST && crossesSpread) {
             // Cancel POST orders that cross the spread because we can't guarantee that they will be makers.
-            emit_finalized_event<I, Q>(marketAddr, accountKey, price, qty);
+            emit_finalized_event<I, Q>(marketAddr, orderMetadata);
             return 0
         } else if (behaviour == BEHAVIOUR_FOK) {
             // Check to make sure a FOK order can be filled by orders on the book. Otherwise, cancel it.
@@ -1460,7 +1517,7 @@ module ferum::market {
                 };
                 if (remainingQty > 0) {
                     // Cancel the order because we couldn't fill it.
-                    emit_finalized_event<I, Q>(marketAddr, accountKey, price, qty);
+                    emit_finalized_event<I, Q>(marketAddr, orderMetadata);
                     return 0
                 };
             };
@@ -1468,10 +1525,6 @@ module ferum::market {
         // </editor-fold>
 
         // Create order object.
-        assert!(table::contains(&book.marketAccounts, accountKey), ERR_NO_MARKET_ACCOUNT);
-        let marketAccount = table::borrow_mut(&mut book.marketAccounts, accountKey);
-        assert!(marketAccount.orderCounter < MAX_U32, ERR_ACCOUNT_EXCEED_MAX_ORDERS);
-        assert!(owns_account(owner, &accountKey, marketAccount), ERR_NOT_OWNER);
         let (buyCollateral, sellCollateral) = if (side == SIDE_BUY) {
             let quoteCoinAmt = if (price == 0) {
                 fp_convert(marketBuyMaxCollateral, coin::decimals<Q>(), FP_NO_PRECISION_LOSS)
@@ -1491,21 +1544,7 @@ module ferum::market {
         };
         let orderID = get_or_create_order(&mut book.ordersTable);
         let order = table::borrow_mut(&mut book.ordersTable.objects, orderID);
-        order.metadata = OrderMetadata{
-            side,
-            behaviour,
-            price,
-            originalQty: qty,
-            unfilledQty: qty,
-            takerCrankPendingQty: 0,
-            clientOrderID,
-            orderID: OrderID {
-                accountKey: accountKey,
-                counter: marketAccount.orderCounter
-            },
-            ownerAddress: address_of(owner),
-            marketBuyRemainingCollateral: marketBuyMaxCollateral,
-        };
+        order.metadata = orderMetadata;
         marketAccount.orderCounter = marketAccount.orderCounter + 1;
         coin::merge(&mut order.buyCollateral, buyCollateral);
         coin::merge(&mut order.sellCollateral, sellCollateral);
@@ -1556,9 +1595,7 @@ module ferum::market {
                 // Order is fully finalized. Emit finalize event and reuse order object.
                 emit_finalized_event<I, Q>(
                     marketAddr,
-                    order.metadata.orderID.accountKey,
-                    order.metadata.price,
-                    order.metadata.originalQty,
+                    order.metadata,
                 );
                 order.next = ordersTable.unusedStack;
                 order.priceLevelID = 0;
@@ -1646,9 +1683,7 @@ module ferum::market {
             // Order is fully finalized. Emit finalize event and reuse order object.
             emit_finalized_event<I, Q>(
                 marketAddr,
-                order.metadata.orderID.accountKey,
-                order.metadata.price,
-                order.metadata.originalQty,
+                order.metadata,
             );
             order.next = ordersTable.unusedStack;
             order.priceLevelID = 0;
@@ -2271,15 +2306,11 @@ module ferum::market {
 
     inline fun emit_finalized_event<I, Q>(
         marketAddr: address,
-        accountKey: MarketAccountKey,
-        price: u64,
-        originalQty: u64,
+        orderMetadata: OrderMetadata
     ) acquires IndexingEventHandles {
         let finalizeEventHandle = &mut borrow_global_mut<IndexingEventHandles<I, Q>>(marketAddr).finalizations;
         emit_event(finalizeEventHandle, IndexingFinalizeEvent {
-            accountKey,
-            price,
-            originalQty,
+            orderMetadata,
             timestampSecs: timestamp::now_seconds(),
         });
     }
