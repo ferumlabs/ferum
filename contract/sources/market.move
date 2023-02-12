@@ -87,24 +87,24 @@ module ferum::market {
 
     // <editor-fold defaultstate="collapsed" desc="Market Errors">
 
-    const ERR_COIN_UNINITIALIZED: u64 = 401;
-    const ERR_COIN_UNREGISTERED_FERUM: u64 = 413;
-    const ERR_UNKNOWN_ORDER: u64 = 402;
-    const ERR_NOT_OWNER: u64 = 403;
-    const ERR_COIN_EXCEEDS_MAX_SUPPORTED_DECIMALS: u64 = 404;
-    const ERR_INVALID_BEHAVIOUR: u64 = 405;
-    const ERR_INVALID_DECIMAL_CONFIG: u64 = 406;
-    const ERR_INVALID_NOTIONAL_UNIT: u64 = 406;
-    const ERR_INVALID_CRANKER_SPLIT: u64 = 406;
-    const ERR_INVALID_SIDE: u64 = 407;
-    const ERR_ORDER_EXECUTED_BUT_IS_PENDING_CRANK: u64 = 408;
-    const ERR_PRICE_STORE_ELEM_NOT_FOUND: u64 = 409;
-    const ERR_CRANK_UNFULFILLED_QTY: u64 = 410;
-    const ERR_NO_MARKET_ACCOUNT: u64 = 411;
-    const ERR_INVALID_MAX_COLLATERAL_AMT: u64 = 412;
-    const ERR_NOTIONAL_NOT_UNIT_MULTIPLE: u64 = 412;
-    const ERR_NOT_EMPTY_MARKET: u64 = 412;
-    const ERR_FEE_ROUNDING_ERROR: u64 = 412;
+    const ERR_COIN_UNINITIALIZED: u64 = 101;
+    const ERR_COIN_UNREGISTERED_FERUM: u64 = 102;
+    const ERR_UNKNOWN_ORDER: u64 = 103;
+    const ERR_NOT_OWNER: u64 = 104;
+    const ERR_COIN_EXCEEDS_MAX_SUPPORTED_DECIMALS: u64 = 105;
+    const ERR_INVALID_BEHAVIOUR: u64 = 106;
+    const ERR_INVALID_DECIMAL_CONFIG: u64 = 107;
+    const ERR_INVALID_NOTIONAL_UNIT: u64 = 108;
+    const ERR_INVALID_CRANKER_SPLIT: u64 = 109;
+    const ERR_INVALID_SIDE: u64 = 110;
+    const ERR_ORDER_EXECUTED_BUT_IS_PENDING_CRANK: u64 = 111;
+    const ERR_PRICE_STORE_ELEM_NOT_FOUND: u64 = 112;
+    const ERR_CRANK_UNFULFILLED_QTY: u64 = 113;
+    const ERR_NO_MARKET_ACCOUNT: u64 = 114;
+    const ERR_INVALID_MAX_COLLATERAL_AMT: u64 = 115;
+    const ERR_NOTIONAL_NOT_UNIT_MULTIPLE: u64 = 116;
+    const ERR_NOT_EMPTY_MARKET: u64 = 117;
+    const ERR_FEE_ROUNDING_ERROR: u64 = 118;
 
     // </editor-fold>
 
@@ -128,35 +128,35 @@ module ferum::market {
 
     // <editor-fold defaultstate="collapsed" desc="Cache Errors">
 
-    const ERR_CACHE_DUPLICATE_ITEM: u64 = 1;
-    const ERR_CACHE_INVALID_TYPE: u64 = 2;
-    const ERR_CACHE_ITEM_NOT_FOUND: u64 = 3;
+    const ERR_CACHE_DUPLICATE_ITEM: u64 = 401;
+    const ERR_CACHE_INVALID_TYPE: u64 = 402;
+    const ERR_CACHE_ITEM_NOT_FOUND: u64 = 403;
 
     // </editor-fold>
 
     // <editor-fold defaultstate="collapsed" desc="NodeList Errors">
 
-    const ERR_LIST_EMPTY: u64 = 1;
-    const ERR_LIST_ELEM_NOT_FOUND: u64 = 2;
+    const ERR_LIST_EMPTY: u64 = 501;
+    const ERR_LIST_ELEM_NOT_FOUND: u64 = 502;
 
     // </editor-fold>
 
     // <editor-fold defaultstate="collapsed" desc="Tree Errors">
 
-    const ERR_TREE_DUPLICATE_ITEM: u64 = 1;
-    const ERR_TREE_ELEM_DOES_NOT_EXIST: u64 = 4;
-    const ERR_TREE_INVALID_TREE_DEGREE: u64 = 5;
-    const ERR_TREE_INVALID_ITERATOR_TYPE: u64 = 6;
-    const ERR_TREE_EMPTY_ITERATOR: u64 = 7;
-    const ERR_TREE_DUPLICATE_ENTRY: u64 = 8;
+    const ERR_TREE_DUPLICATE_ITEM: u64 = 601;
+    const ERR_TREE_ELEM_DOES_NOT_EXIST: u64 = 604;
+    const ERR_TREE_INVALID_TREE_DEGREE: u64 = 605;
+    const ERR_TREE_INVALID_ITERATOR_TYPE: u64 = 606;
+    const ERR_TREE_EMPTY_ITERATOR: u64 = 607;
+    const ERR_TREE_DUPLICATE_ENTRY: u64 = 608;
 
     // </editor-fold>
 
     // Needs to be included to prevent inline from complaining.
     // TODO: remove once inline is more finalized.
-    const ERR_EXCEED_MAX_EXP: u64 = 1;
-    const ERR_FP_PRECISION_LOSS: u64 = 2;
-    const ERR_FP_EXCEED_DECIMALS: u64 = 3;
+    const ERR_EXCEED_MAX_EXP: u64 = 701;
+    const ERR_FP_PRECISION_LOSS: u64 = 702;
+    const ERR_FP_EXCEED_DECIMALS: u64 = 703;
 
     // </editor-fold>
 
