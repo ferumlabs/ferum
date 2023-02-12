@@ -857,7 +857,7 @@ module ferum::market {
         orderID
     }
 
-    public inline fun prealloc_price_levels(
+    public fun prealloc_price_levels(
         table: &mut PriceLevelReuseTable,
         count: u8,
     ) {
@@ -875,7 +875,7 @@ module ferum::market {
         }
     }
 
-    public inline fun prealloc_orders<I, Q>(
+    public fun prealloc_orders<I, Q>(
         table: &mut OrderReuseTable<I, Q>,
         count: u8,
     ) {
@@ -1945,11 +1945,8 @@ module ferum::market {
                 if (order.metadata.marketBuyRemainingCollateral < usedBuyCollateral) {
                     // Need to consider remaining buy collateral for market buy orders. If the remaining buy collateral is
                     // not enough to cover the fillQty, clamp fillQty to what the remaining buy collateral can cover.
-                    fillQty = fp_round(
-                        fp_div(order.metadata.marketBuyRemainingCollateral, bookPrice, FP_TRUNC),
-                        instrumentDecimals,
-                        FP_TRUNC,
-                    );
+                    let q = fp_div(order.metadata.marketBuyRemainingCollateral, bookPrice, FP_TRUNC);
+                    fillQty = fp_round(q, instrumentDecimals, FP_TRUNC);
                     if (fillQty == 0) {
                         break
                     };
@@ -2040,11 +2037,8 @@ module ferum::market {
                 if (order.metadata.marketBuyRemainingCollateral < usedBuyCollateral) {
                     // Need to consider remaining buy collateral for market buy orders. If the remaining buy collateral is
                     // not enough to cover the fillQty, clamp fillQty to what the remaining buy collateral can cover.
-                    fillQty = fp_round(
-                        fp_div(order.metadata.marketBuyRemainingCollateral, bookPrice, FP_TRUNC),
-                        instrumentDecimals,
-                        FP_TRUNC,
-                    );
+                    let q = fp_div(order.metadata.marketBuyRemainingCollateral, bookPrice, FP_TRUNC);
+                    fillQty = fp_round(q, instrumentDecimals, FP_TRUNC);
                     if (fillQty == 0) {
                         break
                     };
@@ -2098,7 +2092,7 @@ module ferum::market {
         };
     }
 
-    inline fun get_or_create_order<I, Q>(table: &mut OrderReuseTable<I, Q>): u32 {
+    fun get_or_create_order<I, Q>(table: &mut OrderReuseTable<I, Q>): u32 {
         if (table.unusedStack == 0) {
             prealloc_orders(table, 1)
         };
@@ -2109,7 +2103,7 @@ module ferum::market {
         orderID
     }
 
-    inline fun get_or_create_price_level(table: &mut PriceLevelReuseTable): u16 {
+    fun get_or_create_price_level(table: &mut PriceLevelReuseTable): u16 {
         if (table.unusedStack == 0) {
             prealloc_price_levels(table, 1)
         };
@@ -2120,7 +2114,7 @@ module ferum::market {
         priceLevelID
     }
 
-    inline fun validate_coins<I, Q>(): (u8, u8) {
+    fun validate_coins<I, Q>(): (u8, u8) {
         let iDecimals = coin::decimals<I>();
         let qDecimals = coin::decimals<Q>();
         assert!(coin::is_coin_initialized<Q>(), ERR_COIN_UNINITIALIZED);
@@ -2136,7 +2130,7 @@ module ferum::market {
     // buyTreeMax/sellTreeMin might point to a price level whose entire qty might be used and pending a crank turn.
     // If this returns false, than an order with `price` can't execute against the tree. Otherwise, an order with
     // `price` might execute against the tree.
-    inline fun can_maybe_execute_against_tree(
+    fun can_maybe_execute_against_tree(
         summary: &MarketSummary,
         orderSide: u8,
         price: u64, // Fixedpoint value.
@@ -2151,7 +2145,7 @@ module ferum::market {
     }
 
     // Returns true if a new price should be inserted into the cache.
-    inline fun should_insert_in_cache(
+    fun should_insert_in_cache(
         summary: &MarketSummary,
         maxCacheSize: u8,
         side: u8,
@@ -2167,7 +2161,7 @@ module ferum::market {
     }
 
     // Given a price that already exists in the price store, returns true if the price is in the cache.
-    inline fun is_price_store_elem_in_cache(
+    fun is_price_store_elem_in_cache(
         summary: &MarketSummary,
         side: u8,
         price: u64, // Fixedpoint value.
@@ -2182,7 +2176,7 @@ module ferum::market {
     }
 
     // Returns true if the order can no longer be executed.
-    inline fun no_qty_to_be_executed<I, Q>(
+    fun no_qty_to_be_executed<I, Q>(
         order: &Order<I, Q>,
         makerPendingCrankQty: u64, // Fixedpoint value.
     ): bool {
@@ -2194,7 +2188,7 @@ module ferum::market {
 
     // Returns true if the order is finalized. To be finalized means the order can no longer be executed any more and
     // there is no pending qty remaining.
-    inline fun is_finalized<I, Q>(
+    fun is_finalized<I, Q>(
         order: &Order<I, Q>,
     ): bool {
         let marketBuyAndCannotExecute = order.metadata.price == 0 &&
@@ -2205,7 +2199,7 @@ module ferum::market {
 
     // Returns true if the signer is able to perform mutative actions on an account and for the orders that the account
     // placed. Only the protocol or the address that created the account should be allowed.
-    inline fun owns_account<I, Q>(
+    fun owns_account<I, Q>(
         owner: &signer,
         accountKey: &MarketAccountKey,
         marketAccount: &MarketAccount<I, Q>,
@@ -2250,7 +2244,7 @@ module ferum::market {
         (counterPartyAmt, protocolSplitAmt, crankSplitAmt, ferumSplitAmt)
     }
 
-    fun create_protocol_balance_if_needed<I, Q>(
+    inline fun create_protocol_balance_if_needed<I, Q>(
         protocolList: &mut vector<address>,
         balances: &mut table_with_length::TableWithLength<address, MarketBalance<I, Q>>,
         protocol: address,
@@ -2348,7 +2342,7 @@ module ferum::market {
         }
     }
 
-    fun account_key_from_identifier(id: AccountIdentifier): MarketAccountKey {
+    inline fun account_key_from_identifier(id: AccountIdentifier): MarketAccountKey {
         let (protocolAddress, userAddress) = platform::get_addresses(&id);
         MarketAccountKey {
             protocolAddress,
@@ -9477,7 +9471,7 @@ module ferum::market {
     // <editor-fold defaultstate="collapsed" desc="Inlined utils">
 
     // Programatic way to get a power of 10.
-    inline fun exp128(e: u8): u128 {
+    fun exp128(e: u8): u128 {
         if (e == 0) {
             1
         } else if (e == 1) {
@@ -9608,8 +9602,6 @@ module ferum::market {
         (amt as u64)
     }
 
-    // TODO: inline when bug is fixed:
-    // thread 'main' panicked at 'called `Result::unwrap()` on an `Err` value: value (366) cannot exceed (255)'
     fun fp_convert(a: u64, decimals: u8, mode: u8): u64 {
         let decimalMultAdj = exp64(DECIMAL_PLACES - decimals);
         let intPart = a / DECIMAL_PLACES_EXP_U64;
@@ -9628,11 +9620,11 @@ module ferum::market {
         val
     }
 
-    inline fun fp_from(a: u64, decimals: u8): u64 {
+    fun fp_from(a: u64, decimals: u8): u64 {
         a * exp64(DECIMAL_PLACES - decimals)
     }
 
-    inline fun fp_round(a: u64, decimals: u8, mode: u8): u64 {
+    fun fp_round(a: u64, decimals: u8, mode: u8): u64 {
         assert!(decimals < DECIMAL_PLACES, ERR_FP_PRECISION_LOSS);
         let decimalsExp = exp64(DECIMAL_PLACES - decimals);
         let val = a / decimalsExp * decimalsExp;
@@ -10129,7 +10121,6 @@ module ferum::market {
         };
     }
 
-    // TODO: make inline once bugs are fixed.
     fun set_tier<T: store + drop>(list: &mut vector<Tier<T>>, tier: Tier<T>) {
         let i = 0;
         let size = vector::length(list);
@@ -10153,7 +10144,7 @@ module ferum::market {
         };
     }
 
-    fun remove_tier<T: store + drop>(list: &mut vector<Tier<T>>, minFerumTokens: u64) {
+    inline fun remove_tier<T: store + drop>(list: &mut vector<Tier<T>>, minFerumTokens: u64) {
         let i = 0;
         let size = vector::length(list);
         assert!(size > 0, ERR_INVALID_FEE_STRUCTURE);
@@ -10173,7 +10164,7 @@ module ferum::market {
         vector::pop_back(list);
     }
 
-    fun find_tier<T: store + drop>(list: &vector<Tier<T>>, val: u64): &Tier<T> {
+    inline fun find_tier<T: store + drop>(list: &vector<Tier<T>>, val: u64): &Tier<T> {
         let size = vector::length(list);
         assert!(size > 0, ERR_INVALID_FEE_STRUCTURE);
         let i = 1;
@@ -10527,7 +10518,6 @@ module ferum::market {
         value
     }
 
-    // TODO: inline when bug is fixed (https://github.com/aptos-foundation/AIPs/issues/33#issuecomment-1399213932)
     fun cache_find<T: drop + store>(cache: &Cache<T>, key: u64): vector<u64> {
         let size = vector::length(&cache.list);
         let i = size;
@@ -11568,7 +11558,6 @@ module ferum::market {
     }
 
     // Find the position of the given key in the tree.
-    // TODO: inline when bug is fixed (https://github.com/aptos-foundation/AIPs/issues/33#issuecomment-1399213932)
     fun tree_find<T: copy + store + drop>(tree: &Tree<T>, key: u64): TreePosition {
         let null = TreePosition {
             nodeID: 0,
@@ -11613,7 +11602,6 @@ module ferum::market {
     }
 
     // Assumes items are not already in the tree.
-    // TODO: inline when bug is fixed (https://github.com/aptos-foundation/AIPs/issues/33#issuecomment-1399213932)
     fun tree_insert<T: copy + store + drop>(tree: &mut Tree<T>, key: u64, value: T) {
         let currNodeID = tree.root;
         let parentID = 0;
@@ -11777,7 +11765,6 @@ module ferum::market {
         };
     }
 
-    // TODO: inline when bug is fixed (https://github.com/aptos-foundation/AIPs/issues/33#issuecomment-1399213932)
     fun tree_delete<T: copy + store + drop>(tree: &mut Tree<T>, key: u64) {
         // First find the item and record a path down to the key.
         let currNodeID = tree.root;
