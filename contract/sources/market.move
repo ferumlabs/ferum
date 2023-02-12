@@ -105,6 +105,7 @@ module ferum::market {
     const ERR_NOTIONAL_NOT_UNIT_MULTIPLE: u64 = 116;
     const ERR_NOT_EMPTY_MARKET: u64 = 117;
     const ERR_FEE_ROUNDING_ERROR: u64 = 118;
+    const ERR_ACCOUNT_EXCEED_MAX_ORDERS: u64 = 119;
 
     // </editor-fold>
 
@@ -208,6 +209,7 @@ module ferum::market {
     const DECIMAL_PLACES_EXP_U128: u128 = 10000000000;
     const DECIMAL_PLACES_EXP_U64: u64 = 10000000000;
     const MAX_U64: u64 = 18446744073709551615;
+    const MAX_U32: u32 = 4294967295;
     const MAX_U16: u64 = 65535;
 
     // </editor-fold>
@@ -1479,6 +1481,7 @@ module ferum::market {
         // Create order object.
         assert!(table::contains(&book.marketAccounts, accountKey), ERR_NO_MARKET_ACCOUNT);
         let marketAccount = table::borrow_mut(&mut book.marketAccounts, accountKey);
+        assert!(marketAccount.orderCounter < MAX_U32, ERR_ACCOUNT_EXCEED_MAX_ORDERS);
         assert!(owns_account(owner, &accountKey, marketAccount), ERR_NOT_OWNER);
         let (buyCollateral, sellCollateral) = if (side == SIDE_BUY) {
             let quoteCoinAmt = if (price == 0) {
