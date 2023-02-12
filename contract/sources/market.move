@@ -106,6 +106,7 @@ module ferum::market {
     const ERR_NOT_EMPTY_MARKET: u64 = 117;
     const ERR_FEE_ROUNDING_ERROR: u64 = 118;
     const ERR_ACCOUNT_EXCEED_MAX_ORDERS: u64 = 119;
+    const ERR_UNKNOWN_MARKET_ACCOUNT: u64 = 120;
 
     // </editor-fold>
 
@@ -231,10 +232,20 @@ module ferum::market {
         counter: u32,
     }
 
+    // Object identifying an order based on various keys.
+    struct UserOrderInfo has store, drop {
+        // API facing order id for the order.
+        orderID: OrderID,
+        // Internal order id for the order.
+        internalOrderID: u32,
+        // User supplied client order id.
+        clientOrderID: u32,
+    }
+
     // The market account itself.
     struct MarketAccount<phantom I, phantom Q> has store {
         // List of ids of orders which are still active for this account.
-        activeOrders: vector<u32>,
+        activeOrders: vector<UserOrderInfo>,
         // The total instrument coin balance for this order.
         instrumentBalance: coin::Coin<I>,
         // The total quote coin balance for this order.
@@ -595,6 +606,18 @@ module ferum::market {
         deposit_to_market_account<I, Q>(owner, accountKey, coinIAmt, coinQAmt)
     }
 
+    public entry fun withdraw_from_market_account_entry<I, Q>(
+        owner: &signer,
+        coinIAmt: u64, // Fixedpoint value.
+        coinQAmt: u64, // Fixedpoint value.
+    ) acquires FerumInfo, Orderbook {
+        let accountKey = MarketAccountKey {
+            protocolAddress: @0,
+            userAddress: address_of(owner),
+        };
+        withdraw_from_market_account<I, Q>(owner, accountKey, coinIAmt, coinQAmt)
+    }
+
     public entry fun rebalance_cache_entry<I, Q>(
         _: &signer,
         limit: u8,
@@ -622,19 +645,7 @@ module ferum::market {
         };
     }
 
-    public entry fun withdraw_from_market_account_entry<I, Q>(
-        owner: &signer,
-        coinIAmt: u64, // Fixedpoint value.
-        coinQAmt: u64, // Fixedpoint value.
-    ) acquires FerumInfo, Orderbook {
-        let accountKey = MarketAccountKey {
-            protocolAddress: @0,
-            userAddress: address_of(owner),
-        };
-        withdraw_from_market_account<I, Q>(owner, accountKey, coinIAmt, coinQAmt)
-    }
-
-    public entry fun crank<I, Q>(
+    public entry fun crank_entry<I, Q>(
         cranker: &signer,
         limit: u8,
     ) acquires FerumInfo, Orderbook, EventQueue, IndexingEventHandles, MarketBuyTree, MarketBuyCache, MarketSellTree, MarketSellCache {
@@ -701,10 +712,19 @@ module ferum::market {
 
     public entry fun cancel_order_entry<I, Q>(
         owner: &signer,
-        internalOrderID: u32,
+        counter: u32,
     ) acquires FerumInfo, Orderbook, MarketBuyTree, MarketBuyCache, MarketSellTree, MarketSellCache, IndexingEventHandles {
-        cancel_order<I, Q>(owner, internalOrderID);
+        let accountKey = MarketAccountKey {
+            protocolAddress: @ferum,
+            userAddress: address_of(owner),
+        };
+        cancel_order<I, Q>(owner, OrderID {
+            accountKey,
+            counter,
+        });
     }
+
+    // <editor-fold defaultstate="collapsed" desc="Market config entry functions">
 
     public entry fun set_notional_unit_entry<I, Q>(
         owner: &signer,
@@ -741,13 +761,40 @@ module ferum::market {
         assert!(maxProtocolFeeSplit + crankerFeeSplit < 10000000000, ERR_INVALID_CRANKER_SPLIT);
     }
 
+    public entry fun prealloc_price_levels_entry<I, Q>(
+        _: &signer,
+        count: u8,
+    ) acquires FerumInfo, Orderbook {
+        let marketAddr = get_market_addr<I, Q>();
+        let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
+        prealloc_price_levels(&mut book.priceLevelsTable, count);
+    }
+
+    public entry fun prealloc_orders_entry<I, Q>(
+        _: &signer,
+        count: u8,
+    ) acquires FerumInfo, Orderbook {
+        let marketAddr = get_market_addr<I, Q>();
+        let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
+        prealloc_orders(&mut book.ordersTable, count);
+    }
+
+    // </editor-fold>
+
     // </editor-fold>
 
     // <editor-fold defaultstate="collapsed" desc="Market public functions">
 
+    public fun get_order_id(accountKey: MarketAccountKey, counter: u32): OrderID {
+        OrderID {
+            accountKey,
+            counter,
+        }
+    }
+
     public fun open_market_account<I, Q>(
         owner: &signer,
-        id: vector<platform::AccountIdentifier>
+        accountIdentifier: vector<platform::AccountIdentifier>,
     ): MarketAccountKey acquires FerumInfo, Orderbook {
         let ownerAddr = address_of(owner);
         if (!coin::is_account_registered<token::Fe>(ownerAddr)) {
@@ -755,8 +802,8 @@ module ferum::market {
         };
         let marketAddr = get_market_addr<I, Q>();
         let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
-        let accountKey = if (vector::length(&id) > 0) {
-            account_key_from_identifier(vector::pop_back(&mut id))
+        let accountKey = if (vector::length(&accountIdentifier) > 0) {
+            account_key_from_identifier(vector::pop_back(&mut accountIdentifier))
         } else {
             MarketAccountKey {
                 protocolAddress: @ferum,
@@ -771,6 +818,24 @@ module ferum::market {
             orderCounter: 1,
         });
         accountKey
+    }
+
+    public fun get_market_account_key(
+        owner: &signer,
+        accountIdentifier: vector<platform::AccountIdentifier>
+    ): MarketAccountKey {
+        let ownerAddr = address_of(owner);
+        if (!coin::is_account_registered<token::Fe>(ownerAddr)) {
+            coin::register<token::Fe>(owner);
+        };
+        if (vector::length(&accountIdentifier) > 0) {
+            account_key_from_identifier(vector::pop_back(&mut accountIdentifier))
+        } else {
+            MarketAccountKey {
+                protocolAddress: @ferum,
+                userAddress: ownerAddr,
+            }
+        }
     }
 
     public fun deposit_to_market_account<I, Q>(
@@ -835,11 +900,11 @@ module ferum::market {
         qty: u64, // Fixedpoint value.
         clientOrderID: u32,
         marketBuyMaxCollateral: u64, // Should only be specified for market orders.
-    ): u32 acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles {
+    ): OrderID acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles {
         let marketAddr = get_market_addr<I, Q>();
         let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
         let execs = &mut vector[];
-        let internalOrderID = add_order_to_book<I, Q>(
+        let orderID = add_order_to_book<I, Q>(
             owner,
             accountKey,
             marketAddr,
@@ -869,7 +934,7 @@ module ferum::market {
                 i = i + 1;
             };
         };
-        internalOrderID
+        orderID
     }
 
     public fun prealloc_price_levels(
@@ -1202,6 +1267,7 @@ module ferum::market {
                     makerOrder.priceLevelID = 0;
                     makerOrder.next = ordersTable.unusedStack;
                     ordersTable.unusedStack = makerOrderInternalID;
+                    remove_active_order_with_internal_order_id(&mut makerAccount.activeOrders, makerOrderInternalID);
                 };
                 // Update the taker order.
                 let takerOrder = table::borrow_mut(&mut ordersTable.objects, event.takerInternalOrderID);
@@ -1255,6 +1321,7 @@ module ferum::market {
             takerOrder.priceLevelID = 0;
             takerOrder.next = ordersTable.unusedStack;
             ordersTable.unusedStack = event.takerInternalOrderID;
+            remove_active_order_with_internal_order_id(&mut takerAccount.activeOrders, event.takerInternalOrderID);
         };
         // Remove orders from the PriceLevel.
         list_drop_from_front(&mut makerPriceLevel.orders, numElemsToDrop);
@@ -1398,7 +1465,7 @@ module ferum::market {
         marketBuyMaxCollateral: u64, // Should only be specified for market orders.
         book: &mut Orderbook<I, Q>,
         execs: &mut vector<ExecutionQueueEvent>,
-    ): u32 acquires MarketSellTree, MarketBuyTree, MarketSellCache, MarketBuyCache, IndexingEventHandles {
+    ): OrderID acquires MarketSellTree, MarketBuyTree, MarketSellCache, MarketBuyCache, IndexingEventHandles {
         // Validate inputs.
         // <editor-fold defaultstate="collapsed" desc="Input Validation">
         let notional = fp_mul(price, qty, FP_NO_PRECISION_LOSS);
@@ -1444,7 +1511,11 @@ module ferum::market {
         let marketAccount = table::borrow_mut(&mut book.marketAccounts, accountKey);
         assert!(marketAccount.orderCounter < MAX_U32, ERR_ACCOUNT_EXCEED_MAX_ORDERS);
         assert!(owns_account(owner, &accountKey, marketAccount), ERR_NOT_OWNER);
-        // Preemptively create order metadata.
+        // Create order metadata.
+        let orderID = OrderID {
+            accountKey,
+            counter: marketAccount.orderCounter
+        };
         let orderMetadata = OrderMetadata{
             side,
             behaviour,
@@ -1453,10 +1524,7 @@ module ferum::market {
             unfilledQty: qty,
             takerCrankPendingQty: 0,
             clientOrderID,
-            orderID: OrderID {
-                accountKey,
-                counter: marketAccount.orderCounter
-            },
+            orderID,
             ownerAddress: address_of(owner),
             marketBuyRemainingCollateral: marketBuyMaxCollateral,
         };
@@ -1467,11 +1535,11 @@ module ferum::market {
         if (behaviour == BEHAVIOUR_IOC && price != 0 && !crossesSpread) {
             // Cancel limit IOC orders that don't cross the spread because they won't execute.
             emit_finalized_event<I, Q>(marketAddr, orderMetadata);
-            return 0
+            return sentinal_order_id()
         } else if (behaviour == BEHAVIOUR_POST && crossesSpread) {
             // Cancel POST orders that cross the spread because we can't guarantee that they will be makers.
             emit_finalized_event<I, Q>(marketAddr, orderMetadata);
-            return 0
+            return sentinal_order_id()
         } else if (behaviour == BEHAVIOUR_FOK) {
             // Check to make sure a FOK order can be filled by orders on the book. Otherwise, cancel it.
             let remainingQty = qty;
@@ -1538,7 +1606,7 @@ module ferum::market {
                 if (remainingQty > 0) {
                     // Cancel the order because we couldn't fill it.
                     emit_finalized_event<I, Q>(marketAddr, orderMetadata);
-                    return 0
+                    return sentinal_order_id()
                 };
             };
         };
@@ -1568,6 +1636,12 @@ module ferum::market {
         marketAccount.orderCounter = marketAccount.orderCounter + 1;
         coin::merge(&mut order.buyCollateral, buyCollateral);
         coin::merge(&mut order.sellCollateral, sellCollateral);
+        // Add the order to market account active orders list.
+        vector::push_back(&mut marketAccount.activeOrders, UserOrderInfo {
+            orderID,
+            clientOrderID,
+            internalOrderID,
+        });
         // Get some side dependant variables.
         let canMaybeExecAgainstTree = can_maybe_execute_against_tree(&mut book.summary, side, price);
         let timestampSecs = timestamp::now_seconds();
@@ -1608,7 +1682,7 @@ module ferum::market {
         let order = table::borrow_mut(&mut ordersTable.objects, internalOrderID); // Reborrow.
         if (no_qty_to_be_executed(order, 0)) {
             // If the order is fully executed, no need to add it to the price store.
-            return internalOrderID
+            return orderID
         };
         if (behaviour == BEHAVIOUR_IOC || price == 0) {
             // If the order is an IOC order or a market order, any remaining qty should be cancelled.
@@ -1623,9 +1697,10 @@ module ferum::market {
                 order.priceLevelID = 0;
                 order.metadata = default_order_metadata();
                 ordersTable.unusedStack = internalOrderID;
-                return 0
+                remove_active_order_with_internal_order_id(&mut marketAccount.activeOrders, internalOrderID);
+                return sentinal_order_id()
             };
-            return internalOrderID
+            return orderID
         };
         // Otherwise, order is added to the price store.
         let remainingQty = order.metadata.unfilledQty - order.metadata.takerCrankPendingQty;
@@ -1659,15 +1734,18 @@ module ferum::market {
             qty: remainingQty,
         });
         order.priceLevelID = priceLevelID;
-        internalOrderID
+        orderID
     }
 
     fun cancel_order<I, Q>(
         owner: &signer,
-        internalOrderID: u32,
+        orderID: OrderID,
     ) acquires FerumInfo, Orderbook, MarketBuyTree, MarketBuyCache, MarketSellTree, MarketSellCache, IndexingEventHandles {
         let marketAddr = get_market_addr<I, Q>();
         let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
+        assert!(table::contains(&book.marketAccounts, orderID.accountKey), ERR_UNKNOWN_MARKET_ACCOUNT);
+        let marketAccount = table::borrow(&book.marketAccounts, orderID.accountKey);
+        let internalOrderID = find_internal_order_id(&marketAccount.activeOrders, orderID);
         assert!(table::contains(&book.ordersTable.objects, internalOrderID), ERR_UNKNOWN_ORDER);
         let order = table::borrow(&book.ordersTable.objects, internalOrderID);
         assert!(order.metadata.ownerAddress != @0, ERR_UNKNOWN_ORDER);
@@ -1712,6 +1790,7 @@ module ferum::market {
             order.priceLevelID = 0;
             order.metadata = default_order_metadata();
             ordersTable.unusedStack = internalOrderID;
+            remove_active_order_with_internal_order_id(&mut marketAccount.activeOrders, internalOrderID);
         };
     }
 
@@ -2319,6 +2398,77 @@ module ferum::market {
         assert!(buyTree.treeSize == 0, ERR_NOT_EMPTY_MARKET);
     }
 
+    // <editor-fold defaultstate="collapsed" desc="Active order helpers">
+
+    inline fun find_internal_order_id(activeOrders: &vector<UserOrderInfo>, orderID: OrderID): u32 {
+        let i = 0;
+        let size = vector::length(activeOrders);
+        let internalOrderID = 0;
+        while (i < size) {
+            let orderInfo = vector::borrow(activeOrders, i);
+            if (orderInfo.orderID == orderID) {
+                internalOrderID = orderInfo.internalOrderID;
+                break
+            };
+            i = i + 1;
+        };
+        assert!(internalOrderID > 0, ERR_UNKNOWN_ORDER);
+        internalOrderID
+    }
+
+    inline fun remove_active_order_with_internal_order_id(activeOrders: &mut vector<UserOrderInfo>, internalID: u32) {
+        let i = 0;
+        let size = vector::length(activeOrders);
+        while (i < size) {
+            let orderInfo = vector::borrow(activeOrders, i);
+            if (orderInfo.internalOrderID == internalID) {
+                while (i < size-1) {
+                    vector::swap(activeOrders, i, i+1);
+                    i = i + 1;
+                };
+                vector::pop_back(activeOrders);
+                break
+            };
+            i = i + 1;
+        };
+    }
+
+    inline fun remove_active_order_with_order_id(activeOrders: &mut vector<UserOrderInfo>, orderID: OrderID) {
+        let i = 0;
+        let size = vector::length(activeOrders);
+        while (i < size) {
+            let orderInfo = vector::borrow(activeOrders, i);
+            if (orderInfo.orderID == orderID) {
+                while (i < size-1) {
+                    vector::swap(activeOrders, i, i+1);
+                    i = i + 1;
+                };
+                vector::pop_back(activeOrders);
+                break
+            };
+            i = i + 1;
+        };
+    }
+
+    inline fun remove_active_order_with_client_order_id(activeOrders: &mut vector<UserOrderInfo>, clientOrderID: u32) {
+        let i = 0;
+        let size = vector::length(activeOrders);
+        while (i < size) {
+            let orderInfo = vector::borrow(activeOrders, i);
+            if (orderInfo.clientOrderID == clientOrderID) {
+                while (i < size-1) {
+                    vector::swap(activeOrders, i, i+1);
+                    i = i + 1;
+                };
+                vector::pop_back(activeOrders);
+                break
+            };
+            i = i + 1;
+        };
+    }
+
+    // </editor-fold>
+
     // <editor-fold defaultstate="collapsed" desc="Event helpers">
 
     inline fun emit_finalized_event<I, Q>(
@@ -2433,8 +2583,8 @@ module ferum::market {
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        cancel_order<FMA, FMB>(user, orderID1);
-        cancel_order<FMA, FMB>(user, orderID2);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID1));
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID2));
         let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_POST, 8500000000, 100000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
@@ -2517,8 +2667,8 @@ module ferum::market {
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        cancel_order<FMA, FMB>(user, orderID1);
-        cancel_order<FMA, FMB>(user, orderID2);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID1));
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID2));
         let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_POST, 6500000000, 100000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
@@ -2605,8 +2755,8 @@ module ferum::market {
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        cancel_order<FMA, FMB>(user, orderID1);
-        cancel_order<FMA, FMB>(user, orderID2);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID1));
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID2));
         let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_IOC, 5500000000, 100000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
@@ -2644,17 +2794,17 @@ module ferum::market {
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 30000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 5000000000,
             },
             ExecEventInfo {
                 qty: 30000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 6000000000,
             },
             ExecEventInfo {
                 qty: 50000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 7000000000,
             },
         ]);
@@ -2704,8 +2854,8 @@ module ferum::market {
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        cancel_order<FMA, FMB>(user, orderID1);
-        cancel_order<FMA, FMB>(user, orderID2);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID1));
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID2));
         let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_IOC, 7500000000, 100000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
@@ -2743,17 +2893,17 @@ module ferum::market {
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 30000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 9000000000,
             },
             ExecEventInfo {
                 qty: 30000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 8000000000,
             },
             ExecEventInfo {
                 qty: 50000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 7000000000,
             },
         ]);
@@ -2838,8 +2988,8 @@ module ferum::market {
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        cancel_order<FMA, FMB>(user, orderID1);
-        cancel_order<FMA, FMB>(user, orderID2);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID1));
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID2));
         let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_FOK, 9000000000, 1000000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
@@ -2864,8 +3014,8 @@ module ferum::market {
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        cancel_order<FMA, FMB>(user, orderID1);
-        cancel_order<FMA, FMB>(user, orderID2);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID1));
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID2));
         let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_FOK, 8500000000, 100000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
@@ -2986,12 +3136,12 @@ module ferum::market {
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 30000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 5000000000,
             },
             ExecEventInfo {
                 qty: 20000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 6000000000,
             },
         ]);
@@ -3067,8 +3217,8 @@ module ferum::market {
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        cancel_order<FMA, FMB>(user, orderID1);
-        cancel_order<FMA, FMB>(user, orderID2);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID1));
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID2));
         let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_FOK, 4500000000, 1000000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
@@ -3094,8 +3244,8 @@ module ferum::market {
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        cancel_order<FMA, FMB>(user, orderID1);
-        cancel_order<FMA, FMB>(user, orderID2);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID1));
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID2));
         let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_FOK, 6500000000, 60000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
@@ -3217,12 +3367,12 @@ module ferum::market {
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 30000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 6000000000,
             },
             ExecEventInfo {
                 qty: 20000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 5000000000,
             },
         ]);
@@ -3304,7 +3454,7 @@ module ferum::market {
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        cancel_order<FMA, FMB>(user, orderID);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID));
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -3325,7 +3475,7 @@ module ferum::market {
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 4000000000, 50000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 3000000000, 40000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 2000000000, 30000000000);
-        cancel_order<FMA, FMB>(user, orderID);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID));
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.2 qty: 3, crankQty: 0)"),
             s(b"(0.3 qty: 4, crankQty: 0)"),
@@ -3530,8 +3680,8 @@ module ferum::market {
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 10000000000, 30000000000);
-        cancel_order<FMA, FMB>(user, orderID1);
-        cancel_order<FMA, FMB>(user, orderID2);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID1));
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID2));
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(1 qty: 3, crankQty: 0)"),
             s(b"(0.9 qty: 3, crankQty: 0)"),
@@ -3552,8 +3702,8 @@ module ferum::market {
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 3000000000, 40000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 2000000000, 30000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 1000000000, 30000000000);
-        cancel_order<FMA, FMB>(user, orderID1);
-        cancel_order<FMA, FMB>(user, orderID2);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID1));
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID2));
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.1 qty: 3, crankQty: 0)"),
             s(b"(0.2 qty: 3, crankQty: 0)"),
@@ -3614,8 +3764,8 @@ module ferum::market {
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 10000000000, 30000000000);
-        cancel_order<FMA, FMB>(user, orderID1);
-        cancel_order<FMA, FMB>(user, orderID2);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID1));
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID2));
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(1 qty: 3, crankQty: 0)"),
             s(b"(0.9 qty: 3, crankQty: 0)"),
@@ -3636,8 +3786,8 @@ module ferum::market {
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 3000000000, 40000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 2000000000, 30000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 1000000000, 30000000000);
-        cancel_order<FMA, FMB>(user, orderID1);
-        cancel_order<FMA, FMB>(user, orderID2);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID1));
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID2));
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.1 qty: 3, crankQty: 0)"),
             s(b"(0.2 qty: 3, crankQty: 0)"),
@@ -3730,12 +3880,12 @@ module ferum::market {
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 70000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 5000000000,
             },
             ExecEventInfo {
                 qty: 48333000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 6000000000,
             },
         ]);
@@ -3764,7 +3914,7 @@ module ferum::market {
         assert!(book.summary.sellTreeMin == 7000000000, 0);
 
         // Crank.
-        crank<FMA, FMB>(user1, 1);
+        crank_entry<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
@@ -3784,10 +3934,10 @@ module ferum::market {
         assert_order_collateral(book, makerID3, 0, 0);
         assert_order_collateral(book, makerID4, 0, 31667000000);
         assert_order_collateral(book, takerID, 0, 0);
-        assert_order_unused(book, takerID);
-        assert_order_unused(book, makerID1);
-        assert_order_unused(book, makerID2);
-        assert_order_unused(book, makerID3);
+        assert_order_unused(get_market_account_key(takerUser, vector[]), book, takerID);
+        assert_order_unused(get_market_account_key(makerUser, vector[]), book, makerID1);
+        assert_order_unused(get_market_account_key(makerUser, vector[]), book, makerID2);
+        assert_order_unused(get_market_account_key(makerUser, vector[]), book, makerID3);
         assert_order_used(book, makerID4);
         assert_account_balances(book, makerAccKey, 850000000000, 1063999800000);
         assert_account_balances(book, takerAccKey, 1118333000000, 936000200000);
@@ -3844,17 +3994,17 @@ module ferum::market {
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 70000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 5000000000,
             },
             ExecEventInfo {
                 qty: 80000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 6000000000,
             },
             ExecEventInfo {
                 qty: 13734000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 7000000000,
             },
         ]);
@@ -3889,7 +4039,7 @@ module ferum::market {
         assert!(book.summary.sellTreeMin == 7000000000, 0);
 
         // Crank.
-        crank<FMA, FMB>(user1, 1);
+        crank_entry<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
@@ -3911,12 +4061,12 @@ module ferum::market {
         assert_order_collateral(book, makerID5, 0, 0);
         assert_order_collateral(book, makerID6, 0, 36266000000);
         assert_order_collateral(book, takerID, 0, 0);
-        assert_order_unused(book, takerID);
-        assert_order_unused(book, makerID1);
-        assert_order_unused(book, makerID2);
-        assert_order_unused(book, makerID3);
-        assert_order_unused(book, makerID4);
-        assert_order_unused(book, makerID5);
+        assert_order_unused(get_market_account_key(takerUser, vector[]), book, takerID);
+        assert_order_unused(get_market_account_key(makerUser, vector[]), book, makerID1);
+        assert_order_unused(get_market_account_key(makerUser, vector[]), book, makerID2);
+        assert_order_unused(get_market_account_key(makerUser, vector[]), book, makerID3);
+        assert_order_unused(get_market_account_key(makerUser, vector[]), book, makerID4);
+        assert_order_unused(get_market_account_key(makerUser, vector[]), book, makerID5);
         assert_order_used(book, makerID6);
         assert_account_balances(book, makerAccKey, 800000000000, 1092613800000);
         assert_account_balances(book, takerAccKey, 1163734000000, 907386200000);
@@ -4555,7 +4705,7 @@ module ferum::market {
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 30000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 9000000000,
             },
         ]);
@@ -4575,7 +4725,7 @@ module ferum::market {
         assert!(book.summary.buyTreeMax == 7000000000, 0);
 
         // Crank.
-        crank<FMA, FMB>(user1, 1);
+        crank_entry<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
@@ -4590,7 +4740,7 @@ module ferum::market {
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_order_collateral(book, makerID, 36000000000, 0);
         assert_order_collateral(book, takerID, 0, 0);
-        assert_order_unused(book, takerID);
+        assert_order_unused(get_market_account_key(takerUser, vector[]), book, takerID);
         assert_order_used(book, makerID);
         assert_account_balances(book, makerAccKey, 1030000000000, 937000000000);
         assert_account_balances(book, takerAccKey, 970000000000, 1027000000000);
@@ -4632,8 +4782,8 @@ module ferum::market {
         add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 60000000000);
         add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
         add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        cancel_order<FMA, FMB>(user1, orderID1);
-        cancel_order<FMA, FMB>(user1, orderID2);
+        cancel_order<FMA, FMB>(user1, get_api_order_id<FMA, FMB>(orderID1));
+        cancel_order<FMA, FMB>(user1, get_api_order_id<FMA, FMB>(orderID2));
         let takerID = add_user_limit_order<FMA, FMB>(takerUser, SIDE_SELL, BEHAVIOUR_GTC, 5500000000, 30000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
@@ -4644,7 +4794,7 @@ module ferum::market {
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 30000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 7000000000,
             },
         ]);
@@ -4664,7 +4814,7 @@ module ferum::market {
         assert!(book.summary.buyTreeMax == 7000000000, 0);
 
         // Crank.
-        crank<FMA, FMB>(user1, 1);
+        crank_entry<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
@@ -4676,7 +4826,7 @@ module ferum::market {
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_order_collateral(book, makerID, 14000000000, 0);
         assert_order_collateral(book, takerID, 0, 0);
-        assert_order_unused(book, takerID);
+        assert_order_unused(get_market_account_key(takerUser, vector[]), book, takerID);
         assert_order_used(book, makerID);
         assert_account_balances(book, makerAccKey, 1030000000000, 965000000000);
         assert_account_balances(book, takerAccKey, 970000000000, 1021000000000);
@@ -4730,7 +4880,7 @@ module ferum::market {
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 30000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 9000000000,
             },
         ]);
@@ -4750,7 +4900,7 @@ module ferum::market {
         assert!(book.summary.buyTreeMax == 7000000000, 0);
 
         // Crank.
-        crank<FMA, FMB>(user1, 1);
+        crank_entry<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
@@ -4765,7 +4915,7 @@ module ferum::market {
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_order_collateral(book, makerID, 36000000000, 0);
         assert_order_collateral(book, takerID, 0, 0);
-        assert_order_unused(book, takerID);
+        assert_order_unused(get_market_account_key(takerUser, vector[]), book, takerID);
         assert_order_used(book, makerID);
         assert_account_balances(book, makerAccKey, 1030000000000, 937000000000);
         assert_account_balances(book, takerAccKey, 970000000000, 1027000000000);
@@ -4806,8 +4956,8 @@ module ferum::market {
         let makerID =  add_user_limit_order<FMA, FMB>(makerUser, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
         add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
         add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        cancel_order<FMA, FMB>(user1, orderID1);
-        cancel_order<FMA, FMB>(user1, orderID2);
+        cancel_order<FMA, FMB>(user1, get_api_order_id<FMA, FMB>(orderID1));
+        cancel_order<FMA, FMB>(user1, get_api_order_id<FMA, FMB>(orderID2));
         let takerID = add_user_limit_order<FMA, FMB>(takerUser, SIDE_SELL, BEHAVIOUR_GTC, 5500000000, 30000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
@@ -4818,7 +4968,7 @@ module ferum::market {
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 30000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 7000000000,
             },
         ]);
@@ -4838,7 +4988,7 @@ module ferum::market {
         assert!(book.summary.buyTreeMax == 7000000000, 0);
 
         // Crank.
-        crank<FMA, FMB>(user1, 1);
+        crank_entry<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
@@ -4850,7 +5000,7 @@ module ferum::market {
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_order_collateral(book, makerID, 14000000000, 0);
         assert_order_collateral(book, takerID, 0, 0);
-        assert_order_unused(book, takerID);
+        assert_order_unused(get_market_account_key(takerUser, vector[]), book, takerID);
         assert_order_used(book, makerID);
         assert_account_balances(book, makerAccKey, 1030000000000, 965000000000);
         assert_account_balances(book, takerAccKey, 970000000000, 1021000000000);
@@ -4906,7 +5056,7 @@ module ferum::market {
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 70000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 9000000000,
             },
         ]);
@@ -4931,7 +5081,7 @@ module ferum::market {
         assert!(book.summary.sellTreeMin == 0, 0);
 
         // Crank.
-        crank<FMA, FMB>(user1, 1);
+        crank_entry<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
@@ -4949,7 +5099,7 @@ module ferum::market {
         assert_order_collateral(book, makerID, 0, 0);
         assert_order_collateral(book, takerID, 0, 10000000000);
         assert_order_used(book, takerID);
-        assert_order_unused(book, makerID);
+        assert_order_unused(get_market_account_key(makerUser, vector[]), book, makerID);
         assert_account_balances(book, makerAccKey, 1070000000000, 937000000000);
         assert_account_balances(book, takerAccKey, 920000000000, 1063000000000);
         assert!(book.summary.buyCacheMax == 8000000000, 0);
@@ -5014,22 +5164,22 @@ module ferum::market {
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 130000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 9000000000,
             },
             ExecEventInfo {
                 qty: 80000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 8000000000,
             },
             ExecEventInfo {
                 qty: 50000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 7000000000,
             },
             ExecEventInfo {
                 qty: 40000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 6000000000,
             },
         ]);
@@ -5062,7 +5212,7 @@ module ferum::market {
         assert!(book.summary.buyTreeMax == 7000000000, 0);
 
         // Crank.
-        crank<FMA, FMB>(user1, 1);
+        crank_entry<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
@@ -5080,12 +5230,12 @@ module ferum::market {
         assert_order_collateral(book, makerID3, 0, 0);
         assert_order_collateral(book, makerID4, 0, 0);
         assert_order_collateral(book, makerID5, 0, 0);
-        assert_order_unused(book, makerID1);
-        assert_order_unused(book, makerID2);
-        assert_order_unused(book, makerID3);
-        assert_order_unused(book, makerID4);
-        assert_order_unused(book, makerID5);
-        assert_order_unused(book, takerID);
+        assert_order_unused(get_market_account_key(makerUser1, vector[]), book, makerID1);
+        assert_order_unused(get_market_account_key(makerUser1, vector[]), book, makerID2);
+        assert_order_unused(get_market_account_key(makerUser2, vector[]), book, makerID3);
+        assert_order_unused(get_market_account_key(makerUser2, vector[]), book, makerID4);
+        assert_order_unused(get_market_account_key(makerUser2, vector[]), book, makerID5);
+        assert_order_unused(get_market_account_key(takerUser, vector[]), book, takerID);
         assert_account_balances(book, maker1AccKey, 1130000000000, 883000000000);
         assert_account_balances(book, maker2AccKey, 1170000000000, 877000000000);
         assert_account_balances(book, takerAccKey, 700000000000, 1240000000000);
@@ -5134,7 +5284,7 @@ module ferum::market {
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 30000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 9000000000,
             },
         ]);
@@ -5149,7 +5299,7 @@ module ferum::market {
         assert_account_balances(book, user3AccKey, 970000000000, 1000000000000);
 
         // Crank.
-        crank<FMA, FMB>(user1, 1);
+        crank_entry<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
@@ -5164,7 +5314,7 @@ module ferum::market {
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_order_collateral(book, takerID, 0, 0);
         assert_order_collateral(book, makerID, 36000000000, 0);
-        assert_order_unused(book, takerID);
+        assert_order_unused(get_market_account_key(user3, vector[]), book, takerID);
         assert_order_used(book, makerID);
         assert_account_balances(book, user2AccKey, 1030000000000, 937000000000);
         assert_account_balances(book, user3AccKey, 970000000000, 1027000000000);
@@ -5194,8 +5344,8 @@ module ferum::market {
         let makerID = add_user_limit_order<FMA, FMB>(user2, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
         add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
         add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        cancel_order<FMA, FMB>(user1, order1);
-        cancel_order<FMA, FMB>(user1, order2);
+        cancel_order<FMA, FMB>(user1, get_api_order_id<FMA, FMB>(order1));
+        cancel_order<FMA, FMB>(user1, get_api_order_id<FMA, FMB>(order2));
         let takerID = add_user_limit_order<FMA, FMB>(user3, SIDE_SELL, BEHAVIOUR_GTC, 6500000000, 30000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
@@ -5206,7 +5356,7 @@ module ferum::market {
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 30000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 7000000000,
             },
         ]);
@@ -5221,7 +5371,7 @@ module ferum::market {
         assert_account_balances(book, user3AccKey, 970000000000, 1000000000000);
 
         // Crank.
-        crank<FMA, FMB>(user1, 1);
+        crank_entry<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
@@ -5233,7 +5383,7 @@ module ferum::market {
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_order_collateral(book, takerID, 0, 0);
         assert_order_collateral(book, makerID, 14000000000, 0);
-        assert_order_unused(book, takerID);
+        assert_order_unused(get_market_account_key(user3, vector[]), book, takerID);
         assert_order_used(book, makerID);
         assert_account_balances(book, user2AccKey, 1030000000000, 965000000000);
         assert_account_balances(book, user3AccKey, 970000000000, 1021000000000);
@@ -5276,7 +5426,7 @@ module ferum::market {
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 70000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 9000000000,
             },
         ]);
@@ -5296,7 +5446,7 @@ module ferum::market {
         assert!(book.summary.buyTreeMax == 7000000000, 0);
 
         // Crank.
-        crank<FMA, FMB>(user1, 1);
+        crank_entry<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
@@ -5310,8 +5460,8 @@ module ferum::market {
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_order_collateral(book, takerID, 0, 0);
         assert_order_collateral(book, makerID, 0, 0);
-        assert_order_unused(book, takerID);
-        assert_order_unused(book, makerID);
+        assert_order_unused(get_market_account_key(user3, vector[]), book, takerID);
+        assert_order_unused(get_market_account_key(user2, vector[]), book, makerID);
         assert_account_balances(book, user2AccKey, 1070000000000, 937000000000);
         assert_account_balances(book, user3AccKey, 930000000000, 1063000000000);
         assert!(book.summary.buyCacheMax == 8000000000, 0);
@@ -5345,8 +5495,8 @@ module ferum::market {
         let makerID1 = add_user_limit_order<FMA, FMB>(user2, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
         let makerID2 = add_user_limit_order<FMA, FMB>(user2, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
         add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        cancel_order<FMA, FMB>(user1, orderID2);
-        cancel_order<FMA, FMB>(user1, orderID1);
+        cancel_order<FMA, FMB>(user1, get_api_order_id<FMA, FMB>(orderID2));
+        cancel_order<FMA, FMB>(user1, get_api_order_id<FMA, FMB>(orderID1));
         let takerID = add_user_limit_order<FMA, FMB>(user3, SIDE_SELL, BEHAVIOUR_GTC, 5500000000, 70000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
@@ -5357,12 +5507,12 @@ module ferum::market {
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 50000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 7000000000,
             },
             ExecEventInfo {
                 qty: 20000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 6000000000,
             },
         ]);
@@ -5385,7 +5535,7 @@ module ferum::market {
         assert!(book.summary.buyTreeMax == 7000000000, 0);
 
         // Crank.
-        crank<FMA, FMB>(user1, 1);
+        crank_entry<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
@@ -5398,8 +5548,8 @@ module ferum::market {
         assert_order_collateral(book, takerID, 0, 0);
         assert_order_collateral(book, makerID1, 0, 0);
         assert_order_collateral(book, makerID2, 12000000000, 0);
-        assert_order_unused(book, takerID);
-        assert_order_unused(book, makerID1);
+        assert_order_unused(get_market_account_key(user3, vector[]), book, takerID);
+        assert_order_unused(get_market_account_key(user2, vector[]), book, makerID1);
         assert_order_used(book, makerID2);
         assert_account_balances(book, user2AccKey, 1070000000000, 941000000000);
         assert_account_balances(book, user3AccKey, 930000000000, 1047000000000);
@@ -5455,7 +5605,7 @@ module ferum::market {
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 70000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 5000000000,
             },
         ]);
@@ -5480,7 +5630,7 @@ module ferum::market {
         assert!(book.summary.buyTreeMax == 0, 0);
 
         // Crank.
-        crank<FMA, FMB>(user1, 1);
+        crank_entry<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
@@ -5498,7 +5648,7 @@ module ferum::market {
         assert_order_collateral(book, makerID, 0, 0);
         assert_order_collateral(book, takerID, 5500000000, 0);
         assert_order_used(book, takerID);
-        assert_order_unused(book, makerID);
+        assert_order_unused(get_market_account_key(makerUser, vector[]), book, makerID);
         assert_account_balances(book, makerAccKey, 930000000000, 1035000000000);
         assert_account_balances(book, takerAccKey, 1070000000000, 959500000000);
         assert!(book.summary.sellCacheMax == 6000000000, 0);
@@ -5563,22 +5713,22 @@ module ferum::market {
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 130000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 5000000000,
             },
             ExecEventInfo {
                 qty: 80000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 6000000000,
             },
             ExecEventInfo {
                 qty: 50000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 7000000000,
             },
             ExecEventInfo {
                 qty: 40000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 8000000000,
             },
         ]);
@@ -5611,7 +5761,7 @@ module ferum::market {
         assert!(book.summary.sellTreeMin == 7000000000, 0);
 
         // Crank.
-        crank<FMA, FMB>(user1, 1);
+        crank_entry<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
@@ -5629,12 +5779,12 @@ module ferum::market {
         assert_order_collateral(book, makerID3, 0, 0);
         assert_order_collateral(book, makerID4, 0, 0);
         assert_order_collateral(book, makerID5, 0, 0);
-        assert_order_unused(book, makerID1);
-        assert_order_unused(book, makerID2);
-        assert_order_unused(book, makerID3);
-        assert_order_unused(book, makerID4);
-        assert_order_unused(book, makerID5);
-        assert_order_unused(book, takerID);
+        assert_order_unused(get_market_account_key(makerUser1, vector[]), book, makerID1);
+        assert_order_unused(get_market_account_key(makerUser1, vector[]), book, makerID2);
+        assert_order_unused(get_market_account_key(makerUser2, vector[]), book, makerID3);
+        assert_order_unused(get_market_account_key(makerUser2, vector[]), book, makerID4);
+        assert_order_unused(get_market_account_key(makerUser2, vector[]), book, makerID5);
+        assert_order_unused(get_market_account_key(takerUser, vector[]), book, takerID);
         assert_account_balances(book, maker1AccKey, 870000000000, 1065000000000);
         assert_account_balances(book, maker2AccKey, 830000000000, 1115000000000);
         assert_account_balances(book, takerAccKey, 1300000000000, 820000000000);
@@ -5683,7 +5833,7 @@ module ferum::market {
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 30000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 5000000000,
             },
         ]);
@@ -5698,7 +5848,7 @@ module ferum::market {
         assert_account_balances(book, user3AccKey, 1000000000000, 983500000000);
 
         // Crank.
-        crank<FMA, FMB>(user1, 1);
+        crank_entry<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 4, crankQty: 0)"),
@@ -5713,7 +5863,7 @@ module ferum::market {
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_order_collateral(book, takerID, 0, 0);
         assert_order_collateral(book, makerID, 0, 40000000000);
-        assert_order_unused(book, takerID);
+        assert_order_unused(get_market_account_key(user3, vector[]), book, takerID);
         assert_order_used(book, makerID);
         assert_account_balances(book, user2AccKey, 930000000000, 1015000000000);
         assert_account_balances(book, user3AccKey, 1030000000000, 985000000000);
@@ -5743,8 +5893,8 @@ module ferum::market {
         let makerID = add_user_limit_order<FMA, FMB>(user2, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
         add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 40000000000);
         add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 30000000000);
-        cancel_order<FMA, FMB>(user1, orderID1);
-        cancel_order<FMA, FMB>(user1, orderID2);
+        cancel_order<FMA, FMB>(user1, get_api_order_id<FMA, FMB>(orderID1));
+        cancel_order<FMA, FMB>(user1, get_api_order_id<FMA, FMB>(orderID2));
         let takerID = add_user_limit_order<FMA, FMB>(user3, SIDE_BUY, BEHAVIOUR_GTC, 8500000000, 30000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 4, crankQty: 0)"),
@@ -5755,7 +5905,7 @@ module ferum::market {
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 30000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 7000000000,
             },
         ]);
@@ -5770,7 +5920,7 @@ module ferum::market {
         assert_account_balances(book, user3AccKey, 1000000000000, 974500000000);
 
         // Crank.
-        crank<FMA, FMB>(user1, 1);
+        crank_entry<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 4, crankQty: 0)"),
@@ -5782,7 +5932,7 @@ module ferum::market {
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_order_collateral(book, takerID, 0, 0);
         assert_order_collateral(book, makerID, 0, 20000000000);
-        assert_order_unused(book, takerID);
+        assert_order_unused(get_market_account_key(user3, vector[]), book, takerID);
         assert_order_used(book, makerID);
         assert_account_balances(book, user2AccKey, 950000000000, 1021000000000);
         assert_account_balances(book, user3AccKey, 1030000000000, 979000000000);
@@ -5825,7 +5975,7 @@ module ferum::market {
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 70000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 5000000000,
             },
         ]);
@@ -5845,7 +5995,7 @@ module ferum::market {
         assert!(book.summary.sellTreeMin == 7000000000, 0);
 
         // Crank.
-        crank<FMA, FMB>(user1, 1);
+        crank_entry<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 4, crankQty: 0)"),
@@ -5859,8 +6009,8 @@ module ferum::market {
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_order_collateral(book, takerID, 0, 0);
         assert_order_collateral(book, makerID, 0, 0);
-        assert_order_unused(book, takerID);
-        assert_order_unused(book, makerID);
+        assert_order_unused(get_market_account_key(user3, vector[]), book, takerID);
+        assert_order_unused(get_market_account_key(user2, vector[]), book, makerID);
         assert_account_balances(book, user2AccKey, 930000000000, 1035000000000);
         assert_account_balances(book, user3AccKey, 1070000000000, 965000000000);
         assert!(book.summary.sellCacheMax == 6000000000, 0);
@@ -5894,8 +6044,8 @@ module ferum::market {
         let makerID1 = add_user_limit_order<FMA, FMB>(user2, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
         add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 40000000000);
         let makerID2 = add_user_limit_order<FMA, FMB>(user2, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 30000000000);
-        cancel_order<FMA, FMB>(user1, orderID1);
-        cancel_order<FMA, FMB>(user1, orderID2);
+        cancel_order<FMA, FMB>(user1, get_api_order_id<FMA, FMB>(orderID1));
+        cancel_order<FMA, FMB>(user1, get_api_order_id<FMA, FMB>(orderID2));
         let takerID = add_user_limit_order<FMA, FMB>(user3, SIDE_BUY, BEHAVIOUR_GTC, 8500000000, 70000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 4, crankQty: 0)"),
@@ -5906,12 +6056,12 @@ module ferum::market {
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 50000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 7000000000,
             },
             ExecEventInfo {
                 qty: 20000000000,
-                takerOrderID: takerID,
+                takerInternalOrderID: takerID,
                 price: 8000000000,
             },
         ]);
@@ -5934,7 +6084,7 @@ module ferum::market {
         assert!(book.summary.sellTreeMin == 7000000000, 0);
 
         // Crank.
-        crank<FMA, FMB>(user1, 1);
+        crank_entry<FMA, FMB>(user1, 1);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 4, crankQty: 0)"),
@@ -5947,8 +6097,8 @@ module ferum::market {
         assert_order_collateral(book, takerID, 0, 0);
         assert_order_collateral(book, makerID1, 0, 0);
         assert_order_collateral(book, makerID2, 0, 10000000000);
-        assert_order_unused(book, takerID);
-        assert_order_unused(book, makerID1);
+        assert_order_unused(get_market_account_key(user3, vector[]), book, takerID);
+        assert_order_unused(get_market_account_key(user2, vector[]), book, makerID1);
         assert_order_used(book, makerID2);
         assert_account_balances(book, user2AccKey, 920000000000, 1051000000000);
         assert_account_balances(book, user3AccKey, 1070000000000, 949000000000);
@@ -6108,7 +6258,7 @@ module ferum::market {
         ]);
 
         // Remove price level from cache by cancelling an order.
-        cancel_order<FMA, FMB>(user, orderID);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID));
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_price_levels(book, vector[
             s(b"BUY 0.5[5]: (6, 3)"),
@@ -6149,7 +6299,7 @@ module ferum::market {
         let orderID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        cancel_order<FMA, FMB>(user, orderID);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID));
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_price_levels(book, vector[
             s(b"BUY 0.5[5]: (6, 3)"),
@@ -6211,7 +6361,7 @@ module ferum::market {
         let orderID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        cancel_order<FMA, FMB>(user, orderID);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID));
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_price_levels(book, vector[
             s(b"BUY 0.5[5]: (6, 3)"),
@@ -6232,6 +6382,9 @@ module ferum::market {
 
         // New order.
         let newOrderID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8500000000, 160000000000);
+        let accountKey = get_market_account_key(user, vector[]);
+        let expectedApiID = get_order_id(accountKey, 7);
+        assert!(get_api_order_id<FMA, FMB>(newOrderID) == expectedApiID, 0);
         assert!(newOrderID == 4, 0);
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_price_levels(book, vector[
@@ -6529,7 +6682,7 @@ module ferum::market {
         ]);
 
         // Remove price level from cache by cancelling an order.
-        cancel_order<FMA, FMB>(user, orderID);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID));
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_price_levels(book, vector[
             s(b"SELL 0.8[1]: (1, 8)"),
@@ -6570,7 +6723,7 @@ module ferum::market {
         let orderID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 11000000000, 40000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 15000000000, 30000000000);
-        cancel_order<FMA, FMB>(user, orderID);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID));
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_price_levels(book, vector[
             s(b"SELL 0.8[1]: (1, 8)"),
@@ -6632,7 +6785,7 @@ module ferum::market {
         let orderID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 11000000000, 40000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 15000000000, 30000000000);
-        cancel_order<FMA, FMB>(user, orderID);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID));
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_price_levels(book, vector[
             s(b"SELL 0.8[1]: (1, 8)"),
@@ -6653,6 +6806,9 @@ module ferum::market {
 
         // New order.
         let newOrderID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8500000000, 90000000000);
+        let accountKey = get_market_account_key(user, vector[]);
+        let expectedApiID = get_order_id(accountKey, 7);
+        assert!(get_api_order_id<FMA, FMB>(newOrderID) == expectedApiID, 0);
         assert!(newOrderID == 4, 0);
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_price_levels(book, vector[
@@ -6705,7 +6861,7 @@ module ferum::market {
         let orderID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 11000000000, 40000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 15000000000, 30000000000);
-        cancel_order<FMA, FMB>(user, orderID);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID));
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_price_levels(book, vector[
             s(b"SELL 0.8[1]: (1, 8)"),
@@ -6851,22 +7007,22 @@ module ferum::market {
         assert!(book.summary.sellCacheQty == 40000000000, 0);
         assert!(book.summary.sellCacheSize == 1, 0);
         assert!(book.summary.sellTreeMin == 0, 0);
-        let newOrder = table::borrow(&book.ordersTable.objects, newOrderID);
+        let newOrder = get_order<FMA, FMB>(newOrderID);
         assert!(newOrder.metadata.takerCrankPendingQty == 260000000000, 0);
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 130000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 9000000000,
             },
             ExecEventInfo {
                 qty: 80000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 8000000000,
             },
             ExecEventInfo {
                 qty: 50000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 7000000000,
             },
         ]);
@@ -6920,12 +7076,12 @@ module ferum::market {
         assert!(book.summary.sellCacheQty == 170000000000, 0);
         assert!(book.summary.sellCacheSize == 1, 0);
         assert!(book.summary.sellTreeMin == 0, 0);
-        let newOrder = table::borrow(&book.ordersTable.objects, newOrderID);
+        let newOrder = get_order<FMA, FMB>(newOrderID);
         assert!(newOrder.metadata.takerCrankPendingQty == 130000000000, 0);
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 130000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 9000000000,
             },
         ]);
@@ -6976,22 +7132,22 @@ module ferum::market {
         assert!(book.summary.sellCacheQty == 0, 0);
         assert!(book.summary.sellCacheSize == 0, 0);
         assert!(book.summary.sellTreeMin == 0, 0);
-        let newOrder = table::borrow(&book.ordersTable.objects, newOrderID);
+        let newOrder = get_order<FMA, FMB>(newOrderID);
         assert!(newOrder.metadata.takerCrankPendingQty == 220000000000, 0);
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 130000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 9000000000,
             },
             ExecEventInfo {
                 qty: 80000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 8000000000,
             },
             ExecEventInfo {
                 qty: 10000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 7000000000,
             },
         ]);
@@ -7042,12 +7198,12 @@ module ferum::market {
         assert!(book.summary.sellCacheQty == 0, 0);
         assert!(book.summary.sellCacheSize == 0, 0);
         assert!(book.summary.sellTreeMin == 0, 0);
-        let newOrder = table::borrow(&book.ordersTable.objects, newOrderID);
+        let newOrder = get_order<FMA, FMB>(newOrderID);
         assert!(newOrder.metadata.takerCrankPendingQty == 10000000000, 0);
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 10000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 9000000000,
             },
         ]);
@@ -7104,12 +7260,12 @@ module ferum::market {
         assert!(book.summary.sellCacheQty == 230000000000, 0);
         assert!(book.summary.sellCacheSize == 3, 0);
         assert!(book.summary.sellTreeMin == 0, 0);
-        let newOrder = table::borrow(&book.ordersTable.objects, newOrderID);
+        let newOrder = get_order<FMA, FMB>(newOrderID);
         assert!(newOrder.metadata.takerCrankPendingQty == 130000000000, 0);
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 130000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 9000000000,
             },
         ]);
@@ -7160,27 +7316,27 @@ module ferum::market {
         assert!(book.summary.sellCacheQty == 10000000000, 0);
         assert!(book.summary.sellCacheSize == 1, 0);
         assert!(book.summary.sellTreeMin == 0, 0);
-        let newOrder = table::borrow(&book.ordersTable.objects, newOrderID);
+        let newOrder = get_order<FMA, FMB>(newOrderID);
         assert!(newOrder.metadata.takerCrankPendingQty == 300000000000, 0);
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 130000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 9000000000,
             },
             ExecEventInfo {
                 qty: 80000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 8000000000,
             },
             ExecEventInfo {
                 qty: 50000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 7000000000,
             },
             ExecEventInfo {
                 qty: 40000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 6000000000,
             },
         ]);
@@ -7201,9 +7357,9 @@ module ferum::market {
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        cancel_order<FMA, FMB>(user, orderIDA);
-        cancel_order<FMA, FMB>(user, orderIDB);
-        cancel_order<FMA, FMB>(user, orderIDC);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderIDA));
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderIDB));
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderIDC));
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -7229,22 +7385,22 @@ module ferum::market {
         assert!(book.summary.sellCacheQty == 0, 0);
         assert!(book.summary.sellCacheSize == 0, 0);
         assert!(book.summary.sellTreeMin == 0, 0);
-        let newOrder = table::borrow(&book.ordersTable.objects, newOrderID);
+        let newOrder = get_order<FMA, FMB>(newOrderID);
         assert!(newOrder.metadata.takerCrankPendingQty == 120000000000, 0);
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 50000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 7000000000,
             },
             ExecEventInfo {
                 qty: 40000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 6000000000,
             },
             ExecEventInfo {
                 qty: 30000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 5000000000,
             },
         ]);
@@ -7295,17 +7451,17 @@ module ferum::market {
         assert!(book.summary.sellCacheQty == 0, 0);
         assert!(book.summary.sellCacheSize == 0, 0);
         assert!(book.summary.sellTreeMin == 0, 0);
-        let newOrder = table::borrow(&book.ordersTable.objects, newOrderID);
+        let newOrder = get_order<FMA, FMB>(newOrderID);
         assert!(newOrder.metadata.takerCrankPendingQty == 210000000000, 0);
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 130000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 9000000000,
             },
             ExecEventInfo {
                 qty: 80000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 8000000000,
             },
         ]);
@@ -7356,22 +7512,22 @@ module ferum::market {
         assert!(book.summary.sellCacheQty == 0, 0);
         assert!(book.summary.sellCacheSize == 0, 0);
         assert!(book.summary.sellTreeMin == 0, 0);
-        let newOrder = table::borrow(&book.ordersTable.objects, newOrderID);
+        let newOrder = get_order<FMA, FMB>(newOrderID);
         assert!(newOrder.metadata.takerCrankPendingQty == 260000000000, 0);
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 130000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 9000000000,
             },
             ExecEventInfo {
                 qty: 80000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 8000000000,
             },
             ExecEventInfo {
                 qty: 50000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 7000000000,
             },
         ]);
@@ -7422,27 +7578,27 @@ module ferum::market {
         assert!(book.summary.sellCacheQty == 0, 0);
         assert!(book.summary.sellCacheSize == 0, 0);
         assert!(book.summary.sellTreeMin == 0, 0);
-        let newOrder = table::borrow(&book.ordersTable.objects, newOrderID);
+        let newOrder = get_order<FMA, FMB>(newOrderID);
         assert!(newOrder.metadata.takerCrankPendingQty == 300000000000, 0);
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 130000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 9000000000,
             },
             ExecEventInfo {
                 qty: 80000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 8000000000,
             },
             ExecEventInfo {
                 qty: 50000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 7000000000,
             },
             ExecEventInfo {
                 qty: 40000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 6000000000,
             },
         ]);
@@ -7493,12 +7649,12 @@ module ferum::market {
         assert!(book.summary.sellCacheQty == 0, 0);
         assert!(book.summary.sellCacheSize == 0, 0);
         assert!(book.summary.sellTreeMin == 0, 0);
-        let newOrder = table::borrow(&book.ordersTable.objects, newOrderID);
+        let newOrder = get_order<FMA, FMB>(newOrderID);
         assert!(newOrder.metadata.takerCrankPendingQty == 130000000000, 0);
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 130000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 9000000000,
             },
         ]);
@@ -7521,7 +7677,7 @@ module ferum::market {
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        cancel_order<FMA, FMB>(user, orderIDA);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderIDA));
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -7550,17 +7706,17 @@ module ferum::market {
         assert!(book.summary.sellCacheQty == 0, 0);
         assert!(book.summary.sellCacheSize == 0, 0);
         assert!(book.summary.sellTreeMin == 0, 0);
-        let newOrder = table::borrow(&book.ordersTable.objects, newOrderID);
+        let newOrder = get_order<FMA, FMB>(newOrderID);
         assert!(newOrder.metadata.takerCrankPendingQty == 180000000000, 0);
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 130000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 9000000000,
             },
             ExecEventInfo {
                 qty: 50000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 7000000000,
             },
         ]);
@@ -7583,7 +7739,7 @@ module ferum::market {
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        cancel_order<FMA, FMB>(user, orderIDA);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderIDA));
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -7611,22 +7767,22 @@ module ferum::market {
         assert!(book.summary.sellCacheQty == 0, 0);
         assert!(book.summary.sellCacheSize == 0, 0);
         assert!(book.summary.sellTreeMin == 0, 0);
-        let newOrder = table::borrow(&book.ordersTable.objects, newOrderID);
+        let newOrder = get_order<FMA, FMB>(newOrderID);
         assert!(newOrder.metadata.takerCrankPendingQty == 220000000000, 0);
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 130000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 9000000000,
             },
             ExecEventInfo {
                 qty: 50000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 7000000000,
             },
             ExecEventInfo {
                 qty: 40000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 6000000000,
             },
         ]);
@@ -7684,17 +7840,17 @@ module ferum::market {
         assert!(book.summary.buyCacheQty == 90000000000, 0);
         assert!(book.summary.buyCacheSize == 1, 0);
         assert!(book.summary.buyTreeMax == 0, 0);
-        let newOrder = table::borrow(&book.ordersTable.objects, newOrderID);
+        let newOrder = get_order<FMA, FMB>(newOrderID);
         assert!(newOrder.metadata.takerCrankPendingQty == 210000000000, 0);
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 130000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 5000000000,
             },
             ExecEventInfo {
                 qty: 80000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 6000000000,
             },
         ]);
@@ -7748,12 +7904,12 @@ module ferum::market {
         assert!(book.summary.buyCacheQty == 170000000000, 0);
         assert!(book.summary.buyCacheSize == 1, 0);
         assert!(book.summary.buyTreeMax == 0, 0);
-        let newOrder = table::borrow(&book.ordersTable.objects, newOrderID);
+        let newOrder = get_order<FMA, FMB>(newOrderID);
         assert!(newOrder.metadata.takerCrankPendingQty == 130000000000, 0);
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 130000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 5000000000,
             },
         ]);
@@ -7804,22 +7960,22 @@ module ferum::market {
         assert!(book.summary.buyCacheQty == 0, 0);
         assert!(book.summary.buyCacheSize == 0, 0);
         assert!(book.summary.buyTreeMax == 0, 0);
-        let newOrder = table::borrow(&book.ordersTable.objects, newOrderID);
+        let newOrder = get_order<FMA, FMB>(newOrderID);
         assert!(newOrder.metadata.takerCrankPendingQty == 220000000000, 0);
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 130000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 5000000000,
             },
             ExecEventInfo {
                 qty: 80000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 6000000000,
             },
             ExecEventInfo {
                 qty: 10000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 7000000000,
             },
         ]);
@@ -7870,17 +8026,17 @@ module ferum::market {
         assert!(book.summary.buyCacheQty == 0, 0);
         assert!(book.summary.buyCacheSize == 0, 0);
         assert!(book.summary.buyTreeMax == 0, 0);
-        let newOrder = table::borrow(&book.ordersTable.objects, newOrderID);
+        let newOrder = get_order<FMA, FMB>(newOrderID);
         assert!(newOrder.metadata.takerCrankPendingQty == 140000000000, 0);
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 130000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 5000000000,
             },
             ExecEventInfo {
                 qty: 10000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 6000000000,
             },
         ]);
@@ -7937,12 +8093,12 @@ module ferum::market {
         assert!(book.summary.buyCacheQty == 150000000000, 0);
         assert!(book.summary.buyCacheSize == 3, 0);
         assert!(book.summary.buyTreeMax == 0, 0);
-        let newOrder = table::borrow(&book.ordersTable.objects, newOrderID);
+        let newOrder = get_order<FMA, FMB>(newOrderID);
         assert!(newOrder.metadata.takerCrankPendingQty == 130000000000, 0);
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 130000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 5000000000,
             },
         ]);
@@ -7993,27 +8149,27 @@ module ferum::market {
         assert!(book.summary.buyCacheQty == 10000000000, 0);
         assert!(book.summary.buyCacheSize == 1, 0);
         assert!(book.summary.buyTreeMax == 0, 0);
-        let newOrder = table::borrow(&book.ordersTable.objects, newOrderID);
+        let newOrder = get_order<FMA, FMB>(newOrderID);
         assert!(newOrder.metadata.takerCrankPendingQty == 300000000000, 0);
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 80000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 6000000000,
             },
             ExecEventInfo {
                 qty: 130000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 7000000000,
             },
             ExecEventInfo {
                 qty: 50000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 8000000000,
             },
             ExecEventInfo {
                 qty: 40000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 9000000000,
             },
         ]);
@@ -8034,9 +8190,9 @@ module ferum::market {
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        cancel_order<FMA, FMB>(user, orderIDA);
-        cancel_order<FMA, FMB>(user, orderIDB);
-        cancel_order<FMA, FMB>(user, orderIDC);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderIDA));
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderIDB));
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderIDC));
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -8062,22 +8218,22 @@ module ferum::market {
         assert!(book.summary.buyCacheQty == 0, 0);
         assert!(book.summary.buyCacheSize == 0, 0);
         assert!(book.summary.buyTreeMax == 0, 0);
-        let newOrder = table::borrow(&book.ordersTable.objects, newOrderID);
+        let newOrder = get_order<FMA, FMB>(newOrderID);
         assert!(newOrder.metadata.takerCrankPendingQty == 120000000000, 0);
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 50000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 7000000000,
             },
             ExecEventInfo {
                 qty: 40000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 8000000000,
             },
             ExecEventInfo {
                 qty: 30000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 9000000000,
             },
         ]);
@@ -8128,17 +8284,17 @@ module ferum::market {
         assert!(book.summary.buyCacheQty == 0, 0);
         assert!(book.summary.buyCacheSize == 0, 0);
         assert!(book.summary.buyTreeMax == 0, 0);
-        let newOrder = table::borrow(&book.ordersTable.objects, newOrderID);
+        let newOrder = get_order<FMA, FMB>(newOrderID);
         assert!(newOrder.metadata.takerCrankPendingQty == 210000000000, 0);
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 130000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 5000000000,
             },
             ExecEventInfo {
                 qty: 80000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 6000000000,
             },
         ]);
@@ -8189,22 +8345,22 @@ module ferum::market {
         assert!(book.summary.buyCacheQty == 0, 0);
         assert!(book.summary.buyCacheSize == 0, 0);
         assert!(book.summary.buyTreeMax == 0, 0);
-        let newOrder = table::borrow(&book.ordersTable.objects, newOrderID);
+        let newOrder = get_order<FMA, FMB>(newOrderID);
         assert!(newOrder.metadata.takerCrankPendingQty == 260000000000, 0);
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 130000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 5000000000,
             },
             ExecEventInfo {
                 qty: 80000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 6000000000,
             },
             ExecEventInfo {
                 qty: 50000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 7000000000,
             },
         ]);
@@ -8255,27 +8411,27 @@ module ferum::market {
         assert!(book.summary.buyCacheQty == 0, 0);
         assert!(book.summary.buyCacheSize == 0, 0);
         assert!(book.summary.buyTreeMax == 0, 0);
-        let newOrder = table::borrow(&book.ordersTable.objects, newOrderID);
+        let newOrder = get_order<FMA, FMB>(newOrderID);
         assert!(newOrder.metadata.takerCrankPendingQty == 300000000000, 0);
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 130000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 5000000000,
             },
             ExecEventInfo {
                 qty: 80000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 6000000000,
             },
             ExecEventInfo {
                 qty: 50000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 7000000000,
             },
             ExecEventInfo {
                 qty: 40000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 8000000000,
             },
         ]);
@@ -8325,12 +8481,12 @@ module ferum::market {
         assert!(book.summary.buyCacheQty == 0, 0);
         assert!(book.summary.buyCacheSize == 0, 0);
         assert!(book.summary.buyTreeMax == 0, 0);
-        let newOrder = table::borrow(&book.ordersTable.objects, newOrderID);
+        let newOrder = get_order<FMA, FMB>(newOrderID);
         assert!(newOrder.metadata.takerCrankPendingQty == 130000000000, 0);
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 130000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 5000000000,
             },
         ]);
@@ -8351,7 +8507,7 @@ module ferum::market {
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        cancel_order<FMA, FMB>(user, orderID);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID));
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -8379,22 +8535,22 @@ module ferum::market {
         assert!(book.summary.buyCacheQty == 0, 0);
         assert!(book.summary.buyCacheSize == 0, 0);
         assert!(book.summary.buyTreeMax == 0, 0);
-        let newOrder = table::borrow(&book.ordersTable.objects, newOrderID);
+        let newOrder = get_order<FMA, FMB>(newOrderID);
         assert!(newOrder.metadata.takerCrankPendingQty == 180000000000, 0);
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 130000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 5000000000,
             },
             ExecEventInfo {
                 qty: 50000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 7000000000,
             },
             ExecEventInfo {
                 qty: 10000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 7000000000,
             },
         ]);
@@ -8415,7 +8571,7 @@ module ferum::market {
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
         add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        cancel_order<FMA, FMB>(user, orderID);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID));
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -8443,22 +8599,22 @@ module ferum::market {
         assert!(book.summary.buyCacheQty == 0, 0);
         assert!(book.summary.buyCacheSize == 0, 0);
         assert!(book.summary.buyTreeMax == 0, 0);
-        let newOrder = table::borrow(&book.ordersTable.objects, newOrderID);
+        let newOrder = get_order<FMA, FMB>(newOrderID);
         assert!(newOrder.metadata.takerCrankPendingQty == 220000000000, 0);
         assert_exec_events<FMA, FMB>(marketAddr, vector[
             ExecEventInfo {
                 qty: 130000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 5000000000,
             },
             ExecEventInfo {
                 qty: 50000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 7000000000,
             },
             ExecEventInfo {
                 qty: 40000000000,
-                takerOrderID: newOrderID,
+                takerInternalOrderID: newOrderID,
                 price: 8000000000,
             },
         ]);
@@ -8495,7 +8651,7 @@ module ferum::market {
         ]);
 
         // Cancel order.
-        cancel_order<FMA, FMB>(user, orderID);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID));
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -8510,7 +8666,7 @@ module ferum::market {
         assert!(book.summary.buyCacheSize == 2, 0);
         assert!(book.summary.buyTreeMax == 6000000000, 0);
         assert_order_collateral(book, orderID, 0, 0);
-        assert_order_unused(book, orderID);
+        assert_order_unused(get_market_account_key(user, vector[]), book, orderID);
         assert_order_qtys<FMA, FMB>(marketAddr, orderID, 0, 0, 0);
     }
 
@@ -8539,7 +8695,7 @@ module ferum::market {
         ]);
 
         // Cancel order.
-        cancel_order<FMA, FMB>(user, orderID);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID));
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -8555,7 +8711,7 @@ module ferum::market {
         assert!(book.summary.buyCacheSize == 2, 0);
         assert!(book.summary.buyTreeMax == 7000000000, 0);
         assert_order_collateral(book, orderID, 0, 0);
-        assert_order_unused(book, orderID);
+        assert_order_unused(get_market_account_key(user, vector[]), book, orderID);
         assert_order_qtys<FMA, FMB>(marketAddr, orderID, 0, 0, 0);
     }
 
@@ -8586,7 +8742,7 @@ module ferum::market {
         ]);
 
         // Cancel order.
-        cancel_order<FMA, FMB>(user, orderID);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID));
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -8633,7 +8789,7 @@ module ferum::market {
         ]);
 
         // Cancel order.
-        cancel_order<FMA, FMB>(user, orderID);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID));
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -8683,7 +8839,7 @@ module ferum::market {
         assert_order_qtys<FMA, FMB>(marketAddr, orderID, 70000000000, 30000000000, 0);
 
         // Cancel order.
-        cancel_order<FMA, FMB>(user, orderID);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID));
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -8733,7 +8889,7 @@ module ferum::market {
         assert_order_qtys<FMA, FMB>(marketAddr, orderID, 70000000000, 0, 30000000000);
 
         // Cancel order.
-        cancel_order<FMA, FMB>(user, orderID);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID));
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -8783,7 +8939,7 @@ module ferum::market {
         assert_order_qtys<FMA, FMB>(marketAddr, orderID, 70000000000, 10000000000, 30000000000);
 
         // Cancel order.
-        cancel_order<FMA, FMB>(user, orderID);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID));
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -8838,7 +8994,7 @@ module ferum::market {
         assert_order_qtys<FMA, FMB>(marketAddr, orderID, 70000000000, 10000000000, 30000000000);
 
         // Cancel order.
-        cancel_order<FMA, FMB>(user, orderID);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID));
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -8888,7 +9044,7 @@ module ferum::market {
         assert_order_qtys<FMA, FMB>(marketAddr, orderID, 70000000000, 0, 70000000000);
 
         // Cancel order.
-        cancel_order<FMA, FMB>(user, orderID);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID));
     }
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
@@ -8920,7 +9076,7 @@ module ferum::market {
         assert_order_qtys<FMA, FMB>(marketAddr, orderID, 70000000000, 70000000000, 0);
 
         // Cancel order.
-        cancel_order<FMA, FMB>(user, orderID);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID));
     }
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
@@ -8954,7 +9110,7 @@ module ferum::market {
         assert_order_qtys<FMA, FMB>(marketAddr, orderID, 70000000000, 40000000000, 30000000000);
 
         // Cancel order.
-        cancel_order<FMA, FMB>(user, orderID);
+        cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID));
     }
 
     // </editor-fold>
@@ -8962,6 +9118,8 @@ module ferum::market {
     // </editor-fold>
 
     // <editor-fold defaultstate="collapsed" desc="Market Test utils">
+
+    // TODO: Marie Kondo these tests.
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_setup_ferum(aptos: &signer, ferum: &signer, user: &signer)
@@ -9003,7 +9161,7 @@ module ferum::market {
 
     struct ExecEventInfo has drop, copy {
         qty: u64,
-        takerOrderID: u32,
+        takerInternalOrderID: u32,
         price: u64,
     }
 
@@ -9019,7 +9177,7 @@ module ferum::market {
             let elem = list_get_next(queue, &mut it);
             let expected = vector::borrow(&events, i);
             assert!(elem.qty == expected.qty, 0);
-            assert!(elem.takerInternalOrderID == expected.takerOrderID, 0);
+            assert!(elem.takerInternalOrderID == expected.takerInternalOrderID, 0);
             let priceLevel = table::borrow(priceLevels, elem.priceLevelID);
             let orders = list_to_vector(&priceLevel.orders);
             assert!(vector::length(&orders) > 0, 0);
@@ -9305,8 +9463,8 @@ module ferum::market {
     }
 
     #[test_only]
-    fun assert_order_collateral<I, Q>(book: &Orderbook<I, Q>, orderID: u32, buy: u64, sell: u64) {
-        let order = table::borrow(&book.ordersTable.objects, orderID);
+    fun assert_order_collateral<I, Q>(book: &Orderbook<I, Q>, internalOrderID: u32, buy: u64, sell: u64) {
+        let order = table::borrow(&book.ordersTable.objects, internalOrderID);
         if (coin::value(&order.buyCollateral) != fp_convert(buy, coin::decimals<Q>(), FP_NO_PRECISION_LOSS)) {
             debug::print(&s(b"Actual buy collateral (in Q coin decimals)"));
             debug::print(&coin::value(&order.buyCollateral));
@@ -9322,13 +9480,13 @@ module ferum::market {
     #[test_only]
     fun assert_order_qtys<I, Q>(
         marketAddr: address,
-        orderID: u32,
+        internalOrderID: u32,
         unfilledQty: u64,
         takerCrankPendingQty: u64,
         makerCrankPendingQty: u64,
     ) acquires Orderbook, MarketSellCache, MarketBuyCache, MarketSellTree, MarketBuyTree {
         let book = borrow_global<Orderbook<I, Q>>(marketAddr);
-        let order = table::borrow(&book.ordersTable.objects, orderID);
+        let order = table::borrow(&book.ordersTable.objects, internalOrderID);
         if (order.metadata.unfilledQty != unfilledQty) {
             debug::print(&s(b"Actual unfilled qty"));
             debug::print(&order.metadata.unfilledQty);
@@ -9371,7 +9529,7 @@ module ferum::market {
             let orderMakerQty = 0;
             while (it.nodeID != 0) {
                 let priceLevelOrder = list_get_next(&priceLevel.orders, &mut it);
-                if (priceLevelOrder.internalID == orderID) {
+                if (priceLevelOrder.internalID == internalOrderID) {
                     orderMakerQty = if (priceLevelMakerQty > priceLevelOrder.qty) {
                         priceLevelOrder.qty
                     } else {
@@ -9395,21 +9553,25 @@ module ferum::market {
     }
 
     #[test_only]
-    fun assert_order_unused<I, Q>(book: &Orderbook<I, Q>, orderID: u32) {
+    fun assert_order_unused<I, Q>(accountKey: MarketAccountKey, book: &Orderbook<I, Q>, orderID: u32) {
         let order = table::borrow(&book.ordersTable.objects, orderID);
         assert!(order.priceLevelID == 0, 0);
         assert!(order.metadata.ownerAddress == @0, 0);
-        let currOrderID = book.ordersTable.unusedStack;
+        let currInternalOrderID = book.ordersTable.unusedStack;
         let found = false;
-        while (currOrderID != 0) {
-            if (currOrderID == orderID) {
+        while (currInternalOrderID != 0) {
+            if (currInternalOrderID == orderID) {
                 found = true;
                 break
             };
-            let currOrder = table::borrow(&book.ordersTable.objects, currOrderID);
-            currOrderID = currOrder.next;
+            let currOrder = table::borrow(&book.ordersTable.objects, currInternalOrderID);
+            currInternalOrderID = currOrder.next;
         };
         assert!(found, 0);
+        let order = table::borrow(&book.ordersTable.objects, orderID);
+        assert!(order.metadata.orderID == sentinal_order_id(), 0);
+        let account = table::borrow(&book.marketAccounts, accountKey);
+        is_order_in_active_list_by_internal_id(&account.activeOrders, orderID);
     }
 
     #[test_only]
@@ -9417,16 +9579,18 @@ module ferum::market {
         let order = table::borrow(&book.ordersTable.objects, orderID);
         assert!(order.next == 0, 0);
         assert!(order.metadata.ownerAddress != @0, 0);
-        let currNodeID = book.ordersTable.unusedStack;
+        let currInternalOrderID = book.ordersTable.unusedStack;
         let found = false;
-        while (currNodeID != 0) {
-            if (currNodeID == orderID) {
+        while (currInternalOrderID != 0) {
+            if (currInternalOrderID == orderID) {
                 found = true;
                 break
             };
-            currNodeID = order.next;
+            currInternalOrderID = order.next;
         };
         assert!(!found, 0);
+        let apiOrderID = get_api_order_id_from_book(book, orderID);
+        assert!(is_order_in_active_list(book, apiOrderID), 0);
     }
 
     #[test_only]
@@ -9457,7 +9621,8 @@ module ferum::market {
             protocolAddress: @ferum,
             userAddress: address_of(user),
         };
-        add_order<I, Q>(user, accountKey, side, behaviour, price, qty, 0, 0)
+        let orderID = add_order<I, Q>(user, accountKey, side, behaviour, price, qty, 0, 0);
+        get_internal_order_id<I, Q>(orderID)
     }
 
     #[test_only]
@@ -9468,7 +9633,8 @@ module ferum::market {
             protocolAddress: @ferum,
             userAddress: address_of(user),
         };
-        add_order<I, Q>(user, accountKey, side, behaviour, 0, qty, 0, maxBuyCollateral)
+       let orderID = add_order<I, Q>(user, accountKey, side, behaviour, 0, qty, 0, maxBuyCollateral);
+       get_internal_order_id<I, Q>(orderID)
     }
 
     #[test_only]
@@ -9496,6 +9662,71 @@ module ferum::market {
         borrow_global<MarketBuyTree<I, Q>>(marketAddr);
         borrow_global<EventQueue<I, Q>>(marketAddr);
         marketAddr
+    }
+
+    #[test_only]
+    fun get_internal_order_id<I, Q>(orderID: OrderID): u32 acquires FerumInfo, Orderbook {
+        let marketAddr = get_market_addr<I, Q>();
+        let book = borrow_global<Orderbook<I, Q>>(marketAddr);
+        get_internal_order_id_from_book(book, orderID)
+    }
+
+    #[test_only]
+    fun get_api_order_id<I, Q>(internalOrderID: u32): OrderID acquires FerumInfo, Orderbook {
+        let marketAddr = get_market_addr<I, Q>();
+        let book = borrow_global<Orderbook<I, Q>>(marketAddr);
+        get_api_order_id_from_book(book, internalOrderID)
+    }
+
+    #[test_only]
+    fun get_internal_order_id_from_book<I, Q>(book: &Orderbook<I, Q>, orderID: OrderID): u32 {
+        if (orderID.accountKey == sentinal_market_account_key()) {
+            return 0
+        };
+        let marketAccount = table::borrow(&book.marketAccounts, orderID.accountKey);
+        find_internal_order_id(&marketAccount.activeOrders, orderID)
+    }
+
+    #[test_only]
+    fun get_api_order_id_from_book<I, Q>(book: &Orderbook<I, Q>, orderID: u32): OrderID {
+        let order = table::borrow(&book.ordersTable.objects, orderID);
+        order.metadata.orderID
+    }
+
+    #[test_only]
+    inline fun get_order<I, Q>(orderID: u32): &Order<I, Q> acquires FerumInfo, Orderbook {
+        let marketAddr = get_market_addr<I, Q>();
+        let book = borrow_global<Orderbook<I, Q>>(marketAddr);
+        table::borrow(&book.ordersTable.objects, orderID)
+    }
+
+    #[test_only]
+    fun is_order_in_active_list<I, Q>(book: &Orderbook<I, Q>, apiOrderID: OrderID): bool {
+        let marketAccount = table::borrow(&book.marketAccounts, apiOrderID.accountKey);
+        let i = 0;
+        let size = vector::length(&marketAccount.activeOrders);
+        while (i < size) {
+            let info = vector::borrow(&marketAccount.activeOrders, i);
+            if (info.orderID == apiOrderID) {
+                return true
+            };
+            i = i + 1;
+        };
+        false
+    }
+
+    #[test_only]
+    fun is_order_in_active_list_by_internal_id(activeOrders: &vector<UserOrderInfo>, id: u32): bool {
+        let i = 0;
+        let size = vector::length(activeOrders);
+        while (i < size) {
+            let info = vector::borrow(activeOrders, i);
+            if (info.internalOrderID == id) {
+                return true
+            };
+            i = i + 1;
+        };
+        false
     }
 
     // </editor-fold>
