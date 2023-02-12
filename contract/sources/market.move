@@ -408,6 +408,11 @@ module ferum::market {
         protocolFee: u64, // Fixedpoint value.
     }
 
+    struct IndexingCreationEvent has store, drop {
+        orderMetadata: OrderMetadata,
+        timestampSecs: u64,
+    }
+
     // Representation of an execution emitted as an Aptos event.
     struct IndexingExecutionEvent has store, drop {
         makerOrderMetadata: OrderMetadata,
@@ -427,10 +432,10 @@ module ferum::market {
 
     // Wrapper to store all event handles.
     struct IndexingEventHandles<phantom I, phantom Q> has key {
+        creations: EventHandle<IndexingCreationEvent>,
         executions: EventHandle<IndexingExecutionEvent>,
         finalizations: EventHandle<IndexingFinalizeEvent>,
         priceUpdates: EventHandle<IndexingPriceUpdateEvent>,
-
     }
 
     // Struct encapsulating price at a given timestamp for the market.
@@ -504,6 +509,7 @@ module ferum::market {
         let maxProtocolFeeSplit = get_max_protocol_fee(feeStructure);
         assert!(maxProtocolFeeSplit + crankerFeeSplit < 10000000000, ERR_INVALID_CRANKER_SPLIT);
 
+        let creationEvents = new_event_handle<IndexingCreationEvent>(owner);
         let finalizeEvents = new_event_handle<IndexingFinalizeEvent>(owner);
         let executionEvents = new_event_handle<IndexingExecutionEvent>(owner);
         let priceUpdateEvents = new_event_handle<IndexingPriceUpdateEvent>(owner);
@@ -555,6 +561,7 @@ module ferum::market {
             queue: new_list(EVENT_QUEUE_NODE_SIZE),
         });
         move_to(owner, IndexingEventHandles<I, Q>{
+            creations: creationEvents,
             executions: executionEvents,
             finalizations: finalizeEvents,
             priceUpdates: priceUpdateEvents,
@@ -1445,6 +1452,7 @@ module ferum::market {
             ownerAddress: address_of(owner),
             marketBuyRemainingCollateral: marketBuyMaxCollateral,
         };
+        emit_creation_event<I, Q>(marketAddr, orderMetadata);
 
         // Perform checks on order behaviour and cancel before trying to add to the book.
         // <editor-fold defaultstate="collapsed" desc="Order Behaviour Checks">
@@ -2308,6 +2316,17 @@ module ferum::market {
     ) acquires IndexingEventHandles {
         let finalizeEventHandle = &mut borrow_global_mut<IndexingEventHandles<I, Q>>(marketAddr).finalizations;
         emit_event(finalizeEventHandle, IndexingFinalizeEvent {
+            orderMetadata,
+            timestampSecs: timestamp::now_seconds(),
+        });
+    }
+
+    inline fun emit_creation_event<I, Q>(
+        marketAddr: address,
+        orderMetadata: OrderMetadata
+    ) acquires IndexingEventHandles {
+        let creationEventHandle = &mut borrow_global_mut<IndexingEventHandles<I, Q>>(marketAddr).creations;
+        emit_event(creationEventHandle, IndexingCreationEvent {
             orderMetadata,
             timestampSecs: timestamp::now_seconds(),
         });
