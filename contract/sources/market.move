@@ -1167,17 +1167,7 @@ module ferum::market {
                     );
                     // We update summary variables in the cancel method.
                 };
-                // Emit an execution event.
-                emit_event(execEventHandle, IndexingExecutionEvent {
-                    makerOrderMetadata: makerOrder.metadata,
-                    // TODO: use correct value.
-                    takerOrderMetadata: makerOrder.metadata,
-                    price: makerOrder.metadata.price,
-                    qty: execFillQty,
-                    makerFeeInfo,
-                    takerFeeInfo,
-                    timestampSecs: event.timestampSecs,
-                });
+                let makerOrderMetadata = makerOrder.metadata;
                 // If the maker order is finalized and all crank pending qty has been flushed, add the order to the
                 // unused order stack, and emit a finalize event.
                 // Shouldn't have to worry about market orders because they will never be in the book.
@@ -1198,6 +1188,22 @@ module ferum::market {
                     makerOrder.next = ordersTable.unusedStack;
                     ordersTable.unusedStack = makerOrderID;
                 };
+                // Update the taker order.
+                let takerOrder = table::borrow_mut(&mut ordersTable.objects, event.takerOrderID);
+                takerOrder.metadata.takerCrankPendingQty = takerOrder.metadata.takerCrankPendingQty - execFillQty;
+                takerOrder.metadata.unfilledQty = takerOrder.metadata.unfilledQty - execFillQty;
+                let takerOrderMetadata = takerOrder.metadata;
+                // Emit execution event.
+                emit_event(execEventHandle, IndexingExecutionEvent {
+                    makerOrderMetadata,
+                    takerOrderMetadata,
+                    price: makerPrice,
+                    qty: execFillQty,
+                    makerFeeInfo,
+                    takerFeeInfo,
+                    timestampSecs: event.timestampSecs,
+                });
+
                 numElemsToDrop = numElemsToDrop + 1;
                 i = i + 1;
             };
@@ -1206,8 +1212,6 @@ module ferum::market {
         // Update the taker order.
         let takerAccount = table::borrow_mut(marketAccounts, takerAccountKey);
         let takerOrder = table::borrow_mut(&mut ordersTable.objects, event.takerOrderID);
-        takerOrder.metadata.takerCrankPendingQty = takerOrder.metadata.takerCrankPendingQty - event.qty;
-        takerOrder.metadata.unfilledQty = takerOrder.metadata.unfilledQty - event.qty;
         // Tranfer over proceeds from the taker order.
         let MarketBalance {
             quote: takerQuoteProceeds,
