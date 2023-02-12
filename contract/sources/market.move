@@ -224,6 +224,13 @@ module ferum::market {
         userAddress: address,
     }
 
+    struct OrderID has store, copy, drop {
+        // Key of market account this order was placed for.
+        accountKey: MarketAccountKey,
+        // Counter for this market account.
+        counter: u32,
+    }
+
     // The market account itself.
     struct MarketAccount<phantom I, phantom Q> has store {
         // List of ids of orders which are still active for this account.
@@ -260,10 +267,8 @@ module ferum::market {
         // Address of the owner of this order. Could be the user's address directly or the address of a protocol
         // owned resource account.
         ownerAddress: address,
-        // Key of market account this order was placed for.
-        accountKey: MarketAccountKey,
-        // Counter for this market account.
-        accountCounter: u32,
+        // ID which uniquely identifies this order.
+        orderID: OrderID,
         // The remaining collateral for a market buy order.
         marketBuyRemainingCollateral: u64,
     }
@@ -885,22 +890,6 @@ module ferum::market {
 
     // <editor-fold defaultstate="collapsed" desc="Market private functions">
 
-    inline fun default_order_metadata(): OrderMetadata {
-        OrderMetadata{
-            side: 0,
-            behaviour: 0,
-            price: 0,
-            originalQty: 0,
-            unfilledQty: 0,
-            takerCrankPendingQty: 0,
-            clientOrderID: 0,
-            accountKey: sentinal_market_account_key(),
-            accountCounter: 0,
-            ownerAddress: @0,
-            marketBuyRemainingCollateral: 0,
-        }
-    }
-
     // Temporary struct used to store instrument and quote balances.
     struct MarketBalance<phantom I, phantom Q> has store {
         instrument: coin::Coin<I>,
@@ -946,7 +935,7 @@ module ferum::market {
             instrument: coin::zero<I>(),
             quote: coin::zero<Q>()
         };
-        let takerAccountKey = takerOrder.metadata.accountKey;
+        let takerAccountKey = takerOrder.metadata.orderID.accountKey;
         let takerUserAddress = takerAccountKey.userAddress;
         let takerProtocolAddress = takerAccountKey.protocolAddress;
         let takerUserFeBalance = if (!coin::is_account_registered<token::Fe>(takerUserAddress)) {
@@ -983,7 +972,7 @@ module ferum::market {
                 let makerPrice = makerOrder.metadata.price;
                 let makerSide = makerOrder.metadata.side;
                 makerOrder.metadata.unfilledQty = makerOrder.metadata.unfilledQty - execFillQty;
-                let makerAccountKey = makerOrder.metadata.accountKey;
+                let makerAccountKey = makerOrder.metadata.orderID.accountKey;
                 let makerAccount = table::borrow_mut(marketAccounts, makerAccountKey);
                 let makerUserAddress = makerAccountKey.userAddress;
                 let makerProtocolAddress = makerAccountKey.protocolAddress;
@@ -1510,8 +1499,10 @@ module ferum::market {
             unfilledQty: qty,
             takerCrankPendingQty: 0,
             clientOrderID,
-            accountKey,
-            accountCounter: marketAccount.orderCounter,
+            orderID: OrderID {
+                accountKey: accountKey,
+                counter: marketAccount.orderCounter
+            },
             ownerAddress: address_of(owner),
             marketBuyRemainingCollateral: marketBuyMaxCollateral,
         };
@@ -1565,7 +1556,7 @@ module ferum::market {
                 // Order is fully finalized. Emit finalize event and reuse order object.
                 emit_finalized_event<I, Q>(
                     marketAddr,
-                    order.metadata.accountKey,
+                    order.metadata.orderID.accountKey,
                     order.metadata.price,
                     order.metadata.originalQty,
                 );
@@ -1634,9 +1625,9 @@ module ferum::market {
         let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr); // Reborrow.
         let ordersTable = &mut book.ordersTable;
         let order = table::borrow_mut(&mut ordersTable.objects, orderID);
-        let marketAccount = table::borrow_mut(&mut book.marketAccounts, order.metadata.accountKey);
+        let marketAccount = table::borrow_mut(&mut book.marketAccounts, order.metadata.orderID.accountKey);
         // Better to do this check above but doing it here to save a borrow call.
-        assert!(owns_account(owner, &order.metadata.accountKey, marketAccount), ERR_NOT_OWNER);
+        assert!(owns_account(owner, &order.metadata.orderID.accountKey, marketAccount), ERR_NOT_OWNER);
         order.metadata.unfilledQty = order.metadata.unfilledQty - qtyCancelled;
         // Release collateral.
         if (order.metadata.side == SIDE_BUY) {
@@ -1655,7 +1646,7 @@ module ferum::market {
             // Order is fully finalized. Emit finalize event and reuse order object.
             emit_finalized_event<I, Q>(
                 marketAddr,
-                order.metadata.accountKey,
+                order.metadata.orderID.accountKey,
                 order.metadata.price,
                 order.metadata.originalQty,
             );
@@ -2188,21 +2179,6 @@ module ferum::market {
         ownerAddr == marketAccount.ownerAddress || ownerAddr == accountKey.protocolAddress
     }
 
-    inline fun sentinal_market_account_key(): MarketAccountKey {
-        MarketAccountKey {
-            protocolAddress: @0,
-            userAddress: @0,
-        }
-    }
-
-    fun account_key_from_identifier(id: AccountIdentifier): MarketAccountKey {
-        let (protocolAddress, userAddress) = platform::get_addresses(&id);
-        MarketAccountKey {
-            protocolAddress,
-            userAddress,
-        }
-    }
-
     // Returns the notional split up into
     // - amount which should be deposited into counter party's account
     // - amount which should go to the referring protocol as a fee
@@ -2291,6 +2267,8 @@ module ferum::market {
         assert!(buyTree.treeSize == 0, ERR_NOT_EMPTY_MARKET);
     }
 
+    // <editor-fold defaultstate="collapsed" desc="Event helpers">
+
     inline fun emit_finalized_event<I, Q>(
         marketAddr: address,
         accountKey: MarketAccountKey,
@@ -2305,6 +2283,49 @@ module ferum::market {
             timestampSecs: timestamp::now_seconds(),
         });
     }
+
+    // </editor-fold>
+
+    // <editor-fold defaultstate="collapsed" desc="Struct helpers">
+
+    inline fun default_order_metadata(): OrderMetadata {
+        OrderMetadata{
+            side: 0,
+            behaviour: 0,
+            price: 0,
+            originalQty: 0,
+            unfilledQty: 0,
+            takerCrankPendingQty: 0,
+            clientOrderID: 0,
+            orderID: sentinal_order_id(),
+            ownerAddress: @0,
+            marketBuyRemainingCollateral: 0,
+        }
+    }
+
+    inline fun sentinal_market_account_key(): MarketAccountKey {
+        MarketAccountKey {
+            protocolAddress: @0,
+            userAddress: @0,
+        }
+    }
+
+    inline fun sentinal_order_id(): OrderID {
+        OrderID {
+            accountKey: sentinal_market_account_key(),
+            counter: 0,
+        }
+    }
+
+    fun account_key_from_identifier(id: AccountIdentifier): MarketAccountKey {
+        let (protocolAddress, userAddress) = platform::get_addresses(&id);
+        MarketAccountKey {
+            protocolAddress,
+            userAddress,
+        }
+    }
+
+    // </editor-fold>
 
     // </editor-fold>
 
