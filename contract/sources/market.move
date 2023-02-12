@@ -269,7 +269,8 @@ module ferum::market {
         // Address of the owner of this order. Could be the user's address directly or the address of a protocol
         // owned resource account.
         ownerAddress: address,
-        // ID which uniquely identifies this order.
+        // ID which uniquely identifies this order in the API. Note that this is different from the internal id of the
+        // order, which is used internally to map to previously created order objects.
         orderID: OrderID,
         // The remaining collateral for a market buy order.
         // Mutable field.
@@ -289,13 +290,14 @@ module ferum::market {
         // never added to the book.
         priceLevelID: u16,
         // Pointer to the next order in the unused stack. 0 if this order is currently in use.
+        // Pointer == internal id of the order.
         next: u32,
     }
 
     // The representation of the order in a price level object.
     struct PriceLevelOrder has store, copy, drop {
-        // The id of the order.
-        id: u32,
+        // The internal id of the order.
+        internalID: u32,
         // The unfilled qty of the order. Note that this qty also includes qty that has been executed but is still
         // pending a crank turn.
         qty: u64,
@@ -323,15 +325,21 @@ module ferum::market {
 
     // Reuse table storing price levels.
     struct PriceLevelReuseTable has store {
+        // Price level objects table. Key is the id of the price level.
         objects: table::Table<u16, PriceLevel>,
+        // ID of price level at the top of the stack.
         unusedStack: u16,
+        // Tracker for new id.
         currID: u16,
     }
 
     // Reuse table storing orders.
     struct OrderReuseTable<phantom I, phantom Q> has store {
+        // Order objects table. Key is the internal id of the order.
         objects: table::Table<u32, Order<I, Q>>,
+        // Internal id of order at the top of the stack.
         unusedStack: u32,
+        // Tracker for new internal id.
         currID: u32,
     }
 
@@ -382,7 +390,7 @@ module ferum::market {
         feeType: string::String,
         // All the price levels for this book.
         priceLevelsTable: PriceLevelReuseTable,
-        // All the orders for this book.
+        // All the orders for this book. Mapped to by the internal id of the order.
         ordersTable: OrderReuseTable<I, Q>,
         // Market accounts for this trading pair.
         marketAccounts: table::Table<MarketAccountKey, MarketAccount<I, Q>>,
@@ -391,7 +399,7 @@ module ferum::market {
     // Queue of execution events.
     struct ExecutionQueueEvent has store, drop, copy {
         qty: u64,
-        takerOrderID: u32,
+        takerInternalOrderID: u32,
         priceLevelID: u16,
         timestampSecs: u64,
     }
@@ -693,9 +701,9 @@ module ferum::market {
 
     public entry fun cancel_order_entry<I, Q>(
         owner: &signer,
-        orderID: u32,
+        internalOrderID: u32,
     ) acquires FerumInfo, Orderbook, MarketBuyTree, MarketBuyCache, MarketSellTree, MarketSellCache, IndexingEventHandles {
-        cancel_order<I, Q>(owner, orderID);
+        cancel_order<I, Q>(owner, internalOrderID);
     }
 
     public entry fun set_notional_unit_entry<I, Q>(
@@ -831,7 +839,7 @@ module ferum::market {
         let marketAddr = get_market_addr<I, Q>();
         let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
         let execs = &mut vector[];
-        let orderID = add_order_to_book<I, Q>(
+        let internalOrderID = add_order_to_book<I, Q>(
             owner,
             accountKey,
             marketAddr,
@@ -861,7 +869,7 @@ module ferum::market {
                 i = i + 1;
             };
         };
-        orderID
+        internalOrderID
     }
 
     public fun prealloc_price_levels(
@@ -895,10 +903,10 @@ module ferum::market {
                 priceLevelID: 0,
                 metadata: default_order_metadata(),
             };
-            let orderID = table.currID;
+            let internalOrderID = table.currID;
             table.currID = table.currID + 1;
-            table.unusedStack = orderID;
-            table::add(&mut table.objects, orderID, order);
+            table.unusedStack = internalOrderID;
+            table::add(&mut table.objects, internalOrderID, order);
             i = i + 1;
         }
     }
@@ -944,7 +952,7 @@ module ferum::market {
             quote: coin::zero(),
         };
         // Get taker user address.
-        let takerOrder = table::borrow_mut(&mut ordersTable.objects, event.takerOrderID);
+        let takerOrder = table::borrow_mut(&mut ordersTable.objects, event.takerInternalOrderID);
         let takerPrice = takerOrder.metadata.price;
         let takerBuyCollateral = coin::extract_all(&mut takerOrder.buyCollateral);
         let takerSellCollateral = coin::extract_all(&mut takerOrder.sellCollateral);
@@ -984,8 +992,8 @@ module ferum::market {
                 qty = qty - execFillQty;
                 orderElem.qty = orderElem.qty - execFillQty;
                 // Update the maker order.
-                let makerOrderID = orderElem.id;
-                let makerOrder = table::borrow_mut(&mut ordersTable.objects, makerOrderID);
+                let makerOrderInternalID = orderElem.internalID;
+                let makerOrder = table::borrow_mut(&mut ordersTable.objects, makerOrderInternalID);
                 let makerPrice = makerOrder.metadata.price;
                 let makerSide = makerOrder.metadata.side;
                 makerOrder.metadata.unfilledQty = makerOrder.metadata.unfilledQty - execFillQty;
@@ -1193,10 +1201,10 @@ module ferum::market {
                     };
                     makerOrder.priceLevelID = 0;
                     makerOrder.next = ordersTable.unusedStack;
-                    ordersTable.unusedStack = makerOrderID;
+                    ordersTable.unusedStack = makerOrderInternalID;
                 };
                 // Update the taker order.
-                let takerOrder = table::borrow_mut(&mut ordersTable.objects, event.takerOrderID);
+                let takerOrder = table::borrow_mut(&mut ordersTable.objects, event.takerInternalOrderID);
                 takerOrder.metadata.takerCrankPendingQty = takerOrder.metadata.takerCrankPendingQty - execFillQty;
                 takerOrder.metadata.unfilledQty = takerOrder.metadata.unfilledQty - execFillQty;
                 let takerOrderMetadata = takerOrder.metadata;
@@ -1218,7 +1226,7 @@ module ferum::market {
         assert!(qty == 0, ERR_CRANK_UNFULFILLED_QTY);
         // Update the taker order.
         let takerAccount = table::borrow_mut(marketAccounts, takerAccountKey);
-        let takerOrder = table::borrow_mut(&mut ordersTable.objects, event.takerOrderID);
+        let takerOrder = table::borrow_mut(&mut ordersTable.objects, event.takerInternalOrderID);
         // Tranfer over proceeds from the taker order.
         let MarketBalance {
             quote: takerQuoteProceeds,
@@ -1246,7 +1254,7 @@ module ferum::market {
             };
             takerOrder.priceLevelID = 0;
             takerOrder.next = ordersTable.unusedStack;
-            ordersTable.unusedStack = event.takerOrderID;
+            ordersTable.unusedStack = event.takerInternalOrderID;
         };
         // Remove orders from the PriceLevel.
         list_drop_from_front(&mut makerPriceLevel.orders, numElemsToDrop);
@@ -1554,8 +1562,8 @@ module ferum::market {
                 coin::extract(&mut marketAccount.instrumentBalance, instrumentCoinAmt),
             )
         };
-        let orderID = get_or_create_order(&mut book.ordersTable);
-        let order = table::borrow_mut(&mut book.ordersTable.objects, orderID);
+        let internalOrderID = get_or_create_order(&mut book.ordersTable);
+        let order = table::borrow_mut(&mut book.ordersTable.objects, internalOrderID);
         order.metadata = orderMetadata;
         marketAccount.orderCounter = marketAccount.orderCounter + 1;
         coin::merge(&mut order.buyCollateral, buyCollateral);
@@ -1571,34 +1579,36 @@ module ferum::market {
             if (side == SIDE_BUY) {
                 if (book.summary.sellCacheQty > 0) {
                     let cache = &mut borrow_global_mut<MarketSellCache<I, Q>>(marketAddr).cache;
-                    let qtyRemoved = match_against_cache(execs, cache, orderID, order, timestampSecs, book.iDecimals);
+                    let qtyRemoved = match_against_cache(execs, cache,
+                        internalOrderID, order, timestampSecs, book.iDecimals);
                     update_cache_size_and_qty(&mut book.summary, cache, qtyRemoved, 0);
                     update_cache_max_min(&mut book.summary, cache);
                 };
                 if (!no_qty_to_be_executed(order, 0) && canMaybeExecAgainstTree) {
                     let tree = &mut borrow_global_mut<MarketSellTree<I, Q>>(marketAddr).tree;
-                    match_against_tree(execs, tree, orderID, order, timestampSecs, book.iDecimals);
+                    match_against_tree(execs, tree, internalOrderID, order, timestampSecs, book.iDecimals);
                     update_tree_max_min(&mut book.summary, tree, SIDE_SELL);
                 };
             } else if (side == SIDE_SELL) {
                 if (book.summary.buyCacheQty > 0) {
                     let cache = &mut borrow_global_mut<MarketBuyCache<I, Q>>(marketAddr).cache;
-                    let qtyRemoved = match_against_cache(execs, cache, orderID, order, timestampSecs, book.iDecimals);
+                    let qtyRemoved = match_against_cache(execs, cache,
+                        internalOrderID, order, timestampSecs, book.iDecimals);
                     update_cache_size_and_qty(&mut book.summary, cache, qtyRemoved, 0);
                     update_cache_max_min(&mut book.summary, cache);
                 };
                 if (!no_qty_to_be_executed(order, 0) && canMaybeExecAgainstTree) {
                     let tree= &mut borrow_global_mut<MarketBuyTree<I, Q>>(marketAddr).tree;
-                    match_against_tree(execs, tree, orderID, order, timestampSecs, book.iDecimals);
+                    match_against_tree(execs, tree, internalOrderID, order, timestampSecs, book.iDecimals);
                     update_tree_max_min(&mut book.summary, tree, SIDE_BUY);
                 };
             };
         };
         let ordersTable = &mut book.ordersTable;
-        let order = table::borrow_mut(&mut ordersTable.objects, orderID); // Reborrow.
+        let order = table::borrow_mut(&mut ordersTable.objects, internalOrderID); // Reborrow.
         if (no_qty_to_be_executed(order, 0)) {
             // If the order is fully executed, no need to add it to the price store.
-            return orderID
+            return internalOrderID
         };
         if (behaviour == BEHAVIOUR_IOC || price == 0) {
             // If the order is an IOC order or a market order, any remaining qty should be cancelled.
@@ -1612,10 +1622,10 @@ module ferum::market {
                 order.next = ordersTable.unusedStack;
                 order.priceLevelID = 0;
                 order.metadata = default_order_metadata();
-                ordersTable.unusedStack = orderID;
+                ordersTable.unusedStack = internalOrderID;
                 return 0
             };
-            return orderID
+            return internalOrderID
         };
         // Otherwise, order is added to the price store.
         let remainingQty = order.metadata.unfilledQty - order.metadata.takerCrankPendingQty;
@@ -1642,24 +1652,24 @@ module ferum::market {
             priceLevelID
         };
         // Add order to the corresponding PriceLevel object.
-        let order = table::borrow_mut(&mut book.ordersTable.objects, orderID); // Reborrow.
+        let order = table::borrow_mut(&mut book.ordersTable.objects, internalOrderID); // Reborrow.
         let priceLevel = table::borrow_mut(&mut book.priceLevelsTable.objects, priceLevelID);
         list_push(&mut priceLevel.orders, PriceLevelOrder {
-            id: orderID,
+            internalID: internalOrderID,
             qty: remainingQty,
         });
         order.priceLevelID = priceLevelID;
-        orderID
+        internalOrderID
     }
 
     fun cancel_order<I, Q>(
         owner: &signer,
-        orderID: u32,
+        internalOrderID: u32,
     ) acquires FerumInfo, Orderbook, MarketBuyTree, MarketBuyCache, MarketSellTree, MarketSellCache, IndexingEventHandles {
         let marketAddr = get_market_addr<I, Q>();
         let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
-        assert!(table::contains(&book.ordersTable.objects, orderID), ERR_UNKNOWN_ORDER);
-        let order = table::borrow(&book.ordersTable.objects, orderID);
+        assert!(table::contains(&book.ordersTable.objects, internalOrderID), ERR_UNKNOWN_ORDER);
+        let order = table::borrow(&book.ordersTable.objects, internalOrderID);
         assert!(order.metadata.ownerAddress != @0, ERR_UNKNOWN_ORDER);
         let side = order.metadata.side;
         let price = order.metadata.price;
@@ -1669,11 +1679,12 @@ module ferum::market {
         // Also make sure the order has a price level associated with it.
         assert!(order.priceLevelID != 0, ERR_UNKNOWN_ORDER);
         // Remove order from price store and level.
-        let qtyCancelled = remove_order_from_price_store_and_level<I, Q>(marketAddr, &mut book.priceLevelsTable, &mut book.summary, orderID, side, price);
+        let qtyCancelled = remove_order_from_price_store_and_level<I, Q>(marketAddr, &mut book.priceLevelsTable, &mut book.summary,
+            internalOrderID, side, price);
         // Update order.
         let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr); // Reborrow.
         let ordersTable = &mut book.ordersTable;
-        let order = table::borrow_mut(&mut ordersTable.objects, orderID);
+        let order = table::borrow_mut(&mut ordersTable.objects, internalOrderID);
         let marketAccount = table::borrow_mut(&mut book.marketAccounts, order.metadata.orderID.accountKey);
         // Better to do this check above but doing it here to save a borrow call.
         assert!(owns_account(owner, &order.metadata.orderID.accountKey, marketAccount), ERR_NOT_OWNER);
@@ -1700,7 +1711,7 @@ module ferum::market {
             order.next = ordersTable.unusedStack;
             order.priceLevelID = 0;
             order.metadata = default_order_metadata();
-            ordersTable.unusedStack = orderID;
+            ordersTable.unusedStack = internalOrderID;
         };
     }
 
@@ -1708,7 +1719,7 @@ module ferum::market {
         marketAddr: address,
         priceLevelsTable: &mut PriceLevelReuseTable,
         summary: &mut MarketSummary,
-        orderID: u32,
+        internalOrderID: u32,
         orderSide: u8,
         orderPrice: u64,
     ): u64 acquires MarketBuyTree, MarketSellTree, MarketBuyCache, MarketSellCache {
@@ -1726,7 +1737,7 @@ module ferum::market {
             let qtyRemoved = remove_order_from_price_level(
                 priceLevelsTable,
                 priceStoreElem.priceLevelID,
-                orderID,
+                internalOrderID,
                 priceStoreElem.makerCrankPendingQty,
             );
             remove_price_qty_from_cache(
@@ -1752,7 +1763,7 @@ module ferum::market {
             let qtyRemoved = remove_order_from_price_level(
                 priceLevelsTable,
                 priceStoreElem.priceLevelID,
-                orderID,
+                internalOrderID,
                 priceStoreElem.makerCrankPendingQty,
             );
             remove_price_qty_from_tree(
@@ -1877,7 +1888,7 @@ module ferum::market {
     fun remove_order_from_price_level(
         priceLevels: &mut PriceLevelReuseTable,
         priceLevelID: u16,
-        orderID: u32,
+        internalOrderID: u32,
         pendingMakerCrankQty: u64,
     ): u64 {
         let priceLevel = table::borrow_mut(&mut priceLevels.objects, priceLevelID);
@@ -1886,7 +1897,7 @@ module ferum::market {
         let it = list_iterate(list);
         while (it.nodeID != 0) {
             let elem = list_get_mut(list, &mut it);
-            if (elem.id == orderID) {
+            if (elem.internalID == internalOrderID) {
                 if (pendingMakerCrankQty >= elem.qty) {
                     // We can't cancel this order because it's entire quantity has already been executed and is just
                     // waiting for the crank to turn.
@@ -1919,7 +1930,7 @@ module ferum::market {
     fun match_against_cache<I, Q>(
         execs: &mut vector<ExecutionQueueEvent>,
         cache: &mut Cache<PriceStoreElem>,
-        orderID: u32,
+        internalOrderID: u32,
         order: &mut Order<I, Q>,
         timestampSecs: u64,
         instrumentDecimals: u8,
@@ -1981,7 +1992,7 @@ module ferum::market {
                 qty: fillQty,
                 priceLevelID: cacheNode.value.priceLevelID,
                 timestampSecs,
-                takerOrderID: orderID,
+                takerInternalOrderID: internalOrderID,
             });
             // Update the price qty in the cache.
             remove_price_qty_from_cache(
@@ -2008,7 +2019,7 @@ module ferum::market {
     fun match_against_tree<I, Q>(
         execs: &mut vector<ExecutionQueueEvent>,
         tree: &mut Tree<PriceStoreElem>,
-        orderID: u32,
+        internalOrderID: u32,
         order: &mut Order<I, Q>,
         timestampSecs: u64,
         instrumentDecimals: u8,
@@ -2072,7 +2083,7 @@ module ferum::market {
                 qty: fillQty,
                 priceLevelID: orderTreeElem.priceLevelID,
                 timestampSecs,
-                takerOrderID: orderID,
+                takerInternalOrderID: internalOrderID,
             });
             // Defer update for price qty in the tree.
             vector::push_back(&mut qtysToRemove, DeferredQtyRemovals{
@@ -2108,11 +2119,11 @@ module ferum::market {
         if (table.unusedStack == 0) {
             prealloc_orders(table, 1)
         };
-        let orderID = table.unusedStack;
-        let order = table::borrow_mut(&mut table.objects, orderID);
+        let internalOrderID = table.unusedStack;
+        let order = table::borrow_mut(&mut table.objects, internalOrderID);
         table.unusedStack = order.next;
         order.next = 0;
-        orderID
+        internalOrderID
     }
 
     fun get_or_create_price_level(table: &mut PriceLevelReuseTable): u16 {
@@ -4426,17 +4437,17 @@ module ferum::market {
         orderTable: &mut OrderReuseTable<I, Q>,
         qty: u64,
     ): u32 {
-        let orderID = get_or_create_order(orderTable);
-        let order = table::borrow_mut(&mut orderTable.objects, orderID);
+        let internalOrderID = get_or_create_order(orderTable);
+        let order = table::borrow_mut(&mut orderTable.objects, internalOrderID);
         let priceLevel = table::borrow_mut(&mut priceLevelTable.objects, priceLevelID);
         list_push(&mut priceLevel.orders, PriceLevelOrder {
-            id: orderID,
+            internalID: internalOrderID,
             qty,
         });
         order.priceLevelID = priceLevelID;
         order.metadata.originalQty = qty;
         order.metadata.unfilledQty = qty;
-        orderID
+        internalOrderID
     }
 
     #[test_only]
@@ -4454,7 +4465,7 @@ module ferum::market {
         let it = list_iterate(list);
         while (it.nodeID != 0) {
             let elem = list_get_next(list, &mut it);
-            if (elem.id == orderID) {
+            if (elem.internalID == orderID) {
                 return elem.qty
             }
         };
@@ -9008,11 +9019,11 @@ module ferum::market {
             let elem = list_get_next(queue, &mut it);
             let expected = vector::borrow(&events, i);
             assert!(elem.qty == expected.qty, 0);
-            assert!(elem.takerOrderID == expected.takerOrderID, 0);
+            assert!(elem.takerInternalOrderID == expected.takerOrderID, 0);
             let priceLevel = table::borrow(priceLevels, elem.priceLevelID);
             let orders = list_to_vector(&priceLevel.orders);
             assert!(vector::length(&orders) > 0, 0);
-            let price = table::borrow(ordersTable, vector::borrow(&orders, 0).id).metadata.price;
+            let price = table::borrow(ordersTable, vector::borrow(&orders, 0).internalID).metadata.price;
             assert!(price == expected.price, 0);
             let qtySum = 0;
             while (!vector::is_empty(&orders)) {
@@ -9054,8 +9065,8 @@ module ferum::market {
             let node = table::borrow(&priceLevelsTable.objects, nodeID);
             let nodeElems = list_to_vector(&node.orders);
             // Determine the price this node corresponds to by looking at an order.
-            let orderID = vector::borrow(&nodeElems, 0).id;
-            let order = table::borrow(&book.ordersTable.objects, orderID);
+            let internalOrderID = vector::borrow(&nodeElems, 0).internalID;
+            let order = table::borrow(&book.ordersTable.objects, internalOrderID);
             let price = order.metadata.price;
             let side = order.metadata.side;
             let key = PriceLevelInfoKey { price, side };
@@ -9133,7 +9144,7 @@ module ferum::market {
     #[test_only]
     fun price_level_order_to_str(order: PriceLevelOrder): string::String {
         let out = s(b"(");
-        string::append(&mut out, ftu::u32_to_string(order.id));
+        string::append(&mut out, ftu::u32_to_string(order.internalID));
         string::append(&mut out, s(b", "));
         string::append(&mut out, ftu::pretty_print_fp(order.qty, DECIMAL_PLACES));
         string::append(&mut out, s(b")"));
@@ -9360,7 +9371,7 @@ module ferum::market {
             let orderMakerQty = 0;
             while (it.nodeID != 0) {
                 let priceLevelOrder = list_get_next(&priceLevel.orders, &mut it);
-                if (priceLevelOrder.id == orderID) {
+                if (priceLevelOrder.internalID == orderID) {
                     orderMakerQty = if (priceLevelMakerQty > priceLevelOrder.qty) {
                         priceLevelOrder.qty
                     } else {
