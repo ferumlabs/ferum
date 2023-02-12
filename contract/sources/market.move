@@ -494,6 +494,15 @@ module ferum::market {
         cache: Cache<PriceStoreElem>,
     }
 
+    // Struct to represent which resources were accessed when performing some logic. Used to seperate logic into
+    // wrapper functions but still maintain not having to touch a specific resource.
+    struct ResourcesAccessed has drop {
+        buyCache: bool,
+        sellCache: bool,
+        buyTree: bool,
+        sellTree: bool,
+    }
+
     // <editor-fold defaultstate="collapsed" desc="Market entry functions">
 
     public entry fun init_market_entry<I, Q>(
@@ -904,6 +913,7 @@ module ferum::market {
         let marketAddr = get_market_addr<I, Q>();
         let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
         let execs = &mut vector[];
+        let resourcesAccessed = default_resources_accessed();
         let orderID = add_order_to_book<I, Q>(
             owner,
             accountKey,
@@ -916,6 +926,7 @@ module ferum::market {
             marketBuyMaxCollateral,
             book,
             execs,
+            &mut resourcesAccessed,
         );
         // Add any created execution events to queue.
         let execCount = vector::length(execs);
@@ -934,7 +945,70 @@ module ferum::market {
                 i = i + 1;
             };
         };
+        // Emit price update event.
+        emit_price_update_event<I, Q>(marketAddr, resourcesAccessed);
         orderID
+    }
+
+    public fun cancel_order<I, Q>(
+        owner: &signer,
+        orderID: OrderID,
+    ) acquires FerumInfo, Orderbook, MarketBuyTree, MarketBuyCache, MarketSellTree, MarketSellCache, IndexingEventHandles {
+        let resourcesAccessed = default_resources_accessed();
+        let marketAddr = get_market_addr<I, Q>();
+        let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
+        assert!(table::contains(&book.marketAccounts, orderID.accountKey), ERR_UNKNOWN_MARKET_ACCOUNT);
+        let marketAccount = table::borrow(&book.marketAccounts, orderID.accountKey);
+        let internalOrderID = find_internal_order_id(&marketAccount.activeOrders, orderID);
+        assert!(table::contains(&book.ordersTable.objects, internalOrderID), ERR_UNKNOWN_ORDER);
+        let order = table::borrow(&book.ordersTable.objects, internalOrderID);
+        assert!(order.metadata.ownerAddress != @0, ERR_UNKNOWN_ORDER);
+        let side = order.metadata.side;
+        let price = order.metadata.price;
+        // If the order is cancelable, then there is some amount of unfilledQty that is not pending a crank turn. Check
+        // for pending taker qty here. Maker qty is checked for when we try to remove from the price level.
+        assert!(order.metadata.unfilledQty > order.metadata.takerCrankPendingQty, ERR_ORDER_EXECUTED_BUT_IS_PENDING_CRANK);
+        // Also make sure the order has a price level associated with it.
+        assert!(order.priceLevelID != 0, ERR_UNKNOWN_ORDER);
+        // Remove order from price store and level.
+        let qtyCancelled = remove_order_from_price_store_and_level<I, Q>(
+            marketAddr, &mut book.priceLevelsTable, &mut book.summary,
+            internalOrderID, side, price, &mut resourcesAccessed);
+        // Update order.
+        let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr); // Reborrow.
+        let ordersTable = &mut book.ordersTable;
+        let order = table::borrow_mut(&mut ordersTable.objects, internalOrderID);
+        let marketAccount = table::borrow_mut(&mut book.marketAccounts, order.metadata.orderID.accountKey);
+        // Better to do this check above but doing it here to save a borrow call.
+        assert!(owns_account(owner, &order.metadata.orderID.accountKey, marketAccount), ERR_NOT_OWNER);
+        order.metadata.unfilledQty = order.metadata.unfilledQty - qtyCancelled;
+        // Release collateral.
+        if (order.metadata.side == SIDE_BUY) {
+            let quoteDecimals = coin::decimals<Q>();
+            let quoteAmt = fp_convert(fp_mul(price, qtyCancelled, FP_NO_PRECISION_LOSS), quoteDecimals, FP_NO_PRECISION_LOSS);
+            let quoteCoinAmt = coin::extract(&mut order.buyCollateral, quoteAmt);
+            coin::merge(&mut marketAccount.quoteBalance, quoteCoinAmt);
+        } else {
+            let instrumentDecimals = coin::decimals<I>();
+            let instrumentAmt = fp_convert(qtyCancelled, instrumentDecimals, FP_NO_PRECISION_LOSS);
+            let instrumentCoinAmt = coin::extract(&mut order.sellCollateral, instrumentAmt);
+            coin::merge(&mut marketAccount.instrumentBalance, instrumentCoinAmt);
+        };
+        // Shouldn't need to worry about market orders because they will never be in the book.
+        if (is_finalized(order)) {
+            // Order is fully finalized. Emit finalize event and reuse order object.
+            emit_finalized_event<I, Q>(
+                marketAddr,
+                order.metadata,
+            );
+            order.next = ordersTable.unusedStack;
+            order.priceLevelID = 0;
+            order.metadata = default_order_metadata();
+            ordersTable.unusedStack = internalOrderID;
+            remove_active_order_with_internal_order_id(&mut marketAccount.activeOrders, internalOrderID);
+        };
+        // Emit price update.
+        emit_price_update_event<I, Q>(marketAddr, resourcesAccessed);
     }
 
     public fun prealloc_price_levels(
@@ -1465,6 +1539,7 @@ module ferum::market {
         marketBuyMaxCollateral: u64, // Should only be specified for market orders.
         book: &mut Orderbook<I, Q>,
         execs: &mut vector<ExecutionQueueEvent>,
+        resourcesAccessed: &mut ResourcesAccessed,
     ): OrderID acquires MarketSellTree, MarketBuyTree, MarketSellCache, MarketBuyCache, IndexingEventHandles {
         // Validate inputs.
         // <editor-fold defaultstate="collapsed" desc="Input Validation">
@@ -1545,8 +1620,10 @@ module ferum::market {
             let remainingQty = qty;
             // First, check the cache.
             let cache = if (side == SIDE_SELL) {
+                resourcesAccessed.buyCache = true;
                 &borrow_global<MarketBuyCache<I, Q>>(marketAddr).cache
             } else {
+                resourcesAccessed.sellCache = true;
                 &borrow_global<MarketSellCache<I, Q>>(marketAddr).cache
             };
             // Inlined cache iteration.
@@ -1574,10 +1651,12 @@ module ferum::market {
             // Then check tree if we still have qty.
             if (remainingQty > 0) {
                 let (tree, it) = if (side == SIDE_SELL) {
+                    resourcesAccessed.buyTree = true;
                     let tree = &borrow_global<MarketBuyTree<I, Q>>(marketAddr).tree;
                     let it = tree_iterate(tree, SIDE_BUY);
                     (tree, it)
                 } else {
+                    resourcesAccessed.sellTree = true;
                     let tree = &borrow_global<MarketSellTree<I, Q>>(marketAddr).tree;
                     let it = tree_iterate(tree, SIDE_SELL);
                     (tree, it)
@@ -1652,6 +1731,7 @@ module ferum::market {
             // Then if needed, load tree and match order against that.
             if (side == SIDE_BUY) {
                 if (book.summary.sellCacheQty > 0) {
+                    resourcesAccessed.sellCache = true;
                     let cache = &mut borrow_global_mut<MarketSellCache<I, Q>>(marketAddr).cache;
                     let qtyRemoved = match_against_cache(execs, cache,
                         internalOrderID, order, timestampSecs, book.iDecimals);
@@ -1659,12 +1739,14 @@ module ferum::market {
                     update_cache_max_min(&mut book.summary, cache);
                 };
                 if (!no_qty_to_be_executed(order, 0) && canMaybeExecAgainstTree) {
+                    resourcesAccessed.sellTree = true;
                     let tree = &mut borrow_global_mut<MarketSellTree<I, Q>>(marketAddr).tree;
                     match_against_tree(execs, tree, internalOrderID, order, timestampSecs, book.iDecimals);
                     update_tree_max_min(&mut book.summary, tree, SIDE_SELL);
                 };
             } else if (side == SIDE_SELL) {
                 if (book.summary.buyCacheQty > 0) {
+                    resourcesAccessed.buyCache = true;
                     let cache = &mut borrow_global_mut<MarketBuyCache<I, Q>>(marketAddr).cache;
                     let qtyRemoved = match_against_cache(execs, cache,
                         internalOrderID, order, timestampSecs, book.iDecimals);
@@ -1672,6 +1754,7 @@ module ferum::market {
                     update_cache_max_min(&mut book.summary, cache);
                 };
                 if (!no_qty_to_be_executed(order, 0) && canMaybeExecAgainstTree) {
+                    resourcesAccessed.buyTree = true;
                     let tree= &mut borrow_global_mut<MarketBuyTree<I, Q>>(marketAddr).tree;
                     match_against_tree(execs, tree, internalOrderID, order, timestampSecs, book.iDecimals);
                     update_tree_max_min(&mut book.summary, tree, SIDE_BUY);
@@ -1707,8 +1790,10 @@ module ferum::market {
         let priceLevelID = if (should_insert_in_cache(&book.summary, book.maxCacheSize, side, price)) {
             // Order price will go into the cache.
             let cache = if (side == SIDE_BUY) {
+                resourcesAccessed.buyCache = true;
                 &mut borrow_global_mut<MarketBuyCache<I, Q>>(marketAddr).cache
             } else {
+                resourcesAccessed.sellCache = true;
                 &mut borrow_global_mut<MarketSellCache<I, Q>>(marketAddr).cache
             };
             let priceLevelID = add_price_qty_to_cache(cache, &mut book.priceLevelsTable, price, remainingQty);
@@ -1718,8 +1803,10 @@ module ferum::market {
         } else {
             // Order price will go into the tree.
             let tree = if (side == SIDE_BUY) {
+                resourcesAccessed.buyTree = true;
                 &mut borrow_global_mut<MarketBuyTree<I, Q>>(marketAddr).tree
             } else {
+                resourcesAccessed.sellTree = true;
                 &mut borrow_global_mut<MarketSellTree<I, Q>>(marketAddr).tree
             };
             let priceLevelID = add_price_qty_to_tree(tree, &mut book.priceLevelsTable, price, remainingQty);
@@ -1737,63 +1824,6 @@ module ferum::market {
         orderID
     }
 
-    fun cancel_order<I, Q>(
-        owner: &signer,
-        orderID: OrderID,
-    ) acquires FerumInfo, Orderbook, MarketBuyTree, MarketBuyCache, MarketSellTree, MarketSellCache, IndexingEventHandles {
-        let marketAddr = get_market_addr<I, Q>();
-        let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
-        assert!(table::contains(&book.marketAccounts, orderID.accountKey), ERR_UNKNOWN_MARKET_ACCOUNT);
-        let marketAccount = table::borrow(&book.marketAccounts, orderID.accountKey);
-        let internalOrderID = find_internal_order_id(&marketAccount.activeOrders, orderID);
-        assert!(table::contains(&book.ordersTable.objects, internalOrderID), ERR_UNKNOWN_ORDER);
-        let order = table::borrow(&book.ordersTable.objects, internalOrderID);
-        assert!(order.metadata.ownerAddress != @0, ERR_UNKNOWN_ORDER);
-        let side = order.metadata.side;
-        let price = order.metadata.price;
-        // If the order is cancelable, then there is some amount of unfilledQty that is not pending a crank turn. Check
-        // for pending taker qty here. Maker qty is checked for when we try to remove from the price level.
-        assert!(order.metadata.unfilledQty > order.metadata.takerCrankPendingQty, ERR_ORDER_EXECUTED_BUT_IS_PENDING_CRANK);
-        // Also make sure the order has a price level associated with it.
-        assert!(order.priceLevelID != 0, ERR_UNKNOWN_ORDER);
-        // Remove order from price store and level.
-        let qtyCancelled = remove_order_from_price_store_and_level<I, Q>(marketAddr, &mut book.priceLevelsTable, &mut book.summary,
-            internalOrderID, side, price);
-        // Update order.
-        let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr); // Reborrow.
-        let ordersTable = &mut book.ordersTable;
-        let order = table::borrow_mut(&mut ordersTable.objects, internalOrderID);
-        let marketAccount = table::borrow_mut(&mut book.marketAccounts, order.metadata.orderID.accountKey);
-        // Better to do this check above but doing it here to save a borrow call.
-        assert!(owns_account(owner, &order.metadata.orderID.accountKey, marketAccount), ERR_NOT_OWNER);
-        order.metadata.unfilledQty = order.metadata.unfilledQty - qtyCancelled;
-        // Release collateral.
-        if (order.metadata.side == SIDE_BUY) {
-            let quoteDecimals = coin::decimals<Q>();
-            let quoteAmt = fp_convert(fp_mul(price, qtyCancelled, FP_NO_PRECISION_LOSS), quoteDecimals, FP_NO_PRECISION_LOSS);
-            let quoteCoinAmt = coin::extract(&mut order.buyCollateral, quoteAmt);
-            coin::merge(&mut marketAccount.quoteBalance, quoteCoinAmt);
-        } else {
-            let instrumentDecimals = coin::decimals<I>();
-            let instrumentAmt = fp_convert(qtyCancelled, instrumentDecimals, FP_NO_PRECISION_LOSS);
-            let instrumentCoinAmt = coin::extract(&mut order.sellCollateral, instrumentAmt);
-            coin::merge(&mut marketAccount.instrumentBalance, instrumentCoinAmt);
-        };
-        // Shouldn't need to worry about market orders because they will never be in the book.
-        if (is_finalized(order)) {
-            // Order is fully finalized. Emit finalize event and reuse order object.
-            emit_finalized_event<I, Q>(
-                marketAddr,
-                order.metadata,
-            );
-            order.next = ordersTable.unusedStack;
-            order.priceLevelID = 0;
-            order.metadata = default_order_metadata();
-            ordersTable.unusedStack = internalOrderID;
-            remove_active_order_with_internal_order_id(&mut marketAccount.activeOrders, internalOrderID);
-        };
-    }
-
     fun remove_order_from_price_store_and_level<I, Q>(
         marketAddr: address,
         priceLevelsTable: &mut PriceLevelReuseTable,
@@ -1801,12 +1831,15 @@ module ferum::market {
         internalOrderID: u32,
         orderSide: u8,
         orderPrice: u64,
+        resourcesAccessed: &mut ResourcesAccessed,
     ): u64 acquires MarketBuyTree, MarketSellTree, MarketBuyCache, MarketSellCache {
         if (is_price_store_elem_in_cache(summary, orderSide, orderPrice)) {
             // The price is in the cache.
             let cache = if (orderSide == SIDE_BUY) {
+                resourcesAccessed.buyCache = true;
                 &mut borrow_global_mut<MarketBuyCache<I, Q>>(marketAddr).cache
             } else {
+                resourcesAccessed.sellCache = true;
                 &mut borrow_global_mut<MarketSellCache<I, Q>>(marketAddr).cache
             };
             let res = cache_find(cache, orderPrice);
@@ -1832,8 +1865,10 @@ module ferum::market {
         } else {
             // The price is in the tree.
             let tree = if (orderSide == SIDE_BUY) {
+                resourcesAccessed.buyTree = true;
                 &mut borrow_global_mut<MarketBuyTree<I, Q>>(marketAddr).tree
             } else {
+                resourcesAccessed.sellTree = true;
                 &mut borrow_global_mut<MarketSellTree<I, Q>>(marketAddr).tree
             };
             let pos = tree_find(tree, orderPrice);
@@ -2493,6 +2528,81 @@ module ferum::market {
         });
     }
 
+    fun emit_price_update_event<I, Q>(
+        marketAddr: address,
+        resourcesAccessed: ResourcesAccessed
+    ) acquires MarketSellTree, MarketBuyTree, MarketSellCache, MarketBuyCache, IndexingEventHandles {
+        let priceUpdateEventHandle = &mut borrow_global_mut<IndexingEventHandles<I, Q>>(marketAddr).priceUpdates;
+        emit_event(priceUpdateEventHandle, get_price_update<I, Q>(marketAddr, resourcesAccessed));
+    }
+
+    inline fun get_price_update<I, Q>(
+        marketAddr: address,
+        resourcesAccessed: ResourcesAccessed,
+    ): IndexingPriceUpdateEvent acquires MarketSellTree, MarketBuyTree, MarketSellCache, MarketBuyCache {
+        let sellMinPrice = 0;
+        let sellMinQty = 0;
+        let buyMaxPrice = 0;
+        let buyMaxQty = 0;
+        if (resourcesAccessed.sellCache) {
+            let sellCache = &borrow_global<MarketSellCache<I, Q>>(marketAddr).cache;
+            (sellMinPrice, sellMinQty) = get_top_of_cache(sellCache);
+        };
+        if (sellMinPrice == 0) {
+            let sellTree = &borrow_global<MarketSellTree<I, Q>>(marketAddr).tree;
+            (sellMinPrice, sellMinQty) = get_top_of_tree(sellTree, SIDE_SELL);
+        };
+        if (resourcesAccessed.buyCache) {
+            let buyCache = &borrow_global<MarketBuyCache<I, Q>>(marketAddr).cache;
+            (buyMaxPrice, buyMaxQty) = get_top_of_cache(buyCache);
+        };
+        if (buyMaxPrice == 0) {
+            let buyTree = &borrow_global<MarketBuyTree<I, Q>>(marketAddr).tree;
+            (sellMinPrice, sellMinQty) = get_top_of_tree(buyTree, SIDE_BUY);
+        };
+        IndexingPriceUpdateEvent {
+            instrumentType: type_info::type_of<I>(),
+            quoteType: type_info::type_of<Q>(),
+            maxBid: buyMaxPrice,
+            bidSize: buyMaxQty,
+            minAsk: sellMinPrice,
+            askSize: sellMinQty,
+            timestampMicroSeconds: timestamp::now_microseconds(),
+        }
+    }
+
+    inline fun get_top_of_cache(cache: &Cache<PriceStoreElem>): (u64, u64) {
+        let size = vector::length(&cache.list);
+        let i = size;
+        let outPrice = 0;
+        let outQty = 0;
+        while (i > 0) {
+            let elem = vector::borrow(&cache.list, i - 1);
+            if (elem.value.qty > 0) {
+                outPrice = elem.key;
+                outQty = elem.value.qty;
+                break
+            };
+            i = i - 1;
+        };
+        (outPrice, outQty)
+    }
+
+    inline fun get_top_of_tree(tree: &Tree<PriceStoreElem>, side: u8): (u64, u64) {
+        let it = tree_iterate(tree, side);
+        let outPrice = 0;
+        let outQty = 0;
+        while (it.pos.nodeID != 0) {
+            let (price, elem) = tree_get_next(tree, &mut it);
+            if (elem.qty > 0) {
+                outQty = elem.qty;
+                outPrice = price;
+                break
+            }
+        };
+        (outPrice, outQty)
+    }
+
     // </editor-fold>
 
     // <editor-fold defaultstate="collapsed" desc="Struct helpers">
@@ -2531,6 +2641,15 @@ module ferum::market {
         MarketAccountKey {
             protocolAddress,
             userAddress,
+        }
+    }
+
+    inline fun default_resources_accessed(): ResourcesAccessed {
+        ResourcesAccessed {
+            buyCache: false,
+            sellCache: false,
+            buyTree: false,
+            sellTree: false,
         }
     }
 
