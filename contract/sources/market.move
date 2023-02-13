@@ -15,7 +15,7 @@
 // qty, pendingMakerCrankQty, and the id of the PriceLevel object (which stores the actual order information for that
 // pricelevel).
 //
-// New pricelevels are added to the cache until it is reaches capacity, at which point prices are added to the tree.
+// New pricelevels are added to the cache until it reaches capacity, at which point prices are added to the tree.
 // When adding a new price, the range covered by the cache and the tree is noted and takes precendence. For example,
 // say the cache is full with prices 1, 2, 3, and 4. A price of 3.5 will still be added to the cache. The same
 // principle applies to the prices stored in the tree. Prices between the tree an the cache are rebalanced periodically
