@@ -217,6 +217,8 @@ module ferum::market {
 
     // <editor-fold defaultstate="collapsed" desc="Market implementation">
 
+    // <editor-fold defaultstate="collapsed" desc="Market structs">
+
     // Structs.
 
     // Each market account is uniquely described by a protocol and user address.
@@ -503,6 +505,8 @@ module ferum::market {
         sellTree: bool,
     }
 
+    // </editor-fold>
+
     // <editor-fold defaultstate="collapsed" desc="Market entry functions">
 
     public entry fun init_market_entry<I, Q>(
@@ -710,7 +714,7 @@ module ferum::market {
         price: u64, // Fixedpoint value.
         qty: u64, // Fixedpoint value.
         clientOrderID: u32,
-        marketBuyMaxCollateral: u64, // Should only be specified for market orders.
+        marketBuyMaxCollateral: u64, // Fixedpoint. Should only be specified for market orders.
     ) acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles {
         let accountKey = MarketAccountKey {
             protocolAddress: @ferum,
@@ -908,7 +912,7 @@ module ferum::market {
         price: u64, // Fixedpoint value.
         qty: u64, // Fixedpoint value.
         clientOrderID: u32,
-        marketBuyMaxCollateral: u64, // Should only be specified for market orders.
+        marketBuyMaxCollateral: u64, // Fixedpoint. Should only be specified for market orders.
     ): OrderID acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles {
         let marketAddr = get_market_addr<I, Q>();
         let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
