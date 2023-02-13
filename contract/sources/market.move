@@ -101,12 +101,13 @@ module ferum::market {
     const ERR_PRICE_STORE_ELEM_NOT_FOUND: u64 = 112;
     const ERR_CRANK_UNFULFILLED_QTY: u64 = 113;
     const ERR_NO_MARKET_ACCOUNT: u64 = 114;
-    const ERR_INVALID_MAX_COLLATERAL_AMT: u64 = 115;
-    const ERR_NOTIONAL_NOT_UNIT_MULTIPLE: u64 = 116;
-    const ERR_NOT_EMPTY_MARKET: u64 = 117;
-    const ERR_FEE_ROUNDING_ERROR: u64 = 118;
-    const ERR_ACCOUNT_EXCEED_MAX_ORDERS: u64 = 119;
-    const ERR_UNKNOWN_MARKET_ACCOUNT: u64 = 120;
+    const ERR_MARKET_ACCOUNT_EXISTS: u64 = 115;
+    const ERR_INVALID_MAX_COLLATERAL_AMT: u64 = 116;
+    const ERR_NOTIONAL_NOT_UNIT_MULTIPLE: u64 = 117;
+    const ERR_NOT_EMPTY_MARKET: u64 = 118;
+    const ERR_FEE_ROUNDING_ERROR: u64 = 119;
+    const ERR_ACCOUNT_EXCEED_MAX_ORDERS: u64 = 120;
+    const ERR_UNKNOWN_MARKET_ACCOUNT: u64 = 121;
 
     // </editor-fold>
 
@@ -636,7 +637,7 @@ module ferum::market {
         coinQAmt: u64,
     ) acquires FerumInfo, Orderbook {
         let accountKey = MarketAccountKey {
-            protocolAddress: @0,
+            protocolAddress: @ferum,
             userAddress: address_of(owner),
         };
         deposit_to_market_account<I, Q>(owner, accountKey, coinIAmt, coinQAmt)
@@ -648,7 +649,7 @@ module ferum::market {
         coinQAmt: u64, // Fixedpoint value.
     ) acquires FerumInfo, Orderbook {
         let accountKey = MarketAccountKey {
-            protocolAddress: @0,
+            protocolAddress: @ferum,
             userAddress: address_of(owner),
         };
         withdraw_from_market_account<I, Q>(owner, accountKey, coinIAmt, coinQAmt)
@@ -846,6 +847,7 @@ module ferum::market {
                 userAddress: ownerAddr,
             }
         };
+        assert!(!table::contains(&book.marketAccounts, accountKey), ERR_MARKET_ACCOUNT_EXISTS);
         table::add(&mut book.marketAccounts, accountKey, MarketAccount<I, Q>{
             activeOrders: vector[],
             instrumentBalance: coin::zero(),
