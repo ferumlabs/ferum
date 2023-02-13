@@ -986,6 +986,8 @@ module ferum::market {
         let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
         assert!(table::contains(&book.marketAccounts, orderID.accountKey), ERR_UNKNOWN_MARKET_ACCOUNT);
         let marketAccount = table::borrow(&book.marketAccounts, orderID.accountKey);
+        // Check to make sure user can cancel the order.
+        assert!(owns_account(owner, &orderID.accountKey, marketAccount), ERR_NOT_OWNER);
         let internalOrderID = find_internal_order_id(&marketAccount.activeOrders, orderID);
         assert!(table::contains(&book.ordersTable.objects, internalOrderID), ERR_UNKNOWN_ORDER);
         let order = table::borrow(&book.ordersTable.objects, internalOrderID);
@@ -1005,10 +1007,8 @@ module ferum::market {
         let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr); // Reborrow.
         let ordersTable = &mut book.ordersTable;
         let order = table::borrow_mut(&mut ordersTable.objects, internalOrderID);
-        let marketAccount = table::borrow_mut(&mut book.marketAccounts, order.metadata.orderID.accountKey);
-        // Better to do this check above but doing it here to save a borrow call.
-        assert!(owns_account(owner, &order.metadata.orderID.accountKey, marketAccount), ERR_NOT_OWNER);
         order.metadata.unfilledQty = order.metadata.unfilledQty - qtyCancelled;
+        let marketAccount = table::borrow_mut(&mut book.marketAccounts, order.metadata.orderID.accountKey);
         // Release collateral.
         if (order.metadata.side == SIDE_BUY) {
             let quoteDecimals = coin::decimals<Q>();
