@@ -430,24 +430,47 @@ module ferum::market {
     }
 
     struct IndexingCreationEvent has store, drop {
+        // Type info for the instrument coin type for the order.
+        instrumentType: type_info::TypeInfo,
+        // Type info for the quote coin type for the order.
+        quoteType: type_info::TypeInfo,
+        // Orders metadata.
         orderMetadata: OrderMetadata,
+        // Timestamp this event was produced at.
         timestampSecs: u64,
     }
 
     // Representation of an execution emitted as an Aptos event.
     struct IndexingExecutionEvent has store, drop {
+        // Type info for the instrument coin type for the order.
+        instrumentType: type_info::TypeInfo,
+        // Type info for the quote coin type for the order.
+        quoteType: type_info::TypeInfo,
+        // Metadata for the maker order after the execution.
         makerOrderMetadata: OrderMetadata,
+        // Metadata for the taker order after the execution.
         takerOrderMetadata: OrderMetadata,
-        price: u64, // Fixedpoint value.
-        qty: u64, // Fixedpoint value.
+        // Price of the execution. Fixedpoint value.
+        price: u64,
+        // Qty of the execution. Fixedpoint value.
+        qty: u64,
+        // Information about the fee charged to the taker.
         takerFeeInfo: ExecFeeInfo,
+        // Information about the fee charged to the maker.
         makerFeeInfo: ExecFeeInfo,
+        // Timestamp this event was produced at.
         timestampSecs: u64
     }
 
     // Representation of an order finalization emitted as an Aptos event.
     struct IndexingFinalizeEvent has store, drop {
+        // Type info for the instrument coin type for the order.
+        instrumentType: type_info::TypeInfo,
+        // Type info for the quote coin type for the order.
+        quoteType: type_info::TypeInfo,
+        // Metadata for the order after finalization.
         orderMetadata: OrderMetadata,
+        // Timestamp this event was produced at.
         timestampSecs: u64,
     }
 
@@ -461,9 +484,9 @@ module ferum::market {
 
     // Struct encapsulating price at a given timestamp for the market.
     struct IndexingPriceUpdateEvent has drop, store {
-        // Type info for the instrument coin type for the order.
+        // Type info for the instrument coin type for the market.
         instrumentType: type_info::TypeInfo,
-        // Type info for the quote coin type for the order.
+        // Type info for the quote coin type for the market.
         quoteType: type_info::TypeInfo,
         // The most someone is willing to pay for the given instrument/quote pair.
         // Represented as a fixed point number.
@@ -1331,6 +1354,8 @@ module ferum::market {
                 // Shouldn't have to worry about market orders because they will never be in the book.
                 if (is_finalized(makerOrder)) {
                     emit_event(finalizeEventHandle, IndexingFinalizeEvent {
+                        instrumentType: type_info::type_of<I>(),
+                        quoteType: type_info::type_of<Q>(),
                         orderMetadata: makerOrder.metadata,
                         timestampSecs: event.timestampSecs,
                     });
@@ -1354,6 +1379,8 @@ module ferum::market {
                 let takerOrderMetadata = takerOrder.metadata;
                 // Emit execution event.
                 emit_event(execEventHandle, IndexingExecutionEvent {
+                    instrumentType: type_info::type_of<I>(),
+                    quoteType: type_info::type_of<Q>(),
                     makerOrderMetadata,
                     takerOrderMetadata,
                     price: makerPrice,
@@ -1385,6 +1412,8 @@ module ferum::market {
         // unused order stack, and emit a finalize event.
         if (is_finalized(takerOrder)) {
             emit_event(finalizeEventHandle, IndexingFinalizeEvent {
+                instrumentType: type_info::type_of<I>(),
+                quoteType: type_info::type_of<Q>(),
                 orderMetadata: takerOrder.metadata,
                 timestampSecs: event.timestampSecs,
             });
@@ -2516,6 +2545,8 @@ module ferum::market {
     ) acquires IndexingEventHandles {
         let finalizeEventHandle = &mut borrow_global_mut<IndexingEventHandles<I, Q>>(marketAddr).finalizations;
         emit_event(finalizeEventHandle, IndexingFinalizeEvent {
+            instrumentType: type_info::type_of<I>(),
+            quoteType: type_info::type_of<Q>(),
             orderMetadata,
             timestampSecs: timestamp::now_seconds(),
         });
@@ -2527,6 +2558,8 @@ module ferum::market {
     ) acquires IndexingEventHandles {
         let creationEventHandle = &mut borrow_global_mut<IndexingEventHandles<I, Q>>(marketAddr).creations;
         emit_event(creationEventHandle, IndexingCreationEvent {
+            instrumentType: type_info::type_of<I>(),
+            quoteType: type_info::type_of<Q>(),
             orderMetadata,
             timestampSecs: timestamp::now_seconds(),
         });
