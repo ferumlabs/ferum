@@ -698,7 +698,7 @@ module ferum::market {
         let feeStructure = get_fee_structure(book.feeType);
         let instrumentDecimals = coin::decimals<I>();
         let quoteDecimals = coin::decimals<Q>();
-        while (i < limit) {
+        while (i < limit && queue.length > 0) {
             let nodeElemsReversed = list_pop_node_reversed(queue);
             let j = 0;
             let size = vector::length(&nodeElemsReversed);
