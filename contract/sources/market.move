@@ -739,7 +739,7 @@ module ferum::market {
         qty: u64, // Fixedpoint value.
         clientOrderID: u32,
         marketBuyMaxCollateral: u64, // Fixedpoint. Should only be specified for market orders.
-    ) acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles {
+    ) acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue {
         let accountKey = MarketAccountKey {
             protocolAddress: @ferum,
             userAddress: address_of(owner),
@@ -1015,7 +1015,7 @@ module ferum::market {
         qty: u64, // Fixedpoint value.
         clientOrderID: u32,
         marketBuyMaxCollateral: u64, // Fixedpoint. Should only be specified for market orders.
-    ): OrderID acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles {
+    ): OrderID acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue {
         let marketAddr = get_market_addr<I, Q>();
         let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
         let execs = &mut vector[];
@@ -1652,7 +1652,7 @@ module ferum::market {
         book: &mut Orderbook<I, Q>,
         execs: &mut vector<ExecutionQueueEvent>,
         resourcesAccessed: &mut ResourcesAccessed,
-    ): OrderID acquires MarketSellTree, MarketBuyTree, MarketSellCache, MarketBuyCache, IndexingEventHandles {
+    ): OrderID acquires MarketSellTree, MarketBuyTree, MarketSellCache, MarketBuyCache {
         // Validate inputs.
         // <editor-fold defaultstate="collapsed" desc="Input Validation">
         let notional = fp_mul(price, qty, 1 /* FP_NO_PRECISION_LOSS */);
@@ -1721,11 +1721,11 @@ module ferum::market {
         // <editor-fold defaultstate="collapsed" desc="Order Behaviour Checks">
         if (behaviour == 3 /* BEHAVIOUR_IOC */ && price != 0 && !crossesSpread) {
             // Cancel limit IOC orders that don't cross the spread because they won't execute.
-            emit_finalized_event<I, Q>(marketAddr, orderMetadata);
+            // emit_finalized_event<I, Q>(marketAddr, orderMetadata);
             return sentinal_order_id()
         } else if (behaviour == 2 /* BEHAVIOUR_POST */ && crossesSpread) {
             // Cancel POST orders that cross the spread because we can't guarantee that they will be makers.
-            emit_finalized_event<I, Q>(marketAddr, orderMetadata);
+            // emit_finalized_event<I, Q>(marketAddr, orderMetadata);
             return sentinal_order_id()
         } else if (behaviour == 4 /* BEHAVIOUR_FOK */) {
             // Check to make sure a FOK order can be filled by orders on the book. Otherwise, cancel it.
@@ -1796,7 +1796,7 @@ module ferum::market {
                 };
                 if (remainingQty > 0) {
                     // Cancel the order because we couldn't fill it.
-                    emit_finalized_event<I, Q>(marketAddr, orderMetadata);
+                    // emit_finalized_event<I, Q>(marketAddr, orderMetadata);
                     return sentinal_order_id()
                 };
             };
@@ -1884,10 +1884,10 @@ module ferum::market {
             order.metadata.unfilledQty = order.metadata.takerCrankPendingQty; // There should be no maker pending qty for this order.
             if (is_finalized(order)) {
                 // Order is fully finalized. Emit finalize event and reuse order object.
-                emit_finalized_event<I, Q>(
-                    marketAddr,
-                    order.metadata,
-                );
+                // emit_finalized_event<I, Q>(
+                //     marketAddr,
+                //     order.metadata,
+                // );
                 order.next = ordersTable.unusedStack;
                 order.priceLevelID = 0;
                 order.metadata = default_order_metadata();
