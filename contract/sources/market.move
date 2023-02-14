@@ -9850,7 +9850,7 @@ module ferum::market {
 
     #[test_only]
     fun add_user_limit_order<I, Q>(user: &signer, side: u8, behaviour: u8, price: u64, qty: u64): u32
-        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue //, IndexingEventHandles
     {
         let accountKey = MarketAccountKey {
             protocolAddress: @ferum,
@@ -9862,7 +9862,7 @@ module ferum::market {
 
     #[test_only]
     fun add_user_market_order<I, Q>(user: &signer, side: u8, behaviour: u8, qty: u64, maxBuyCollateral: u64): u32
-        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue //, IndexingEventHandles
     {
         let accountKey = MarketAccountKey {
             protocolAddress: @ferum,
