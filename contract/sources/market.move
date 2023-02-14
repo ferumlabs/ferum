@@ -1052,7 +1052,7 @@ module ferum::market {
             };
         };
         // Emit price update event.
-        emit_price_update_event<I, Q>(marketAddr, resourcesAccessed);
+        // emit_price_update_event<I, Q>(marketAddr, resourcesAccessed);
         orderID
     }
 
@@ -1715,7 +1715,7 @@ module ferum::market {
             ownerAddress: address_of(owner),
             marketBuyRemainingCollateral: marketBuyMaxCollateral,
         };
-        emit_creation_event<I, Q>(marketAddr, orderMetadata);
+        // emit_creation_event<I, Q>(marketAddr, orderMetadata);
 
         // Perform checks on order behaviour and cancel before trying to add to the book.
         // <editor-fold defaultstate="collapsed" desc="Order Behaviour Checks">
