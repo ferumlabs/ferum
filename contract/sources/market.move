@@ -558,9 +558,9 @@ module ferum::market {
             qCoinDecimals
         };
         assert!(instrumentDecimals + quoteDecimals <= minDecimals, ERR_INVALID_DECIMAL_CONFIG);
-        let minPrice = exp64(DECIMAL_PLACES - quoteDecimals);
-        let minQty = exp64(DECIMAL_PLACES - instrumentDecimals);
-        assert!(notionalUnit >= fp_mul(minPrice, minQty, FP_NO_PRECISION_LOSS), ERR_INVALID_NOTIONAL_UNIT);
+        let minPrice = exp64(10 /* DECIMAL_PLACES */ - quoteDecimals);
+        let minQty = exp64(10 /* DECIMAL_PLACES */ - instrumentDecimals);
+        assert!(notionalUnit >= fp_mul(minPrice, minQty, 1 /* FP_NO_PRECISION_LOSS */), ERR_INVALID_NOTIONAL_UNIT);
         let feeStructure = get_fee_structure(feeType); // Also asserts that the feeType maps to a valid fee structure.
         let maxProtocolFeeSplit = get_max_protocol_fee(feeStructure);
         assert!(maxProtocolFeeSplit + crankerFeeSplit < 10000000000, ERR_INVALID_CRANKER_SPLIT);
@@ -602,19 +602,19 @@ module ferum::market {
             marketAccounts: table::new(),
         });
         move_to(owner, MarketBuyTree<I, Q>{
-            tree: new_tree(TREE_DEGREE),
+            tree: new_tree(8 /* TREE_DEGREE */),
         });
         move_to(owner, MarketSellTree<I, Q>{
-            tree: new_tree(TREE_DEGREE),
+            tree: new_tree(8 /* TREE_DEGREE */),
         });
         move_to(owner, MarketBuyCache<I, Q>{
-            cache: new_cache(SIDE_BUY),
+            cache: new_cache(1 /* SIDE_BUY */),
         });
         move_to(owner, MarketSellCache<I, Q>{
-            cache: new_cache(SIDE_SELL),
+            cache: new_cache(2 /* SIDE_SELL */),
         });
         move_to(owner, EventQueue<I, Q>{
-            queue: new_list(EVENT_QUEUE_NODE_SIZE),
+            queue: new_list(5 /* EVENT_QUEUE_NODE_SIZE */),
         });
         move_to(owner, IndexingEventHandles<I, Q>{
             creations: creationEvents,
@@ -665,7 +665,7 @@ module ferum::market {
         if (book.summary.buyCacheSize < book.maxCacheSize) {
             rebalance_cache(
                 book,
-                SIDE_BUY,
+                1 /* SIDE_BUY */,
                 &mut borrow_global_mut<MarketBuyCache<I, Q>>(marketAddr).cache,
                 &mut borrow_global_mut<MarketBuyTree<I, Q>>(marketAddr).tree,
                 limit,
@@ -674,7 +674,7 @@ module ferum::market {
         if (book.summary.sellCacheSize < book.maxCacheSize) {
             rebalance_cache(
                 book,
-                SIDE_SELL,
+                2 /* SIDE_SELL */,
                 &mut borrow_global_mut<MarketSellCache<I, Q>>(marketAddr).cache,
                 &mut borrow_global_mut<MarketSellTree<I, Q>>(marketAddr).tree,
                 limit,
@@ -727,8 +727,8 @@ module ferum::market {
         update_cache_size_and_qty(&mut book.summary, sellCache, 0, 0);
         update_cache_max_min(&mut book.summary, buyCache);
         update_cache_max_min(&mut book.summary, sellCache);
-        update_tree_max_min(&mut book.summary, buyTree, SIDE_BUY);
-        update_tree_max_min(&mut book.summary, sellTree, SIDE_SELL);
+        update_tree_max_min(&mut book.summary, buyTree, 1 /* SIDE_BUY */);
+        update_tree_max_min(&mut book.summary, sellTree, 2 /* SIDE_SELL */);
     }
 
     public entry fun add_order_entry<I, Q>(
@@ -775,9 +775,9 @@ module ferum::market {
         let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
         assert_market_empty<I, Q>(marketAddr);
 
-        let minPrice = exp64(DECIMAL_PLACES - book.qDecimals);
-        let minQty = exp64(DECIMAL_PLACES - book.iDecimals);
-        assert!(notionalUnit >= fp_mul(minPrice, minQty, FP_NO_PRECISION_LOSS), ERR_INVALID_NOTIONAL_UNIT);
+        let minPrice = exp64(10 /* DECIMAL_PLACES */ - book.qDecimals);
+        let minQty = exp64(10 /* DECIMAL_PLACES */ - book.iDecimals);
+        assert!(notionalUnit >= fp_mul(minPrice, minQty, 1 /* FP_NO_PRECISION_LOSS */), ERR_INVALID_NOTIONAL_UNIT);
         book.notionalUnit = notionalUnit;
     }
 
@@ -966,12 +966,12 @@ module ferum::market {
         assert!(owns_account(owner, &accountKey, marketAcc), ERR_NOT_OWNER);
         if (coinIAmt > 0) {
             let coinIDecimals = coin::decimals<I>();
-            let coinAmt = coin::withdraw<I>(owner, fp_convert(coinIAmt, coinIDecimals, FP_NO_PRECISION_LOSS));
+            let coinAmt = coin::withdraw<I>(owner, fp_convert(coinIAmt, coinIDecimals, 1 /* FP_NO_PRECISION_LOSS */));
             coin::merge(&mut marketAcc.instrumentBalance, coinAmt);
         };
         if (coinQAmt > 0) {
             let coinQDecimals = coin::decimals<Q>();
-            let coinAmt = coin::withdraw<Q>(owner, fp_convert(coinQAmt, coinQDecimals, FP_NO_PRECISION_LOSS));
+            let coinAmt = coin::withdraw<Q>(owner, fp_convert(coinQAmt, coinQDecimals, 1 /* FP_NO_PRECISION_LOSS */));
             coin::merge(&mut marketAcc.quoteBalance, coinAmt);
         };
     }
@@ -992,7 +992,7 @@ module ferum::market {
             let coinIDecimals = coin::decimals<I>();
             let coinAmt = coin::extract<I>(
                 &mut marketAcc.instrumentBalance,
-                fp_convert(coinIAmt, coinIDecimals, FP_NO_PRECISION_LOSS),
+                fp_convert(coinIAmt, coinIDecimals, 1 /* FP_NO_PRECISION_LOSS */),
             );
             coin::deposit(ownerAddr, coinAmt);
         };
@@ -1000,7 +1000,7 @@ module ferum::market {
             let coinQDecimals = coin::decimals<Q>();
             let coinAmt = coin::extract<Q>(
                 &mut marketAcc.quoteBalance,
-                fp_convert(coinQAmt, coinQDecimals, FP_NO_PRECISION_LOSS),
+                fp_convert(coinQAmt, coinQDecimals, 1 /* FP_NO_PRECISION_LOSS */),
             );
             coin::deposit(ownerAddr, coinAmt);
         };
@@ -1089,14 +1089,14 @@ module ferum::market {
         order.metadata.unfilledQty = order.metadata.unfilledQty - qtyCancelled;
         let marketAccount = table::borrow_mut(&mut book.marketAccounts, order.metadata.orderID.accountKey);
         // Release collateral.
-        if (order.metadata.side == SIDE_BUY) {
+        if (order.metadata.side == 1 /* SIDE_BUY */) {
             let quoteDecimals = coin::decimals<Q>();
-            let quoteAmt = fp_convert(fp_mul(price, qtyCancelled, FP_NO_PRECISION_LOSS), quoteDecimals, FP_NO_PRECISION_LOSS);
+            let quoteAmt = fp_convert(fp_mul(price, qtyCancelled, 1 /* FP_NO_PRECISION_LOSS */), quoteDecimals, 1 /* FP_NO_PRECISION_LOSS */);
             let quoteCoinAmt = coin::extract(&mut order.buyCollateral, quoteAmt);
             coin::merge(&mut marketAccount.quoteBalance, quoteCoinAmt);
         } else {
             let instrumentDecimals = coin::decimals<I>();
-            let instrumentAmt = fp_convert(qtyCancelled, instrumentDecimals, FP_NO_PRECISION_LOSS);
+            let instrumentAmt = fp_convert(qtyCancelled, instrumentDecimals, 1 /* FP_NO_PRECISION_LOSS */);
             let instrumentCoinAmt = coin::extract(&mut order.sellCollateral, instrumentAmt);
             coin::merge(&mut marketAccount.instrumentBalance, instrumentCoinAmt);
         };
@@ -1124,7 +1124,7 @@ module ferum::market {
         let i = 0;
         while (i < count) {
             let priceLevel = PriceLevel {
-                orders: new_list(PRICE_LEVEL_NODE_SIZE),
+                orders: new_list(20 /* PRICE_LEVEL_NODE_SIZE */),
                 next: table.unusedStack,
             };
             let priceLevelID = table.currID;
@@ -1259,7 +1259,7 @@ module ferum::market {
                 };
                 let makerProtocolSplit = get_protocol_fee(feeStructure, makerProtocolFeBalance);
                 // Settle execution and update the price store element.
-                let (makerFeeInfo, takerFeeInfo) = if (makerSide == SIDE_BUY) {
+                let (makerFeeInfo, takerFeeInfo) = if (makerSide == 1 /* SIDE_BUY */) {
                     // Settle.
                     // Handle instrument coin.
                     let (makerProceedsAmt, makerProtocolFeeAmt, makerCrankFeeAmt, makerFerumFeeAmt) = calc_fee_coin_amts(
@@ -1291,7 +1291,7 @@ module ferum::market {
                     };
 
                     // Handle quote coin.
-                    let takerNotional = fp_round(fp_mul(makerPrice, execFillQty, FP_NO_PRECISION_LOSS), quoteDecimals, FP_NO_PRECISION_LOSS);
+                    let takerNotional = fp_round(fp_mul(makerPrice, execFillQty, 1 /* FP_NO_PRECISION_LOSS */), quoteDecimals, 1 /* FP_NO_PRECISION_LOSS */);
                     let (takerProceedsAmt, takerProtocolFeeAmt, takerCrankFeeAmt, takerFerumFeeAmt) = calc_fee_coin_amts(
                         quoteDecimals,
                         takerNotional,
@@ -1323,7 +1323,7 @@ module ferum::market {
                 } else {
                     // Settle.
                     // Handle quote coin.
-                    let makerNotional = fp_round(fp_mul(makerPrice, execFillQty, FP_NO_PRECISION_LOSS), quoteDecimals, FP_NO_PRECISION_LOSS);
+                    let makerNotional = fp_round(fp_mul(makerPrice, execFillQty, 1 /* FP_NO_PRECISION_LOSS */), quoteDecimals, 1 /* FP_NO_PRECISION_LOSS */);
                     let (makerProceedsAmt, makerProtocolFeeAmt, makerCrankFeeAmt, makerFerumFeeAmt) = calc_fee_coin_amts(
                         quoteDecimals,
                         makerNotional,
@@ -1377,7 +1377,7 @@ module ferum::market {
                     // Pre-emptively release collateral to the taker because it can't be used (due to limit price).
                     if (takerPrice != 0 && takerPrice > makerPrice) {
                         let takerMakerPriceDiff = takerPrice - makerPrice;
-                        let excessCollateral = fp_convert(fp_mul(takerMakerPriceDiff, execFillQty, FP_NO_PRECISION_LOSS), quoteDecimals, FP_NO_PRECISION_LOSS);
+                        let excessCollateral = fp_convert(fp_mul(takerMakerPriceDiff, execFillQty, 1 /* FP_NO_PRECISION_LOSS */), quoteDecimals, 1 /* FP_NO_PRECISION_LOSS */);
                         if (excessCollateral > 0) {
                             let excessCollateralCoinAmt = coin::extract(&mut takerBuyCollateral, excessCollateral);
                             coin::merge(&mut takerProceeds.quote, excessCollateralCoinAmt);
@@ -1394,7 +1394,7 @@ module ferum::market {
                 // Update price store and price level.
                 if (is_price_store_elem_in_cache(&book.summary, makerSide, makerPrice)) {
                     // The price for the order is in the cache.
-                    let cache = if (makerSide == SIDE_BUY) {
+                    let cache = if (makerSide == 1 /* SIDE_BUY */) {
                         buyCache
                     } else {
                         sellCache
@@ -1411,7 +1411,7 @@ module ferum::market {
                     // We update summary variables in the cancel method.
                 } else {
                     // The price for the order is in the tree.
-                    let tree = if (makerSide == SIDE_BUY) {
+                    let tree = if (makerSide == 1 /* SIDE_BUY */) {
                         buyTree
                     } else {
                         sellTree
@@ -1526,7 +1526,7 @@ module ferum::market {
     ) {
         let i = 0;
         while (i < limit) {
-            let cacheSize = if (side == SIDE_BUY) {
+            let cacheSize = if (side == 1 /* SIDE_BUY */) {
                 book.summary.buyCacheSize
             } else {
                 book.summary.sellCacheSize
@@ -1538,7 +1538,7 @@ module ferum::market {
                 break
             };
             // Pop from tree.
-            let (price, elem) = if (side == SIDE_BUY) {
+            let (price, elem) = if (side == 1 /* SIDE_BUY */) {
                 tree_pop_max(tree)
             } else {
                 tree_pop_min(tree)
@@ -1561,7 +1561,7 @@ module ferum::market {
         qtyAdded: u64,
     ) {
         let size = vector::length(&cache.list);
-        if (cache.side == SIDE_BUY) {
+        if (cache.side == 1 /* SIDE_BUY */) {
             summary.buyCacheSize = (size as u8);
             summary.buyCacheQty = summary.buyCacheQty + qtyAdded - qtyRemoved;
         } else {
@@ -1575,7 +1575,7 @@ module ferum::market {
         cache: &Cache<PriceStoreElem>,
     ) {
         // Reset buyCacheMax/sellCacheMin and buyCacheMin/sellCacheMax.
-        if (cache.side == SIDE_BUY) {
+        if (cache.side == 1 /* SIDE_BUY */) {
             summary.buyCacheMax = 0;
             summary.buyCacheMin = 0;
         } else {
@@ -1588,14 +1588,14 @@ module ferum::market {
         };
         // First update buyCacheMax/sellCacheMin.
         let elem = vector::borrow(&cache.list, size-1);
-        if (cache.side == SIDE_BUY) {
+        if (cache.side == 1 /* SIDE_BUY */) {
             summary.buyCacheMax = elem.key;
         } else {
             summary.sellCacheMin = elem.key;
         };
         // Then, update buyCacheMin/sellCacheMax.
         let elem = vector::borrow(&cache.list, 0);
-        if (cache.side == SIDE_BUY) {
+        if (cache.side == 1 /* SIDE_BUY */) {
             summary.buyCacheMin = elem.key;
         } else {
             summary.sellCacheMax = elem.key;
@@ -1608,7 +1608,7 @@ module ferum::market {
         side: u8,
     ) {
         // Because iteration is quite different depending on the side, split it up into two cases.
-        if (side == SIDE_BUY) {
+        if (side == 1 /* SIDE_BUY */) {
             summary.buyTreeMax = 0;
             let currNodeID = tree.max;
             while (currNodeID != 0) {
@@ -1655,18 +1655,18 @@ module ferum::market {
     ): OrderID acquires MarketSellTree, MarketBuyTree, MarketSellCache, MarketBuyCache, IndexingEventHandles {
         // Validate inputs.
         // <editor-fold defaultstate="collapsed" desc="Input Validation">
-        let notional = fp_mul(price, qty, FP_NO_PRECISION_LOSS);
+        let notional = fp_mul(price, qty, 1 /* FP_NO_PRECISION_LOSS */);
         assert!(notional / book.notionalUnit * book.notionalUnit == notional, ERR_NOTIONAL_NOT_UNIT_MULTIPLE);
-        fp_round(qty, book.iDecimals, FP_NO_PRECISION_LOSS);
-        fp_round(price, book.qDecimals, FP_NO_PRECISION_LOSS);
-        fp_round(marketBuyMaxCollateral, book.qDecimals, FP_NO_PRECISION_LOSS);
-        assert!(side == SIDE_BUY || side == SIDE_SELL, ERR_INVALID_SIDE);
-        assert!(behaviour == BEHAVIOUR_IOC || behaviour == BEHAVIOUR_GTC || behaviour == BEHAVIOUR_FOK || behaviour == BEHAVIOUR_POST, ERR_INVALID_BEHAVIOUR);
+        fp_round(qty, book.iDecimals, 1 /* FP_NO_PRECISION_LOSS */);
+        fp_round(price, book.qDecimals, 1 /* FP_NO_PRECISION_LOSS */);
+        fp_round(marketBuyMaxCollateral, book.qDecimals, 1 /* FP_NO_PRECISION_LOSS */);
+        assert!(side == 1 /* SIDE_BUY */ || side == 2 /* SIDE_SELL */, ERR_INVALID_SIDE);
+        assert!(behaviour == 3 /* BEHAVIOUR_IOC */ || behaviour == 1 /* BEHAVIOUR_GTC */ || behaviour == 4 /* BEHAVIOUR_FOK */ || behaviour == 2 /* BEHAVIOUR_POST */, ERR_INVALID_BEHAVIOUR);
         if (price == 0) {
             // Market orders can only have IOC or FOK behaviours.
-            assert!(behaviour == BEHAVIOUR_IOC || behaviour == BEHAVIOUR_FOK, ERR_INVALID_BEHAVIOUR);
+            assert!(behaviour == 3 /* BEHAVIOUR_IOC */ || behaviour == 4 /* BEHAVIOUR_FOK */, ERR_INVALID_BEHAVIOUR);
             // Max collateral amount must be defined correctly.
-            if (side == SIDE_BUY) {
+            if (side == 1 /* SIDE_BUY */) {
                 assert!(marketBuyMaxCollateral > 0, ERR_INVALID_MAX_COLLATERAL_AMT);
             } else {
                 assert!(marketBuyMaxCollateral == 0, ERR_INVALID_MAX_COLLATERAL_AMT);
@@ -1689,14 +1689,14 @@ module ferum::market {
         };
         let crossesSpread = (
             price == 0 ||
-            side == SIDE_SELL && price <= maxBid && maxBid != 0 ||
-            side == SIDE_BUY && price >= minAsk && minAsk != 0
+            side == 2 /* SIDE_SELL */ && price <= maxBid && maxBid != 0 ||
+            side == 1 /* SIDE_BUY */ && price >= minAsk && minAsk != 0
         );
 
         // Get the market account.
         assert!(table::contains(&book.marketAccounts, accountKey), ERR_NO_MARKET_ACCOUNT);
         let marketAccount = table::borrow_mut(&mut book.marketAccounts, accountKey);
-        assert!(marketAccount.orderCounter < MAX_U32, ERR_ACCOUNT_EXCEED_MAX_ORDERS);
+        assert!(marketAccount.orderCounter < 4294967295 /* MAX_U32 */, ERR_ACCOUNT_EXCEED_MAX_ORDERS);
         assert!(owns_account(owner, &accountKey, marketAccount), ERR_NOT_OWNER);
         // Create order metadata.
         let orderID = OrderID {
@@ -1719,19 +1719,19 @@ module ferum::market {
 
         // Perform checks on order behaviour and cancel before trying to add to the book.
         // <editor-fold defaultstate="collapsed" desc="Order Behaviour Checks">
-        if (behaviour == BEHAVIOUR_IOC && price != 0 && !crossesSpread) {
+        if (behaviour == 3 /* BEHAVIOUR_IOC */ && price != 0 && !crossesSpread) {
             // Cancel limit IOC orders that don't cross the spread because they won't execute.
             emit_finalized_event<I, Q>(marketAddr, orderMetadata);
             return sentinal_order_id()
-        } else if (behaviour == BEHAVIOUR_POST && crossesSpread) {
+        } else if (behaviour == 2 /* BEHAVIOUR_POST */ && crossesSpread) {
             // Cancel POST orders that cross the spread because we can't guarantee that they will be makers.
             emit_finalized_event<I, Q>(marketAddr, orderMetadata);
             return sentinal_order_id()
-        } else if (behaviour == BEHAVIOUR_FOK) {
+        } else if (behaviour == 4 /* BEHAVIOUR_FOK */) {
             // Check to make sure a FOK order can be filled by orders on the book. Otherwise, cancel it.
             let remainingQty = qty;
             // First, check the cache.
-            let cache = if (side == SIDE_SELL) {
+            let cache = if (side == 2 /* SIDE_SELL */) {
                 resourcesAccessed.buyCache = true;
                 &borrow_global<MarketBuyCache<I, Q>>(marketAddr).cache
             } else {
@@ -1742,7 +1742,7 @@ module ferum::market {
             let i = vector::length(&cache.list);
             while (i > 0) {
                 let cacheNode = vector::borrow(&cache.list, i - 1);
-                if (side == SIDE_SELL && cacheNode.key < price || side == SIDE_BUY && cacheNode.key > price) {
+                if (side == 2 /* SIDE_SELL */ && cacheNode.key < price || side == 1 /* SIDE_BUY */ && cacheNode.key > price) {
                     // We've reached the limit price.
                     break
                 };
@@ -1762,15 +1762,15 @@ module ferum::market {
             };
             // Then check tree if we still have qty.
             if (remainingQty > 0) {
-                let (tree, it) = if (side == SIDE_SELL) {
+                let (tree, it) = if (side == 2 /* SIDE_SELL */) {
                     resourcesAccessed.buyTree = true;
                     let tree = &borrow_global<MarketBuyTree<I, Q>>(marketAddr).tree;
-                    let it = tree_iterate(tree, SIDE_BUY);
+                    let it = tree_iterate(tree, 1 /* SIDE_BUY */);
                     (tree, it)
                 } else {
                     resourcesAccessed.sellTree = true;
                     let tree = &borrow_global<MarketSellTree<I, Q>>(marketAddr).tree;
-                    let it = tree_iterate(tree, SIDE_SELL);
+                    let it = tree_iterate(tree, 2 /* SIDE_SELL */);
                     (tree, it)
                 };
                 while (it.pos.nodeID != 0) {
@@ -1778,8 +1778,8 @@ module ferum::market {
                     // A 0 price means this is a market order and so will execute against anything.
                     if (
                         price != 0 &&
-                            (side == SIDE_SELL && bookPrice < price)  ||
-                            (side == SIDE_BUY && bookPrice > price)
+                            (side == 2 /* SIDE_SELL */ && bookPrice < price)  ||
+                            (side == 1 /* SIDE_BUY */ && bookPrice > price)
                     ) {
                         // We've reached the limit price.
                         break
@@ -1804,18 +1804,18 @@ module ferum::market {
         // </editor-fold>
 
         // Create order object.
-        let (buyCollateral, sellCollateral) = if (side == SIDE_BUY) {
+        let (buyCollateral, sellCollateral) = if (side == 1 /* SIDE_BUY */) {
             let quoteCoinAmt = if (price == 0) {
-                fp_convert(marketBuyMaxCollateral, coin::decimals<Q>(), FP_NO_PRECISION_LOSS)
+                fp_convert(marketBuyMaxCollateral, coin::decimals<Q>(), 1 /* FP_NO_PRECISION_LOSS */)
             } else {
-                fp_convert(fp_mul(price, qty, FP_NO_PRECISION_LOSS), coin::decimals<Q>(), FP_NO_PRECISION_LOSS)
+                fp_convert(fp_mul(price, qty, 1 /* FP_NO_PRECISION_LOSS */), coin::decimals<Q>(), 1 /* FP_NO_PRECISION_LOSS */)
             };
             (
                 coin::extract<Q>(&mut marketAccount.quoteBalance, quoteCoinAmt),
                 coin::zero<I>(),
             )
         } else {
-            let instrumentCoinAmt = fp_convert(qty, coin::decimals<I>(), FP_NO_PRECISION_LOSS);
+            let instrumentCoinAmt = fp_convert(qty, coin::decimals<I>(), 1 /* FP_NO_PRECISION_LOSS */);
             (
                 coin::zero<Q>(),
                 coin::extract(&mut marketAccount.instrumentBalance, instrumentCoinAmt),
@@ -1841,7 +1841,7 @@ module ferum::market {
             // If a taker, need to match against existing orders.
             // First load and match against the cache.
             // Then if needed, load tree and match order against that.
-            if (side == SIDE_BUY) {
+            if (side == 1 /* SIDE_BUY */) {
                 if (book.summary.sellCacheQty > 0) {
                     resourcesAccessed.sellCache = true;
                     let cache = &mut borrow_global_mut<MarketSellCache<I, Q>>(marketAddr).cache;
@@ -1854,9 +1854,9 @@ module ferum::market {
                     resourcesAccessed.sellTree = true;
                     let tree = &mut borrow_global_mut<MarketSellTree<I, Q>>(marketAddr).tree;
                     match_against_tree(execs, tree, internalOrderID, order, timestampSecs, book.iDecimals);
-                    update_tree_max_min(&mut book.summary, tree, SIDE_SELL);
+                    update_tree_max_min(&mut book.summary, tree, 2 /* SIDE_SELL */);
                 };
-            } else if (side == SIDE_SELL) {
+            } else if (side == 2 /* SIDE_SELL */) {
                 if (book.summary.buyCacheQty > 0) {
                     resourcesAccessed.buyCache = true;
                     let cache = &mut borrow_global_mut<MarketBuyCache<I, Q>>(marketAddr).cache;
@@ -1869,7 +1869,7 @@ module ferum::market {
                     resourcesAccessed.buyTree = true;
                     let tree= &mut borrow_global_mut<MarketBuyTree<I, Q>>(marketAddr).tree;
                     match_against_tree(execs, tree, internalOrderID, order, timestampSecs, book.iDecimals);
-                    update_tree_max_min(&mut book.summary, tree, SIDE_BUY);
+                    update_tree_max_min(&mut book.summary, tree, 1 /* SIDE_BUY */);
                 };
             };
         };
@@ -1879,7 +1879,7 @@ module ferum::market {
             // If the order is fully executed, no need to add it to the price store.
             return orderID
         };
-        if (behaviour == BEHAVIOUR_IOC || price == 0) {
+        if (behaviour == 3 /* BEHAVIOUR_IOC */ || price == 0) {
             // If the order is an IOC order or a market order, any remaining qty should be cancelled.
             order.metadata.unfilledQty = order.metadata.takerCrankPendingQty; // There should be no maker pending qty for this order.
             if (is_finalized(order)) {
@@ -1901,7 +1901,7 @@ module ferum::market {
         let remainingQty = order.metadata.unfilledQty - order.metadata.takerCrankPendingQty;
         let priceLevelID = if (should_insert_in_cache(&book.summary, book.maxCacheSize, side, price)) {
             // Order price will go into the cache.
-            let cache = if (side == SIDE_BUY) {
+            let cache = if (side == 1 /* SIDE_BUY */) {
                 resourcesAccessed.buyCache = true;
                 &mut borrow_global_mut<MarketBuyCache<I, Q>>(marketAddr).cache
             } else {
@@ -1914,7 +1914,7 @@ module ferum::market {
             priceLevelID
         } else {
             // Order price will go into the tree.
-            let tree = if (side == SIDE_BUY) {
+            let tree = if (side == 1 /* SIDE_BUY */) {
                 resourcesAccessed.buyTree = true;
                 &mut borrow_global_mut<MarketBuyTree<I, Q>>(marketAddr).tree
             } else {
@@ -1947,7 +1947,7 @@ module ferum::market {
     ): u64 acquires MarketBuyTree, MarketSellTree, MarketBuyCache, MarketSellCache {
         if (is_price_store_elem_in_cache(summary, orderSide, orderPrice)) {
             // The price is in the cache.
-            let cache = if (orderSide == SIDE_BUY) {
+            let cache = if (orderSide == 1 /* SIDE_BUY */) {
                 resourcesAccessed.buyCache = true;
                 &mut borrow_global_mut<MarketBuyCache<I, Q>>(marketAddr).cache
             } else {
@@ -1976,7 +1976,7 @@ module ferum::market {
             qtyRemoved
         } else {
             // The price is in the tree.
-            let tree = if (orderSide == SIDE_BUY) {
+            let tree = if (orderSide == 1 /* SIDE_BUY */) {
                 resourcesAccessed.buyTree = true;
                 &mut borrow_global_mut<MarketBuyTree<I, Q>>(marketAddr).tree
             } else {
@@ -2161,7 +2161,7 @@ module ferum::market {
         timestampSecs: u64,
         instrumentDecimals: u8,
     ): u64 {
-        let smallestInstrumentAmt = exp64(DECIMAL_PLACES - instrumentDecimals);
+        let smallestInstrumentAmt = exp64(10 /* DECIMAL_PLACES */ - instrumentDecimals);
         let size = vector::length(&cache.list);
         let i = size;
         let qtyExecuted = 0;
@@ -2171,8 +2171,8 @@ module ferum::market {
             let bookPrice = cacheNode.key;
             if (
                 order.metadata.price != 0 && (
-                    (order.metadata.side == SIDE_BUY && bookPrice > order.metadata.price) ||
-                    (order.metadata.side == SIDE_SELL && bookPrice < order.metadata.price)
+                    (order.metadata.side == 1 /* SIDE_BUY */ && bookPrice > order.metadata.price) ||
+                    (order.metadata.side == 2 /* SIDE_SELL */ && bookPrice < order.metadata.price)
                 )
             ) {
                 // We've reached the limit price.
@@ -2189,24 +2189,24 @@ module ferum::market {
             } else {
                 cacheNode.value.qty
             };
-            if (order.metadata.price == 0 && order.metadata.side == SIDE_BUY) {
-                let usedBuyCollateral = fp_mul(fillQty, bookPrice, FP_NO_PRECISION_LOSS);
+            if (order.metadata.price == 0 && order.metadata.side == 1 /* SIDE_BUY */) {
+                let usedBuyCollateral = fp_mul(fillQty, bookPrice, 1 /* FP_NO_PRECISION_LOSS */);
                 if (order.metadata.marketBuyRemainingCollateral < usedBuyCollateral) {
                     // Need to consider remaining buy collateral for market buy orders. If the remaining buy collateral is
                     // not enough to cover the fillQty, clamp fillQty to what the remaining buy collateral can cover.
-                    let q = fp_div(order.metadata.marketBuyRemainingCollateral, bookPrice, FP_TRUNC);
-                    fillQty = fp_round(q, instrumentDecimals, FP_TRUNC);
+                    let q = fp_div(order.metadata.marketBuyRemainingCollateral, bookPrice, 3 /* FP_TRUNC */);
+                    fillQty = fp_round(q, instrumentDecimals, 3 /* FP_TRUNC */);
                     if (fillQty == 0) {
                         break
                     };
-                    usedBuyCollateral = fp_mul(fillQty, bookPrice, FP_NO_PRECISION_LOSS);
+                    usedBuyCollateral = fp_mul(fillQty, bookPrice, 1 /* FP_NO_PRECISION_LOSS */);
                 };
                 // Update the remaining buy collateral.
                 order.metadata.marketBuyRemainingCollateral = order.metadata.marketBuyRemainingCollateral - usedBuyCollateral;
                 // Detect if the amount of collateral has gotten so small that no more executions at the current price
                 // or higher are possible. In this case, set marketBuyRemainingCollateral to 0 because there is no remaining
                 // collateral left for this market order.
-                if (order.metadata.marketBuyRemainingCollateral < fp_mul(smallestInstrumentAmt, bookPrice, FP_ROUND_UP)) {
+                if (order.metadata.marketBuyRemainingCollateral < fp_mul(smallestInstrumentAmt, bookPrice, 2 /* FP_ROUND_UP */)) {
                     order.metadata.marketBuyRemainingCollateral = 0;
                 };
             };
@@ -2253,19 +2253,19 @@ module ferum::market {
         // Qty removals from the tree need to be deferred because remove qty can result in the remove of a node and
         // that messes up iteration.
         let qtysToRemove = vector[];
-        let smallestInstrumentAmt = exp64(DECIMAL_PLACES - instrumentDecimals);
-        let it = tree_iterate(tree, if (order.metadata.side == SIDE_BUY) {
-            SIDE_SELL
+        let smallestInstrumentAmt = exp64(10 /* DECIMAL_PLACES */ - instrumentDecimals);
+        let it = tree_iterate(tree, if (order.metadata.side == 1 /* SIDE_BUY */) {
+            2 /* SIDE_SELL */
         } else {
-            SIDE_BUY
+            1 /* SIDE_BUY */
         });
         while (it.pos.nodeID != 0) {
             let currPos = it.pos;
             let (bookPrice, orderTreeElem) = tree_get_next_mut(tree, &mut it);
             if (
                 order.metadata.price != 0 && (
-                    (order.metadata.side == SIDE_BUY && bookPrice > order.metadata.price) ||
-                    (order.metadata.side == SIDE_SELL && bookPrice < order.metadata.price)
+                    (order.metadata.side == 1 /* SIDE_BUY */ && bookPrice > order.metadata.price) ||
+                    (order.metadata.side == 2 /* SIDE_SELL */ && bookPrice < order.metadata.price)
                 )
             ) {
                 // We've reached the limit price.
@@ -2281,24 +2281,24 @@ module ferum::market {
             } else {
                 orderTreeElem.qty
             };
-            if (order.metadata.price == 0 && order.metadata.side == SIDE_BUY) {
-                let usedBuyCollateral = fp_mul(fillQty, bookPrice, FP_NO_PRECISION_LOSS);
+            if (order.metadata.price == 0 && order.metadata.side == 1 /* SIDE_BUY */) {
+                let usedBuyCollateral = fp_mul(fillQty, bookPrice, 1 /* FP_NO_PRECISION_LOSS */);
                 if (order.metadata.marketBuyRemainingCollateral < usedBuyCollateral) {
                     // Need to consider remaining buy collateral for market buy orders. If the remaining buy collateral is
                     // not enough to cover the fillQty, clamp fillQty to what the remaining buy collateral can cover.
-                    let q = fp_div(order.metadata.marketBuyRemainingCollateral, bookPrice, FP_TRUNC);
-                    fillQty = fp_round(q, instrumentDecimals, FP_TRUNC);
+                    let q = fp_div(order.metadata.marketBuyRemainingCollateral, bookPrice, 3 /* FP_TRUNC */);
+                    fillQty = fp_round(q, instrumentDecimals, 3 /* FP_TRUNC */);
                     if (fillQty == 0) {
                         break
                     };
-                    usedBuyCollateral = fp_mul(fillQty, bookPrice, FP_NO_PRECISION_LOSS);
+                    usedBuyCollateral = fp_mul(fillQty, bookPrice, 1 /* FP_NO_PRECISION_LOSS */);
                 };
                 // Update the remaining buy collateral.
                 order.metadata.marketBuyRemainingCollateral = order.metadata.marketBuyRemainingCollateral - usedBuyCollateral;
                 // Detect if the amount of collateral has gotten so small that no more executions at the current price
                 // or higher are possible. In this case, set marketBuyRemainingCollateral to 0 because there is no remaining
                 // collateral left for this market order.
-                if (order.metadata.marketBuyRemainingCollateral < fp_mul(smallestInstrumentAmt, bookPrice, FP_ROUND_UP)) {
+                if (order.metadata.marketBuyRemainingCollateral < fp_mul(smallestInstrumentAmt, bookPrice, 2 /* FP_ROUND_UP */)) {
                     order.metadata.marketBuyRemainingCollateral = 0;
                 };
             };
@@ -2367,9 +2367,9 @@ module ferum::market {
         let iDecimals = coin::decimals<I>();
         let qDecimals = coin::decimals<Q>();
         assert!(coin::is_coin_initialized<Q>(), ERR_COIN_UNINITIALIZED);
-        assert!(qDecimals <= MAX_DECIMALS, ERR_COIN_EXCEEDS_MAX_SUPPORTED_DECIMALS);
+        assert!(qDecimals <= 10 /* MAX_DECIMALS */, ERR_COIN_EXCEEDS_MAX_SUPPORTED_DECIMALS);
         assert!(coin::is_coin_initialized<I>(), ERR_COIN_UNINITIALIZED);
-        assert!(iDecimals <= MAX_DECIMALS, ERR_COIN_EXCEEDS_MAX_SUPPORTED_DECIMALS);
+        assert!(iDecimals <= 10 /* MAX_DECIMALS */, ERR_COIN_EXCEEDS_MAX_SUPPORTED_DECIMALS);
         assert!(coin::is_account_registered<I>(@ferum), ERR_COIN_UNREGISTERED_FERUM);
         assert!(coin::is_account_registered<Q>(@ferum), ERR_COIN_UNREGISTERED_FERUM);
         (iDecimals, qDecimals)
@@ -2384,7 +2384,7 @@ module ferum::market {
         orderSide: u8,
         price: u64, // Fixedpoint value.
     ): bool {
-        if (orderSide == SIDE_SELL) {
+        if (orderSide == 2 /* SIDE_SELL */) {
             // Will execute against buy tree.
             price == 0 || (summary.buyTreeMax != 0 && price <= summary.buyTreeMax)
         } else {
@@ -2400,7 +2400,7 @@ module ferum::market {
         side: u8,
         price: u64, // Fixedpoint value.
     ): bool {
-        if (side == SIDE_BUY) {
+        if (side == 1 /* SIDE_BUY */) {
             summary.buyCacheSize < maxCacheSize && (summary.buyTreeMax == 0 || price > summary.buyTreeMax) ||
                 summary.buyCacheSize >= maxCacheSize && (summary.buyCacheMin != 0 && price >= summary.buyCacheMin)
         } else {
@@ -2415,7 +2415,7 @@ module ferum::market {
         side: u8,
         price: u64, // Fixedpoint value.
     ): bool {
-        if (side == SIDE_BUY) {
+        if (side == 1 /* SIDE_BUY */) {
             summary.buyTreeMax == 0 || price > summary.buyTreeMax ||
                 (summary.buyCacheMin != 0 && price >= summary.buyCacheMin)
         } else {
@@ -2430,7 +2430,7 @@ module ferum::market {
         makerPendingCrankQty: u64, // Fixedpoint value.
     ): bool {
         let marketBuyAndCannotExecute = order.metadata.price == 0 &&
-            order.metadata.side == SIDE_BUY &&
+            order.metadata.side == 1 /* SIDE_BUY */ &&
             order.metadata.marketBuyRemainingCollateral == 0;
         marketBuyAndCannotExecute || order.metadata.unfilledQty - order.metadata.takerCrankPendingQty - makerPendingCrankQty == 0
     }
@@ -2441,7 +2441,7 @@ module ferum::market {
         order: &Order<I, Q>,
     ): bool {
         let marketBuyAndCannotExecute = order.metadata.price == 0 &&
-            order.metadata.side == SIDE_BUY &&
+            order.metadata.side == 1 /* SIDE_BUY */ &&
             order.metadata.marketBuyRemainingCollateral == 0;
         (marketBuyAndCannotExecute || order.metadata.unfilledQty == 0) && order.metadata.takerCrankPendingQty == 0
     }
@@ -2473,9 +2473,9 @@ module ferum::market {
         crankerSplit: u64,
     ): (u64, u64, u64, u64) {
         // Variables with Amt suffix are fixedpoints with `decimal` decimal places.
-        let feeBasisAmt = fp_convert(feeBasis, decimals, FP_TRUNC);
-        let fee = fp_mul(feeBasis, feeRate, FP_TRUNC);
-        let feeAmt = fp_convert(fee, decimals, FP_TRUNC);
+        let feeBasisAmt = fp_convert(feeBasis, decimals, 3 /* FP_TRUNC */);
+        let fee = fp_mul(feeBasis, feeRate, 3 /* FP_TRUNC */);
+        let feeAmt = fp_convert(fee, decimals, 3 /* FP_TRUNC */);
         let counterPartyAmt = if (feeAmt > feeBasisAmt) {
             0
         } else {
@@ -2484,10 +2484,10 @@ module ferum::market {
         assert!(feeAmt + counterPartyAmt <= feeBasis, ERR_FEE_ROUNDING_ERROR);
         // Aplit up fee into protocol, cranker, and ferum splits.
         fee = fp_from(feeAmt, decimals);
-        let protocolSplit = fp_mul(fee, protocolSplit, FP_TRUNC);
-        let protocolSplitAmt = fp_convert(protocolSplit, decimals, FP_TRUNC);
-        let crankSplit = fp_mul(fee, crankerSplit, FP_TRUNC);
-        let crankSplitAmt = fp_convert(crankSplit, decimals, FP_TRUNC);
+        let protocolSplit = fp_mul(fee, protocolSplit, 3 /* FP_TRUNC */);
+        let protocolSplitAmt = fp_convert(protocolSplit, decimals, 3 /* FP_TRUNC */);
+        let crankSplit = fp_mul(fee, crankerSplit, 3 /* FP_TRUNC */);
+        let crankSplitAmt = fp_convert(crankSplit, decimals, 3 /* FP_TRUNC */);
         let ferumSplitAmt = feeAmt - protocolSplitAmt - crankSplitAmt;
 
         (counterPartyAmt, protocolSplitAmt, crankSplitAmt, ferumSplitAmt)
@@ -2666,7 +2666,7 @@ module ferum::market {
         };
         if (sellMinPrice == 0) {
             let sellTree = &borrow_global<MarketSellTree<I, Q>>(marketAddr).tree;
-            (sellMinPrice, sellMinQty) = get_top_of_tree(sellTree, SIDE_SELL);
+            (sellMinPrice, sellMinQty) = get_top_of_tree(sellTree, 2 /* SIDE_SELL */);
         };
         if (resourcesAccessed.buyCache) {
             let buyCache = &borrow_global<MarketBuyCache<I, Q>>(marketAddr).cache;
@@ -2674,7 +2674,7 @@ module ferum::market {
         };
         if (buyMaxPrice == 0) {
             let buyTree = &borrow_global<MarketBuyTree<I, Q>>(marketAddr).tree;
-            (sellMinPrice, sellMinQty) = get_top_of_tree(buyTree, SIDE_BUY);
+            (sellMinPrice, sellMinQty) = get_top_of_tree(buyTree, 1 /* SIDE_BUY */);
         };
         IndexingPriceUpdateEvent {
             instrumentType: type_info::type_of<I>(),
@@ -2786,12 +2786,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_POST, 5500000000, 100000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 2 /* BEHAVIOUR_POST */, 5500000000, 100000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -2813,14 +2813,14 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        let orderID1 = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        let orderID2 = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        let orderID1 = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        let orderID2 = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID1));
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID2));
-        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_POST, 8500000000, 100000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 2 /* BEHAVIOUR_POST */, 8500000000, 100000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -2840,12 +2840,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_POST, 4500000000, 10000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 2 /* BEHAVIOUR_POST */, 4500000000, 10000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -2870,12 +2870,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_POST, 8500000000, 100000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 2 /* BEHAVIOUR_POST */, 8500000000, 100000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -2897,14 +2897,14 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        let orderID1 = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        let orderID2 = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        let orderID1 = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
+        let orderID2 = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID1));
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID2));
-        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_POST, 6500000000, 100000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 2 /* BEHAVIOUR_POST */, 6500000000, 100000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -2924,12 +2924,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_POST, 9500000000, 120000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 2 /* BEHAVIOUR_POST */, 9500000000, 120000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -2958,12 +2958,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_IOC, 4500000000, 100000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 3 /* BEHAVIOUR_IOC */, 4500000000, 100000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -2985,14 +2985,14 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        let orderID1 = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        let orderID2 = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        let orderID1 = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        let orderID2 = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID1));
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID2));
-        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_IOC, 5500000000, 100000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 3 /* BEHAVIOUR_IOC */, 5500000000, 100000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -3012,12 +3012,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_IOC, 7500000000, 120000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 3 /* BEHAVIOUR_IOC */, 7500000000, 120000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -3057,12 +3057,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_IOC, 9500000000, 100000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 3 /* BEHAVIOUR_IOC */, 9500000000, 100000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -3084,14 +3084,14 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        let orderID1 = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        let orderID2 = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        let orderID1 = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
+        let orderID2 = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID1));
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID2));
-        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_IOC, 7500000000, 100000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 3 /* BEHAVIOUR_IOC */, 7500000000, 100000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -3111,12 +3111,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_IOC,6500000000, 120000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 3 /* BEHAVIOUR_IOC */,6500000000, 120000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -3160,14 +3160,14 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_FOK, 5500000000, 100000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 4 /* BEHAVIOUR_FOK */, 5500000000, 100000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -3189,14 +3189,14 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_FOK, 4000000000, 100000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 4 /* BEHAVIOUR_FOK */, 4000000000, 100000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -3218,14 +3218,14 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        let orderID1 = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        let orderID2 = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        let orderID1 = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        let orderID2 = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID1));
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID2));
-        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_FOK, 9000000000, 1000000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 4 /* BEHAVIOUR_FOK */, 9000000000, 1000000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -3244,14 +3244,14 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        let orderID1 = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        let orderID2 = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        let orderID1 = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        let orderID2 = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID1));
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID2));
-        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_FOK, 8500000000, 100000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 4 /* BEHAVIOUR_FOK */, 8500000000, 100000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -3270,7 +3270,7 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_FOK, 8500000000, 100000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 4 /* BEHAVIOUR_FOK */, 8500000000, 100000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[], vector[]);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert!(takerID == 0, 0);
@@ -3285,12 +3285,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_FOK, 6500000000, 100000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 4 /* BEHAVIOUR_FOK */, 6500000000, 100000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -3312,12 +3312,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_FOK, 7500000000, 150000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 4 /* BEHAVIOUR_FOK */, 7500000000, 150000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -3339,9 +3339,9 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
-        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_FOK, 7500000000, 150000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 4 /* BEHAVIOUR_FOK */, 7500000000, 150000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
         ], vector[
             s(b"(0.6 qty: 3, crankQty: 0)"),
@@ -3360,9 +3360,9 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
-        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_FOK, 7500000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 4 /* BEHAVIOUR_FOK */, 7500000000, 50000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
         ], vector[
             s(b"(0.6 qty: 1, crankQty: 2)"),
@@ -3393,12 +3393,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_FOK, 8500000000, 100000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 4 /* BEHAVIOUR_FOK */, 8500000000, 100000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -3420,12 +3420,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_FOK, 9500000000, 100000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 4 /* BEHAVIOUR_FOK */, 9500000000, 100000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -3447,14 +3447,14 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        let orderID1 = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        let orderID2 = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        let orderID1 = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
+        let orderID2 = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID1));
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID2));
-        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_FOK, 4500000000, 1000000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 4 /* BEHAVIOUR_FOK */, 4500000000, 1000000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -3474,14 +3474,14 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        let orderID1 = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        let orderID2 = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        let orderID1 = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
+        let orderID2 = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID1));
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID2));
-        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_FOK, 6500000000, 60000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 4 /* BEHAVIOUR_FOK */, 6500000000, 60000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -3501,7 +3501,7 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_FOK, 8500000000, 100000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 4 /* BEHAVIOUR_FOK */, 8500000000, 100000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[], vector[]);
         assert_exec_events<FMA, FMB>(marketAddr, vector[]);
         assert!(takerID == 0, 0);
@@ -3516,12 +3516,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_FOK, 7500000000, 100000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 4 /* BEHAVIOUR_FOK */, 7500000000, 100000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -3543,12 +3543,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_FOK, 6500000000, 150000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 4 /* BEHAVIOUR_FOK */, 6500000000, 150000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -3570,9 +3570,9 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 30000000000);
-        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_FOK, 7500000000, 100000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 4 /* BEHAVIOUR_FOK */, 7500000000, 100000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
         ], vector[
             s(b"(0.8 qty: 3, crankQty: 0)"),
@@ -3591,9 +3591,9 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        let takerID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_FOK, 4500000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 4 /* BEHAVIOUR_FOK */, 4500000000, 50000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
         ], vector[
             s(b"(0.5 qty: 1, crankQty: 2)"),
@@ -3626,7 +3626,7 @@ module ferum::market {
     {
         setup_ferum_test<FMA, FMB>(aptos, ferum, user, 4);
         set_notional_unit_entry<FMA, FMB>(ferum, 700);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
     }
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
@@ -3644,7 +3644,7 @@ module ferum::market {
         acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         setup_ferum_test<FMA, FMB>(aptos, ferum, user, 4);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
         set_notional_unit_entry<FMA, FMB>(ferum, 100);
     }
 
@@ -3664,7 +3664,7 @@ module ferum::market {
         acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
     {
         setup_ferum_test<FMA, FMB>(aptos, ferum, user, 4);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
         set_cranker_fee_split_entry<FMA, FMB>(ferum, 400000000);
     }
 
@@ -3683,12 +3683,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup sell side.
-        let orderID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        let orderID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID));
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
@@ -3704,12 +3704,12 @@ module ferum::market {
         assert!(book.summary.sellCacheSize == 1, 0);
         assert!(book.summary.sellTreeMin == 7000000000, 0);
         // Setup buy side.
-        let orderID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5500000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 4000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 3000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 2000000000, 30000000000);
+        let orderID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5500000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 4000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 3000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 2000000000, 30000000000);
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID));
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.2 qty: 3, crankQty: 0)"),
@@ -3765,8 +3765,8 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup sell side.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 50000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
         ], vector[
             s(b"(0.6 qty: 8, crankQty: 0)"),
@@ -3778,8 +3778,8 @@ module ferum::market {
         assert!(book.summary.sellCacheSize == 1, 0);
         assert!(book.summary.sellTreeMin == 0, 0);
         // Setup buy side.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 50000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
         ], vector[
             s(b"(0.5 qty: 8, crankQty: 0)"),
@@ -3825,12 +3825,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup sell side.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5600000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5600000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -3846,12 +3846,12 @@ module ferum::market {
         assert!(book.summary.sellCacheSize == 2, 0);
         assert!(book.summary.sellTreeMin == 7000000000, 0);
         // Setup buy side.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5500000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 4000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 3000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 2000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5500000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 4000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 3000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 2000000000, 30000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.2 qty: 3, crankQty: 0)"),
             s(b"(0.3 qty: 4, crankQty: 0)"),
@@ -3909,12 +3909,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 4);
 
         // Setup sell side.
-        let orderID1 = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5600000000, 30000000000);
-        let orderID2 = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 10000000000, 30000000000);
+        let orderID1 = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5600000000, 30000000000);
+        let orderID2 = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 10000000000, 30000000000);
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID1));
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID2));
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
@@ -3931,12 +3931,12 @@ module ferum::market {
         assert!(book.summary.sellCacheSize == 2, 0);
         assert!(book.summary.sellTreeMin == 9000000000, 0);
         // Setup buy side.
-        let orderID1 = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5500000000, 30000000000);
-        let orderID2 = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 4000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 3000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 2000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 1000000000, 30000000000);
+        let orderID1 = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5500000000, 30000000000);
+        let orderID2 = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 4000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 3000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 2000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 1000000000, 30000000000);
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID1));
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID2));
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
@@ -3993,12 +3993,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 4);
 
         // Setup sell side.
-        let orderID1 = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5600000000, 30000000000);
-        let orderID2 = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 10000000000, 30000000000);
+        let orderID1 = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5600000000, 30000000000);
+        let orderID2 = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 10000000000, 30000000000);
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID1));
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID2));
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
@@ -4015,12 +4015,12 @@ module ferum::market {
         assert!(book.summary.sellCacheSize == 2, 0);
         assert!(book.summary.sellTreeMin == 9000000000, 0);
         // Setup buy side.
-        let orderID1 = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5500000000, 30000000000);
-        let orderID2 = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 4000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 3000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 2000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 1000000000, 30000000000);
+        let orderID1 = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5500000000, 30000000000);
+        let orderID2 = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 4000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 3000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 2000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 1000000000, 30000000000);
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID1));
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID2));
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
@@ -4095,14 +4095,14 @@ module ferum::market {
         deposit_to_market_account<FMA, FMB>(takerUser, takerAccKey, 1000000000000, 1000000000000);
 
         // Setup.
-        let makerID1 = add_user_limit_order<FMA, FMB>(makerUser, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        let makerID2 = add_user_limit_order<FMA, FMB>(makerUser, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 40000000000);
-        let makerID3 = add_user_limit_order<FMA, FMB>(makerUser, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
-        let makerID4 = add_user_limit_order<FMA, FMB>(makerUser, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        let takerID = add_user_market_order<FMA, FMB>(takerUser, SIDE_BUY, BEHAVIOUR_IOC, 270000000000, 64000000000);
+        let makerID1 = add_user_limit_order<FMA, FMB>(makerUser, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        let makerID2 = add_user_limit_order<FMA, FMB>(makerUser, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 40000000000);
+        let makerID3 = add_user_limit_order<FMA, FMB>(makerUser, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 30000000000);
+        let makerID4 = add_user_limit_order<FMA, FMB>(makerUser, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user1, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user1, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user1, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
+        let takerID = add_user_market_order<FMA, FMB>(takerUser, 1 /* SIDE_BUY */, 3 /* BEHAVIOUR_IOC */, 270000000000, 64000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -4208,15 +4208,15 @@ module ferum::market {
         deposit_to_market_account<FMA, FMB>(takerUser, takerAccKey, 1000000000000, 1000000000000);
 
         // Setup.
-        let makerID1 = add_user_limit_order<FMA, FMB>(makerUser, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        let makerID2 = add_user_limit_order<FMA, FMB>(makerUser, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 40000000000);
-        let makerID3 = add_user_limit_order<FMA, FMB>(makerUser, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 30000000000);
-        let makerID4 = add_user_limit_order<FMA, FMB>(makerUser, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 50000000000);
-        let makerID5 = add_user_limit_order<FMA, FMB>(makerUser, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 10000000000);
-        let makerID6 = add_user_limit_order<FMA, FMB>(makerUser, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        let takerID = add_user_market_order<FMA, FMB>(takerUser, SIDE_BUY, BEHAVIOUR_IOC, 270000000000, 92614000000);
+        let makerID1 = add_user_limit_order<FMA, FMB>(makerUser, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        let makerID2 = add_user_limit_order<FMA, FMB>(makerUser, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 40000000000);
+        let makerID3 = add_user_limit_order<FMA, FMB>(makerUser, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 30000000000);
+        let makerID4 = add_user_limit_order<FMA, FMB>(makerUser, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 50000000000);
+        let makerID5 = add_user_limit_order<FMA, FMB>(makerUser, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 10000000000);
+        let makerID6 = add_user_limit_order<FMA, FMB>(makerUser, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user1, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user1, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
+        let takerID = add_user_market_order<FMA, FMB>(takerUser, 1 /* SIDE_BUY */, 3 /* BEHAVIOUR_IOC */, 270000000000, 92614000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -4437,7 +4437,7 @@ module ferum::market {
             unusedStack: 0,
             currID: 1,
         };
-        let cache = new_cache(SIDE_BUY);
+        let cache = new_cache(1 /* SIDE_BUY */);
         cache_insert(&mut cache, 1, PriceStoreElem{
             qty: 10,
             makerCrankPendingQty: 0,
@@ -4597,7 +4597,7 @@ module ferum::market {
 
     #[test]
     fun test_unit_remove_price_qty_from_cache_non_crank_no_pos_hint() {
-        let cache = new_cache<PriceStoreElem>(SIDE_BUY);
+        let cache = new_cache<PriceStoreElem>(1 /* SIDE_BUY */);
         cache_insert(&mut cache, 1, PriceStoreElem{
             qty: 10,
             makerCrankPendingQty: 5,
@@ -4614,7 +4614,7 @@ module ferum::market {
 
     #[test]
     fun test_unit_remove_price_qty_from_cache_non_crank_pos_hint() {
-        let cache = new_cache<PriceStoreElem>(SIDE_SELL);
+        let cache = new_cache<PriceStoreElem>(2 /* SIDE_SELL */);
         cache_insert(&mut cache, 1, PriceStoreElem{
             qty: 10,
             makerCrankPendingQty: 5,
@@ -4631,7 +4631,7 @@ module ferum::market {
 
     #[test]
     fun test_unit_remove_price_qty_from_cache_crank_no_pos_hint() {
-        let cache = new_cache<PriceStoreElem>(SIDE_BUY);
+        let cache = new_cache<PriceStoreElem>(1 /* SIDE_BUY */);
         cache_insert(&mut cache, 1, PriceStoreElem{
             qty: 10,
             makerCrankPendingQty: 5,
@@ -4648,7 +4648,7 @@ module ferum::market {
 
     #[test]
     fun test_unit_remove_price_qty_from_cache_crank_pos_hint() {
-        let cache = new_cache<PriceStoreElem>(SIDE_BUY);
+        let cache = new_cache<PriceStoreElem>(1 /* SIDE_BUY */);
         cache_insert(&mut cache, 1, PriceStoreElem{
             qty: 10,
             makerCrankPendingQty: 5,
@@ -4665,7 +4665,7 @@ module ferum::market {
 
     #[test]
     fun test_unit_remove_price_qty_from_cache_remove_price_store_elem() {
-        let cache = new_cache<PriceStoreElem>(SIDE_BUY);
+        let cache = new_cache<PriceStoreElem>(1 /* SIDE_BUY */);
         cache_insert(&mut cache, 1, PriceStoreElem{
             qty: 10,
             makerCrankPendingQty: 5,
@@ -4921,13 +4921,13 @@ module ferum::market {
         deposit_to_market_account<FMA, FMB>(takerUser, takerAccKey, 1000000000000, 1000000000000);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        let makerID = add_user_limit_order<FMA, FMB>(makerUser, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        let takerID = add_user_limit_order<FMA, FMB>(takerUser, SIDE_SELL, BEHAVIOUR_GTC, 5500000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        let makerID = add_user_limit_order<FMA, FMB>(makerUser, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(takerUser, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5500000000, 30000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -5011,15 +5011,15 @@ module ferum::market {
         deposit_to_market_account<FMA, FMB>(takerUser, takerAccKey, 1000000000000, 1000000000000);
 
         // Setup.
-        let orderID1 = add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        let orderID2 = add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        let makerID =  add_user_limit_order<FMA, FMB>(makerUser, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        let orderID1 = add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        let orderID2 = add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        let makerID =  add_user_limit_order<FMA, FMB>(makerUser, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
         cancel_order<FMA, FMB>(user1, get_api_order_id<FMA, FMB>(orderID1));
         cancel_order<FMA, FMB>(user1, get_api_order_id<FMA, FMB>(orderID2));
-        let takerID = add_user_limit_order<FMA, FMB>(takerUser, SIDE_SELL, BEHAVIOUR_GTC, 5500000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(takerUser, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5500000000, 30000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -5097,12 +5097,12 @@ module ferum::market {
         deposit_to_market_account<FMA, FMB>(takerUser, takerAccKey, 1000000000000, 1000000000000);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        let makerID = add_user_limit_order<FMA, FMB>(makerUser, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        let takerID = add_user_limit_order<FMA, FMB>(takerUser, SIDE_SELL, BEHAVIOUR_GTC, 5500000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        let makerID = add_user_limit_order<FMA, FMB>(makerUser, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(takerUser, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5500000000, 30000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -5186,14 +5186,14 @@ module ferum::market {
         deposit_to_market_account<FMA, FMB>(takerUser, takerAccKey, 1000000000000, 1000000000000);
 
         // Setup.
-        let orderID1 = add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        let orderID2 = add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        let makerID =  add_user_limit_order<FMA, FMB>(makerUser, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        let orderID1 = add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        let orderID2 = add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        let makerID =  add_user_limit_order<FMA, FMB>(makerUser, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
         cancel_order<FMA, FMB>(user1, get_api_order_id<FMA, FMB>(orderID1));
         cancel_order<FMA, FMB>(user1, get_api_order_id<FMA, FMB>(orderID2));
-        let takerID = add_user_limit_order<FMA, FMB>(takerUser, SIDE_SELL, BEHAVIOUR_GTC, 5500000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(takerUser, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5500000000, 30000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -5271,12 +5271,12 @@ module ferum::market {
         deposit_to_market_account<FMA, FMB>(takerUser, takerAccKey, 1000000000000, 1000000000000);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        let makerID = add_user_limit_order<FMA, FMB>(makerUser, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        let takerID = add_user_limit_order<FMA, FMB>(takerUser, SIDE_SELL, BEHAVIOUR_GTC, 8500000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        let makerID = add_user_limit_order<FMA, FMB>(makerUser, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(takerUser, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8500000000, 80000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -5380,13 +5380,13 @@ module ferum::market {
         deposit_to_market_account<FMA, FMB>(takerUser, takerAccKey, 1000000000000, 1000000000000);
 
         // Setup.
-        let makerID3 = add_user_limit_order<FMA, FMB>(makerUser2, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        let makerID1 = add_user_limit_order<FMA, FMB>(makerUser1, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        let makerID2 = add_user_limit_order<FMA, FMB>(makerUser1, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 60000000000);
-        let makerID4 = add_user_limit_order<FMA, FMB>(makerUser2, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        let makerID5 = add_user_limit_order<FMA, FMB>(makerUser2, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        let takerID = add_user_limit_order<FMA, FMB>(takerUser, SIDE_SELL, BEHAVIOUR_GTC, 5500000000, 300000000000);
+        let makerID3 = add_user_limit_order<FMA, FMB>(makerUser2, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        let makerID1 = add_user_limit_order<FMA, FMB>(makerUser1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        let makerID2 = add_user_limit_order<FMA, FMB>(makerUser1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 60000000000);
+        let makerID4 = add_user_limit_order<FMA, FMB>(makerUser2, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        let makerID5 = add_user_limit_order<FMA, FMB>(makerUser2, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(takerUser, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5500000000, 300000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 0, crankQty: 4)"),
@@ -5500,13 +5500,13 @@ module ferum::market {
         deposit_to_market_account<FMA, FMB>(user3, user3AccKey, 1000000000000, 1000000000000);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        let makerID = add_user_limit_order<FMA, FMB>(user2, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        let takerID = add_user_limit_order<FMA, FMB>(user3, SIDE_SELL, BEHAVIOUR_GTC, 6500000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        let makerID = add_user_limit_order<FMA, FMB>(user2, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user3, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6500000000, 30000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -5574,14 +5574,14 @@ module ferum::market {
         deposit_to_market_account<FMA, FMB>(user3, user3AccKey, 1000000000000, 1000000000000);
 
         // Setup.
-        let order1 = add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        let order2 = add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        let makerID = add_user_limit_order<FMA, FMB>(user2, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        let order1 = add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        let order2 = add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        let makerID = add_user_limit_order<FMA, FMB>(user2, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
         cancel_order<FMA, FMB>(user1, get_api_order_id<FMA, FMB>(order1));
         cancel_order<FMA, FMB>(user1, get_api_order_id<FMA, FMB>(order2));
-        let takerID = add_user_limit_order<FMA, FMB>(user3, SIDE_SELL, BEHAVIOUR_GTC, 6500000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user3, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6500000000, 30000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -5643,12 +5643,12 @@ module ferum::market {
         deposit_to_market_account<FMA, FMB>(user3, user3AccKey, 1000000000000, 1000000000000);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        let makerID = add_user_limit_order<FMA, FMB>(user2, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        let takerID = add_user_limit_order<FMA, FMB>(user3, SIDE_SELL, BEHAVIOUR_GTC, 6500000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        let makerID = add_user_limit_order<FMA, FMB>(user2, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user3, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6500000000, 70000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -5725,14 +5725,14 @@ module ferum::market {
         deposit_to_market_account<FMA, FMB>(user3, user3AccKey, 1000000000000, 1000000000000);
 
         // Setup.
-        let orderID2 = add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        let orderID1 = add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        let makerID1 = add_user_limit_order<FMA, FMB>(user2, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        let makerID2 = add_user_limit_order<FMA, FMB>(user2, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        let orderID2 = add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        let orderID1 = add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        let makerID1 = add_user_limit_order<FMA, FMB>(user2, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        let makerID2 = add_user_limit_order<FMA, FMB>(user2, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
         cancel_order<FMA, FMB>(user1, get_api_order_id<FMA, FMB>(orderID2));
         cancel_order<FMA, FMB>(user1, get_api_order_id<FMA, FMB>(orderID1));
-        let takerID = add_user_limit_order<FMA, FMB>(user3, SIDE_SELL, BEHAVIOUR_GTC, 5500000000, 70000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user3, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5500000000, 70000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 2, crankQty: 2)"),
@@ -5820,12 +5820,12 @@ module ferum::market {
         deposit_to_market_account<FMA, FMB>(takerUser, takerAccKey, 1000000000000, 1000000000000);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 80000000000);
-        let makerID = add_user_limit_order<FMA, FMB>(makerUser, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        let takerID = add_user_limit_order<FMA, FMB>(takerUser, SIDE_BUY, BEHAVIOUR_GTC, 5500000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user1, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 80000000000);
+        let makerID = add_user_limit_order<FMA, FMB>(makerUser, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user1, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user1, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user1, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(takerUser, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5500000000, 80000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -5929,13 +5929,13 @@ module ferum::market {
         deposit_to_market_account<FMA, FMB>(takerUser, takerAccKey, 1000000000000, 1000000000000);
 
         // Setup.
-        let makerID3 = add_user_limit_order<FMA, FMB>(makerUser2, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 80000000000);
-        let makerID1 = add_user_limit_order<FMA, FMB>(makerUser1, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 70000000000);
-        let makerID2 = add_user_limit_order<FMA, FMB>(makerUser1, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 60000000000);
-        let makerID4 = add_user_limit_order<FMA, FMB>(makerUser2, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        let makerID5 = add_user_limit_order<FMA, FMB>(makerUser2, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        let takerID = add_user_limit_order<FMA, FMB>(takerUser, SIDE_BUY, BEHAVIOUR_GTC, 8500000000, 300000000000);
+        let makerID3 = add_user_limit_order<FMA, FMB>(makerUser2, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 80000000000);
+        let makerID1 = add_user_limit_order<FMA, FMB>(makerUser1, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 70000000000);
+        let makerID2 = add_user_limit_order<FMA, FMB>(makerUser1, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 60000000000);
+        let makerID4 = add_user_limit_order<FMA, FMB>(makerUser2, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        let makerID5 = add_user_limit_order<FMA, FMB>(makerUser2, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user1, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(takerUser, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8500000000, 300000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 0, crankQty: 4)"),
@@ -6049,13 +6049,13 @@ module ferum::market {
         deposit_to_market_account<FMA, FMB>(user3, user3AccKey, 1000000000000, 1000000000000);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 80000000000);
-        let makerID = add_user_limit_order<FMA, FMB>(user2, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 30000000000);
-        let takerID = add_user_limit_order<FMA, FMB>(user3, SIDE_BUY, BEHAVIOUR_GTC, 5500000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user1, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 80000000000);
+        let makerID = add_user_limit_order<FMA, FMB>(user2, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user1, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user1, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user1, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user1, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user3, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5500000000, 30000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 4, crankQty: 0)"),
             s(b"(0.8 qty: 3, crankQty: 0)"),
@@ -6123,14 +6123,14 @@ module ferum::market {
         deposit_to_market_account<FMA, FMB>(user3, user3AccKey, 1000000000000, 1000000000000);
 
         // Setup.
-        let orderID1 = add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 80000000000);
-        let orderID2 = add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 70000000000);
-        let makerID = add_user_limit_order<FMA, FMB>(user2, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 30000000000);
+        let orderID1 = add_user_limit_order<FMA, FMB>(user1, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 80000000000);
+        let orderID2 = add_user_limit_order<FMA, FMB>(user1, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 70000000000);
+        let makerID = add_user_limit_order<FMA, FMB>(user2, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user1, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user1, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 30000000000);
         cancel_order<FMA, FMB>(user1, get_api_order_id<FMA, FMB>(orderID1));
         cancel_order<FMA, FMB>(user1, get_api_order_id<FMA, FMB>(orderID2));
-        let takerID = add_user_limit_order<FMA, FMB>(user3, SIDE_BUY, BEHAVIOUR_GTC, 8500000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user3, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8500000000, 30000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 4, crankQty: 0)"),
             s(b"(0.8 qty: 3, crankQty: 0)"),
@@ -6192,12 +6192,12 @@ module ferum::market {
         deposit_to_market_account<FMA, FMB>(user3, user3AccKey, 1000000000000, 1000000000000);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 80000000000);
-        let makerID = add_user_limit_order<FMA, FMB>(user2, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 30000000000);
-        let takerID = add_user_limit_order<FMA, FMB>(user3, SIDE_BUY, BEHAVIOUR_GTC, 5500000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user1, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 80000000000);
+        let makerID = add_user_limit_order<FMA, FMB>(user2, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user1, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user1, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user1, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 30000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user3, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5500000000, 70000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 4, crankQty: 0)"),
             s(b"(0.8 qty: 3, crankQty: 0)"),
@@ -6274,14 +6274,14 @@ module ferum::market {
         deposit_to_market_account<FMA, FMB>(user3, user3AccKey, 1000000000000, 1000000000000);
 
         // Setup.
-        let orderID1 = add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 80000000000);
-        let orderID2 = add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 70000000000);
-        let makerID1 = add_user_limit_order<FMA, FMB>(user2, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user1, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 40000000000);
-        let makerID2 = add_user_limit_order<FMA, FMB>(user2, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 30000000000);
+        let orderID1 = add_user_limit_order<FMA, FMB>(user1, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 80000000000);
+        let orderID2 = add_user_limit_order<FMA, FMB>(user1, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 70000000000);
+        let makerID1 = add_user_limit_order<FMA, FMB>(user2, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user1, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 40000000000);
+        let makerID2 = add_user_limit_order<FMA, FMB>(user2, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 30000000000);
         cancel_order<FMA, FMB>(user1, get_api_order_id<FMA, FMB>(orderID1));
         cancel_order<FMA, FMB>(user1, get_api_order_id<FMA, FMB>(orderID2));
-        let takerID = add_user_limit_order<FMA, FMB>(user3, SIDE_BUY, BEHAVIOUR_GTC, 8500000000, 70000000000);
+        let takerID = add_user_limit_order<FMA, FMB>(user3, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8500000000, 70000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 4, crankQty: 0)"),
             s(b"(0.8 qty: 1, crankQty: 2)"),
@@ -6359,12 +6359,12 @@ module ferum::market {
 
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 4);
 
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 11234000000, 10000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC,  8000000000, 10240000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC,  9000000000, 11240000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC,  9000000000, 11240000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC,  7000000000, 11240000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC,  7500000000, 11250000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 11234000000, 10000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */,  8000000000, 10240000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */,  9000000000, 11240000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */,  9000000000, 11240000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */,  7000000000, 11240000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */,  7500000000, 11250000000);
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_price_levels(book, vector[
             s(b"BUY 0.7[4]: (5, 1.124)"),
@@ -6374,7 +6374,7 @@ module ferum::market {
             s(b"BUY 1.1234[1]: (1, 1)"),
         ]);
         let tree = &borrow_global<MarketBuyTree<FMA, FMB>>(marketAddr).tree;
-        assert_market_tree(tree, SIDE_BUY, vector[]);
+        assert_market_tree(tree, 1 /* SIDE_BUY */, vector[]);
         let cache = &borrow_global<MarketBuyCache<FMA, FMB>>(marketAddr).cache;
         assert_market_cache(cache, vector[
             s(b"(0.7 priceLevelID: 4, qty: 1.124, crankQty: 0)"),
@@ -6390,8 +6390,8 @@ module ferum::market {
         assert!(book.summary.buyTreeMax == 0, 0);
 
         // These orders should be inserted into the tree.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC,  6000000000, 11240000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC,  6500000000, 11340000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */,  6000000000, 11240000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */,  6500000000, 11340000000);
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_price_levels(book, vector[
             s(b"BUY 0.6[6]: (7, 1.124)"),
@@ -6403,7 +6403,7 @@ module ferum::market {
             s(b"BUY 1.1234[1]: (1, 1)"),
         ]);
         let tree = &borrow_global<MarketBuyTree<FMA, FMB>>(marketAddr).tree;
-        assert_market_tree(tree, SIDE_BUY, vector[
+        assert_market_tree(tree, 1 /* SIDE_BUY */, vector[
             s(b"(0.6 priceLevelID: 6, qty: 1.124, crankQty: 0)"),
             s(b"(0.65 priceLevelID: 7, qty: 1.134, crankQty: 0)"),
         ]);
@@ -6422,8 +6422,8 @@ module ferum::market {
         assert!(book.summary.buyTreeMax == 6500000000, 0);
 
         // These orders should be inserted into the cache because they fall into the range of the cache.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC,  10000000000, 11240000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC,  15000000000, 11340000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */,  10000000000, 11240000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */,  15000000000, 11340000000);
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_price_levels(book, vector[
             s(b"BUY 0.6[6]: (7, 1.124)"),
@@ -6437,7 +6437,7 @@ module ferum::market {
             s(b"BUY 1.5[9]: (10, 1.134)"),
         ]);
         let tree = &borrow_global<MarketBuyTree<FMA, FMB>>(marketAddr).tree;
-        assert_market_tree(tree, SIDE_BUY, vector[
+        assert_market_tree(tree, 1 /* SIDE_BUY */, vector[
             s(b"(0.6 priceLevelID: 6, qty: 1.124, crankQty: 0)"),
             s(b"(0.65 priceLevelID: 7, qty: 1.134, crankQty: 0)"),
         ]);
@@ -6466,12 +6466,12 @@ module ferum::market {
 
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 4);
 
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 60000000000);
-        let orderID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 60000000000);
+        let orderID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_price_levels(book, vector[
             s(b"BUY 0.5[5]: (6, 3)"),
@@ -6481,7 +6481,7 @@ module ferum::market {
             s(b"BUY 0.9[2]: (2, 7) (3, 6)"),
         ]);
         let tree = &borrow_global<MarketBuyTree<FMA, FMB>>(marketAddr).tree;
-        assert_market_tree(tree, SIDE_BUY, vector[
+        assert_market_tree(tree, 1 /* SIDE_BUY */, vector[
             s(b"(0.5 priceLevelID: 5, qty: 3, crankQty: 0)"),
         ]);
         let cache = &borrow_global<MarketBuyCache<FMA, FMB>>(marketAddr).cache;
@@ -6502,7 +6502,7 @@ module ferum::market {
             s(b"BUY 0.9[2]: (2, 7) (3, 6)"),
         ]);
         let tree = &borrow_global<MarketBuyTree<FMA, FMB>>(marketAddr).tree;
-        assert_market_tree(tree, SIDE_BUY, vector[
+        assert_market_tree(tree, 1 /* SIDE_BUY */, vector[
             s(b"(0.5 priceLevelID: 5, qty: 3, crankQty: 0)"),
         ]);
         let cache = &borrow_global<MarketBuyCache<FMA, FMB>>(marketAddr).cache;
@@ -6528,12 +6528,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 4);
 
         // First insert into both cache and tree, then remove so that there are prices in the tree and in the cache.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 60000000000);
-        let orderID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 60000000000);
+        let orderID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID));
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_price_levels(book, vector[
@@ -6543,7 +6543,7 @@ module ferum::market {
             s(b"BUY 0.9[2]: (2, 7) (3, 6)"),
         ]);
         let tree = &borrow_global<MarketBuyTree<FMA, FMB>>(marketAddr).tree;
-        assert_market_tree(tree, SIDE_BUY, vector[
+        assert_market_tree(tree, 1 /* SIDE_BUY */, vector[
             s(b"(0.5 priceLevelID: 5, qty: 3, crankQty: 0)"),
         ]);
         let cache = &borrow_global<MarketBuyCache<FMA, FMB>>(marketAddr).cache;
@@ -6554,7 +6554,7 @@ module ferum::market {
         ]);
 
         // New price should be added to the tree because it falls into the range defined by the tree.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 4000000000, 100000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 4000000000, 100000000000);
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_price_levels(book, vector[
             s(b"BUY 0.4[3]: (4, 10)"),
@@ -6564,7 +6564,7 @@ module ferum::market {
             s(b"BUY 0.9[2]: (2, 7) (3, 6)"),
         ]);
         let tree = &borrow_global<MarketBuyTree<FMA, FMB>>(marketAddr).tree;
-        assert_market_tree(tree, SIDE_BUY, vector[
+        assert_market_tree(tree, 1 /* SIDE_BUY */, vector[
             s(b"(0.4 priceLevelID: 3, qty: 10, crankQty: 0)"),
             s(b"(0.5 priceLevelID: 5, qty: 3, crankQty: 0)"),
         ]);
@@ -6590,12 +6590,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 4);
 
         // First insert into both cache and tree, then remove so that there are prices in the tree and in the cache.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 60000000000);
-        let orderID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 60000000000);
+        let orderID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID));
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_price_levels(book, vector[
@@ -6605,7 +6605,7 @@ module ferum::market {
             s(b"BUY 0.9[2]: (2, 7) (3, 6)"),
         ]);
         let tree = &borrow_global<MarketBuyTree<FMA, FMB>>(marketAddr).tree;
-        assert_market_tree(tree, SIDE_BUY, vector[
+        assert_market_tree(tree, 1 /* SIDE_BUY */, vector[
             s(b"(0.5 priceLevelID: 5, qty: 3, crankQty: 0)"),
         ]);
         let cache = &borrow_global<MarketBuyCache<FMA, FMB>>(marketAddr).cache;
@@ -6616,7 +6616,7 @@ module ferum::market {
         ]);
 
         // New order.
-        let newOrderID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8500000000, 160000000000);
+        let newOrderID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8500000000, 160000000000);
         let accountKey = get_market_account_key(user, vector[]);
         let expectedApiID = get_order_id(accountKey, 7);
         assert!(get_api_order_id<FMA, FMB>(newOrderID) == expectedApiID, 0);
@@ -6630,7 +6630,7 @@ module ferum::market {
             s(b"SELL 0.85[3]: (4, 3)"),
         ]);
         let buyTree = &borrow_global<MarketBuyTree<FMA, FMB>>(marketAddr).tree;
-        assert_market_tree(buyTree, SIDE_BUY, vector[
+        assert_market_tree(buyTree, 1 /* SIDE_BUY */, vector[
             s(b"(0.5 priceLevelID: 5, qty: 3, crankQty: 0)"),
         ]);
         let buyCache = &borrow_global<MarketBuyCache<FMA, FMB>>(marketAddr).cache;
@@ -6640,7 +6640,7 @@ module ferum::market {
             s(b"(0.9 priceLevelID: 2, qty: 0, crankQty: 13)"),
         ]);
         let sellTree = &borrow_global<MarketSellTree<FMA, FMB>>(marketAddr).tree;
-        assert_market_tree(sellTree, SIDE_SELL, vector[]);
+        assert_market_tree(sellTree, 2 /* SIDE_SELL */, vector[]);
         let sellCache = &borrow_global<MarketSellCache<FMA, FMB>>(marketAddr).cache;
         assert_market_cache(sellCache, vector[
             s(b"(0.85 priceLevelID: 3, qty: 3, crankQty: 0)"),
@@ -6665,12 +6665,12 @@ module ferum::market {
 
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 4);
 
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_price_levels(book, vector[
             s(b"BUY 0.5[5]: (6, 3)"),
@@ -6680,7 +6680,7 @@ module ferum::market {
             s(b"BUY 0.9[2]: (2, 7) (3, 6)"),
         ]);
         let buyTree = &borrow_global<MarketBuyTree<FMA, FMB>>(marketAddr).tree;
-        assert_market_tree(buyTree, SIDE_BUY, vector[
+        assert_market_tree(buyTree, 1 /* SIDE_BUY */, vector[
             s(b"(0.5 priceLevelID: 5, qty: 3, crankQty: 0)"),
         ]);
         let buyCache = &borrow_global<MarketBuyCache<FMA, FMB>>(marketAddr).cache;
@@ -6692,7 +6692,7 @@ module ferum::market {
         ]);
 
         // Execute against price levels.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 250000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 250000000000);
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_price_levels(book, vector[
             s(b"BUY 0.5[5]: (6, 3)"),
@@ -6702,7 +6702,7 @@ module ferum::market {
             s(b"BUY 0.9[2]: (2, 7) (3, 6)"),
         ]);
         let buyTree = &borrow_global<MarketBuyTree<FMA, FMB>>(marketAddr).tree;
-        assert_market_tree(buyTree, SIDE_BUY, vector[
+        assert_market_tree(buyTree, 1 /* SIDE_BUY */, vector[
             s(b"(0.5 priceLevelID: 5, qty: 3, crankQty: 0)"),
         ]);
         let buyCache = &borrow_global<MarketBuyCache<FMA, FMB>>(marketAddr).cache;
@@ -6724,9 +6724,9 @@ module ferum::market {
         assert!(book.summary.sellTreeMin == 0, 0);
 
         // Add sell orders for prices that are already mapped to by price levels.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 30000000000);
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_price_levels(book, vector[
             s(b"BUY 0.5[5]: (6, 3)"),
@@ -6739,7 +6739,7 @@ module ferum::market {
             s(b"SELL 0.9[6]: (8, 3)"),
         ]);
         let buyTree = &borrow_global<MarketBuyTree<FMA, FMB>>(marketAddr).tree;
-        assert_market_tree(buyTree, SIDE_BUY, vector[
+        assert_market_tree(buyTree, 1 /* SIDE_BUY */, vector[
             s(b"(0.5 priceLevelID: 5, qty: 3, crankQty: 0)"),
         ]);
         let buyCache = &borrow_global<MarketBuyCache<FMA, FMB>>(marketAddr).cache;
@@ -6750,7 +6750,7 @@ module ferum::market {
             s(b"(0.9 priceLevelID: 2, qty: 0, crankQty: 13)"),
         ]);
         let sellTree = &borrow_global<MarketSellTree<FMA, FMB>>(marketAddr).tree;
-        assert_market_tree(sellTree, SIDE_SELL, vector[]);
+        assert_market_tree(sellTree, 2 /* SIDE_SELL */, vector[]);
         let sellCache = &borrow_global<MarketSellCache<FMA, FMB>>(marketAddr).cache;
         assert_market_cache(sellCache, vector[
             s(b"(0.9 priceLevelID: 6, qty: 3, crankQty: 0)"),
@@ -6782,12 +6782,12 @@ module ferum::market {
 
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 4);
 
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 11234000000, 10000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC,  8000000000, 10240000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC,  9000000000, 11240000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC,  9000000000, 11240000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC,  7000000000, 11240000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC,  7500000000, 11250000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 11234000000, 10000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */,  8000000000, 10240000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */,  9000000000, 11240000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */,  9000000000, 11240000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */,  7000000000, 11240000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */,  7500000000, 11250000000);
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_price_levels(book, vector[
             s(b"SELL 0.7[4]: (5, 1.124)"),
@@ -6797,7 +6797,7 @@ module ferum::market {
             s(b"SELL 1.1234[1]: (1, 1)"),
         ]);
         let tree = &borrow_global<MarketSellTree<FMA, FMB>>(marketAddr).tree;
-        assert_market_tree(tree, SIDE_SELL, vector[]);
+        assert_market_tree(tree, 2 /* SIDE_SELL */, vector[]);
         let cache = &borrow_global<MarketSellCache<FMA, FMB>>(marketAddr).cache;
         assert_market_cache(cache, vector[
             s(b"(1.1234 priceLevelID: 1, qty: 1, crankQty: 0)"),
@@ -6813,8 +6813,8 @@ module ferum::market {
         assert!(book.summary.sellTreeMin == 0, 0);
 
         // These orders should be inserted into the tree.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC,  26000000000, 11240000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC,  26500000000, 11340000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */,  26000000000, 11240000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */,  26500000000, 11340000000);
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_price_levels(book, vector[
             s(b"SELL 0.7[4]: (5, 1.124)"),
@@ -6826,7 +6826,7 @@ module ferum::market {
             s(b"SELL 2.65[7]: (8, 1.134)"),
         ]);
         let tree = &borrow_global<MarketSellTree<FMA, FMB>>(marketAddr).tree;
-        assert_market_tree(tree, SIDE_SELL, vector[
+        assert_market_tree(tree, 2 /* SIDE_SELL */, vector[
             s(b"(2.65 priceLevelID: 7, qty: 1.134, crankQty: 0)"),
             s(b"(2.6 priceLevelID: 6, qty: 1.124, crankQty: 0)"),
         ]);
@@ -6845,8 +6845,8 @@ module ferum::market {
         assert!(book.summary.sellTreeMin == 26000000000, 0);
 
         // These orders should be inserted into the cache because they fall into the range of the cache.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC,  1000000000, 11240000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC,  7200000000, 11340000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */,  1000000000, 11240000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */,  7200000000, 11340000000);
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_price_levels(book, vector[
             s(b"SELL 0.1[8]: (9, 1.124)"),
@@ -6860,7 +6860,7 @@ module ferum::market {
             s(b"SELL 2.65[7]: (8, 1.134)")
         ]);
         let tree = &borrow_global<MarketSellTree<FMA, FMB>>(marketAddr).tree;
-        assert_market_tree(tree, SIDE_SELL, vector[
+        assert_market_tree(tree, 2 /* SIDE_SELL */, vector[
             s(b"(2.65 priceLevelID: 7, qty: 1.134, crankQty: 0)"),
             s(b"(2.6 priceLevelID: 6, qty: 1.124, crankQty: 0)"),
         ]);
@@ -6890,12 +6890,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 4);
 
         // First insert
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 60000000000);
-        let orderID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 11000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 15000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 60000000000);
+        let orderID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 11000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 15000000000, 30000000000);
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_price_levels(book, vector[
             s(b"SELL 0.7[3]: (4, 5)"),
@@ -6905,7 +6905,7 @@ module ferum::market {
             s(b"SELL 1.5[5]: (6, 3)"),
         ]);
         let tree = &borrow_global<MarketSellTree<FMA, FMB>>(marketAddr).tree;
-        assert_market_tree(tree, SIDE_SELL, vector[
+        assert_market_tree(tree, 2 /* SIDE_SELL */, vector[
             s(b"(1.5 priceLevelID: 5, qty: 3, crankQty: 0)"),
         ]);
         let cache = &borrow_global<MarketSellCache<FMA, FMB>>(marketAddr).cache;
@@ -6926,7 +6926,7 @@ module ferum::market {
             s(b"SELL 1.5[5]: (6, 3)"),
         ]);
         let tree = &borrow_global<MarketSellTree<FMA, FMB>>(marketAddr).tree;
-        assert_market_tree(tree, SIDE_SELL, vector[
+        assert_market_tree(tree, 2 /* SIDE_SELL */, vector[
             s(b"(1.5 priceLevelID: 5, qty: 3, crankQty: 0)"),
         ]);
         let cache = &borrow_global<MarketSellCache<FMA, FMB>>(marketAddr).cache;
@@ -6952,12 +6952,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 4);
 
         // First insert
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 60000000000);
-        let orderID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 11000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 15000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 60000000000);
+        let orderID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 11000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 15000000000, 30000000000);
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID));
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_price_levels(book, vector[
@@ -6967,7 +6967,7 @@ module ferum::market {
             s(b"SELL 1.5[5]: (6, 3)"),
         ]);
         let tree = &borrow_global<MarketSellTree<FMA, FMB>>(marketAddr).tree;
-        assert_market_tree(tree, SIDE_SELL, vector[
+        assert_market_tree(tree, 2 /* SIDE_SELL */, vector[
             s(b"(1.5 priceLevelID: 5, qty: 3, crankQty: 0)"),
         ]);
         let cache = &borrow_global<MarketSellCache<FMA, FMB>>(marketAddr).cache;
@@ -6978,7 +6978,7 @@ module ferum::market {
         ]);
 
         // New price should be added to the tree because it falls into the range defined by the tree.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 16000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 16000000000, 40000000000);
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_price_levels(book, vector[
             s(b"SELL 0.8[1]: (1, 8)"),
@@ -6988,7 +6988,7 @@ module ferum::market {
             s(b"SELL 1.6[3]: (4, 4)"),
         ]);
         let tree = &borrow_global<MarketSellTree<FMA, FMB>>(marketAddr).tree;
-        assert_market_tree(tree, SIDE_SELL, vector[
+        assert_market_tree(tree, 2 /* SIDE_SELL */, vector[
             s(b"(1.6 priceLevelID: 3, qty: 4, crankQty: 0)"),
             s(b"(1.5 priceLevelID: 5, qty: 3, crankQty: 0)"),
         ]);
@@ -7014,12 +7014,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 4);
 
         // First insert
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 60000000000);
-        let orderID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 11000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 15000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 60000000000);
+        let orderID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 11000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 15000000000, 30000000000);
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID));
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_price_levels(book, vector[
@@ -7029,7 +7029,7 @@ module ferum::market {
             s(b"SELL 1.5[5]: (6, 3)"),
         ]);
         let tree = &borrow_global<MarketSellTree<FMA, FMB>>(marketAddr).tree;
-        assert_market_tree(tree, SIDE_SELL, vector[
+        assert_market_tree(tree, 2 /* SIDE_SELL */, vector[
             s(b"(1.5 priceLevelID: 5, qty: 3, crankQty: 0)"),
         ]);
         let cache = &borrow_global<MarketSellCache<FMA, FMB>>(marketAddr).cache;
@@ -7040,7 +7040,7 @@ module ferum::market {
         ]);
 
         // New order.
-        let newOrderID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8500000000, 90000000000);
+        let newOrderID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8500000000, 90000000000);
         let accountKey = get_market_account_key(user, vector[]);
         let expectedApiID = get_order_id(accountKey, 7);
         assert!(get_api_order_id<FMA, FMB>(newOrderID) == expectedApiID, 0);
@@ -7054,7 +7054,7 @@ module ferum::market {
             s(b"SELL 1.5[5]: (6, 3)"),
         ]);
         let sellTree = &borrow_global<MarketSellTree<FMA, FMB>>(marketAddr).tree;
-        assert_market_tree(sellTree, SIDE_SELL, vector[
+        assert_market_tree(sellTree, 2 /* SIDE_SELL */, vector[
             s(b"(1.5 priceLevelID: 5, qty: 3, crankQty: 0)"),
         ]);
         let sellCache = &borrow_global<MarketSellCache<FMA, FMB>>(marketAddr).cache;
@@ -7064,7 +7064,7 @@ module ferum::market {
             s(b"(0.8 priceLevelID: 1, qty: 0, crankQty: 8)"),
         ]);
         let buyTree = &borrow_global<MarketBuyTree<FMA, FMB>>(marketAddr).tree;
-        assert_market_tree(buyTree, SIDE_BUY, vector[]);
+        assert_market_tree(buyTree, 1 /* SIDE_BUY */, vector[]);
         let buyCache = &borrow_global<MarketBuyCache<FMA, FMB>>(marketAddr).cache;
         assert_market_cache(buyCache, vector[
             s(b"(0.85 priceLevelID: 3, qty: 1, crankQty: 0)"),
@@ -7090,12 +7090,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 4);
 
         // First insert
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 60000000000);
-        let orderID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 11000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 15000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 60000000000);
+        let orderID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 11000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 15000000000, 30000000000);
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID));
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_price_levels(book, vector[
@@ -7105,7 +7105,7 @@ module ferum::market {
             s(b"SELL 1.5[5]: (6, 3)"),
         ]);
         let tree = &borrow_global<MarketSellTree<FMA, FMB>>(marketAddr).tree;
-        assert_market_tree(tree, SIDE_SELL, vector[
+        assert_market_tree(tree, 2 /* SIDE_SELL */, vector[
             s(b"(1.5 priceLevelID: 5, qty: 3, crankQty: 0)"),
         ]);
         let cache = &borrow_global<MarketSellCache<FMA, FMB>>(marketAddr).cache;
@@ -7116,7 +7116,7 @@ module ferum::market {
         ]);
 
         // Execute against sells
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8500000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8500000000, 80000000000);
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_price_levels(book, vector[
             s(b"SELL 0.8[1]: (1, 8)"),
@@ -7125,7 +7125,7 @@ module ferum::market {
             s(b"SELL 1.5[5]: (6, 3)"),
         ]);
         let sellTree = &borrow_global<MarketSellTree<FMA, FMB>>(marketAddr).tree;
-        assert_market_tree(sellTree, SIDE_SELL, vector[
+        assert_market_tree(sellTree, 2 /* SIDE_SELL */, vector[
             s(b"(1.5 priceLevelID: 5, qty: 3, crankQty: 0)"),
         ]);
         let sellCache = &borrow_global<MarketSellCache<FMA, FMB>>(marketAddr).cache;
@@ -7146,8 +7146,8 @@ module ferum::market {
         assert!(book.summary.buyTreeMax == 0, 0);
 
         // Add buy orders for prices that are already mapped to by price levels.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 140000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 140000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 60000000000);
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_price_levels(book, vector[
             s(b"BUY 0.8[6]: (8, 6)"),
@@ -7158,7 +7158,7 @@ module ferum::market {
             s(b"SELL 1.5[5]: (6, 3)"),
         ]);
         let sellTree = &borrow_global<MarketSellTree<FMA, FMB>>(marketAddr).tree;
-        assert_market_tree(sellTree, SIDE_SELL, vector[
+        assert_market_tree(sellTree, 2 /* SIDE_SELL */, vector[
             s(b"(1.5 priceLevelID: 5, qty: 3, crankQty: 0)"),
         ]);
         let sellCache = &borrow_global<MarketSellCache<FMA, FMB>>(marketAddr).cache;
@@ -7168,7 +7168,7 @@ module ferum::market {
             s(b"(0.8 priceLevelID: 1, qty: 0, crankQty: 8)"),
         ]);
         let buyTree = &borrow_global<MarketBuyTree<FMA, FMB>>(marketAddr).tree;
-        assert_market_tree(buyTree, SIDE_BUY, vector[]);
+        assert_market_tree(buyTree, 1 /* SIDE_BUY */, vector[]);
         let buyCache = &borrow_global<MarketBuyCache<FMA, FMB>>(marketAddr).cache;
         assert_market_cache(buyCache, vector[
             s(b"(0.8 priceLevelID: 6, qty: 6, crankQty: 0)"),
@@ -7203,12 +7203,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -7218,7 +7218,7 @@ module ferum::market {
             s(b"(0.9 qty: 13, crankQty: 0)"),
         ]);
         // New order.
-        let newOrderID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6500000000, 300000000000);
+        let newOrderID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6500000000, 300000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -7272,12 +7272,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -7287,7 +7287,7 @@ module ferum::market {
             s(b"(0.9 qty: 13, crankQty: 0)"),
         ]);
         // New order.
-        let newOrderID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8500000000, 300000000000);
+        let newOrderID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8500000000, 300000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -7331,12 +7331,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -7346,7 +7346,7 @@ module ferum::market {
             s(b"(0.9 qty: 13, crankQty: 0)"),
         ]);
         // New order.
-        let newOrderID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6500000000, 220000000000);
+        let newOrderID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6500000000, 220000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -7397,12 +7397,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -7412,7 +7412,7 @@ module ferum::market {
             s(b"(0.9 qty: 13, crankQty: 0)"),
         ]);
         // New order.
-        let newOrderID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6500000000, 10000000000);
+        let newOrderID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6500000000, 10000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -7453,14 +7453,14 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9500000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 10000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9500000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 10000000000, 30000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -7470,7 +7470,7 @@ module ferum::market {
             s(b"(0.9 qty: 13, crankQty: 0)"),
         ]);
         // New order.
-        let newOrderID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8500000000, 300000000000);
+        let newOrderID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8500000000, 300000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -7515,11 +7515,11 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 4);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
         ], vector[
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -7528,7 +7528,7 @@ module ferum::market {
             s(b"(0.9 qty: 13, crankQty: 0)"),
         ]);
         // New order.
-        let newOrderID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5500000000, 310000000000);
+        let newOrderID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5500000000, 310000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
         ], vector[
             s(b"(0.6 qty: 0, crankQty: 4)"),
@@ -7586,12 +7586,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        let orderIDA = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        let orderIDB = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        let orderIDC = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        let orderIDA = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        let orderIDB = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        let orderIDC = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderIDA));
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderIDB));
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderIDC));
@@ -7602,7 +7602,7 @@ module ferum::market {
         ], vector[
         ]);
         // New order.
-        let newOrderID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 120000000000);
+        let newOrderID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 120000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 0, crankQty: 3)"),
             s(b"(0.6 qty: 0, crankQty: 4)"),
@@ -7651,12 +7651,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 4);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
         ], vector[
@@ -7666,7 +7666,7 @@ module ferum::market {
             s(b"(0.9 qty: 13, crankQty: 0)"),
         ]);
         // New order.
-        let newOrderID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5500000000, 210000000000);
+        let newOrderID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5500000000, 210000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
         ], vector[
@@ -7712,12 +7712,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -7727,7 +7727,7 @@ module ferum::market {
             s(b"(0.9 qty: 13, crankQty: 0)"),
         ]);
         // New order.
-        let newOrderID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5500000000, 260000000000);
+        let newOrderID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5500000000, 260000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -7778,12 +7778,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -7793,7 +7793,7 @@ module ferum::market {
             s(b"(0.9 qty: 13, crankQty: 0)"),
         ]);
         // New order.
-        let newOrderID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5500000000, 300000000000);
+        let newOrderID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5500000000, 300000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 0, crankQty: 4)"),
@@ -7849,12 +7849,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 4);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)")
         ], vector[
@@ -7864,7 +7864,7 @@ module ferum::market {
             s(b"(0.9 qty: 13, crankQty: 0)"),
         ]);
         // New order.
-        let newOrderID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5500000000, 130000000000);
+        let newOrderID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5500000000, 130000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)")
         ], vector[
@@ -7906,12 +7906,12 @@ module ferum::market {
 
         // First insert into both cache and tree, then remove so that there are prices in the tree and only one in
         // the cache.
-        let orderIDA = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        let orderIDA = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderIDA));
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
@@ -7922,7 +7922,7 @@ module ferum::market {
         ]);
 
         // New order.
-        let newOrderID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5500000000, 180000000000);
+        let newOrderID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5500000000, 180000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -7968,12 +7968,12 @@ module ferum::market {
 
         // First insert into both cache and tree, then remove so that there are prices in the tree and only one in
         // the cache.
-        let orderIDA = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        let orderIDA = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderIDA));
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
@@ -7983,7 +7983,7 @@ module ferum::market {
             s(b"(0.9 qty: 13, crankQty: 0)"),
         ]);
         // New order.
-        let newOrderID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5500000000, 220000000000);
+        let newOrderID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5500000000, 220000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 0, crankQty: 4)"),
@@ -8036,12 +8036,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -8051,7 +8051,7 @@ module ferum::market {
             s(b"(0.5 qty: 13, crankQty: 0)"),
         ]);
         // New order.
-        let newOrderID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6500000000, 300000000000);
+        let newOrderID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6500000000, 300000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -8100,12 +8100,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -8115,7 +8115,7 @@ module ferum::market {
             s(b"(0.5 qty: 13, crankQty: 0)"),
         ]);
         // New order.
-        let newOrderID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5500000000, 300000000000);
+        let newOrderID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5500000000, 300000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -8159,12 +8159,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -8174,7 +8174,7 @@ module ferum::market {
             s(b"(0.5 qty: 13, crankQty: 0)"),
         ]);
         // New order.
-        let newOrderID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 10000000000, 220000000000);
+        let newOrderID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 10000000000, 220000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -8225,12 +8225,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -8240,7 +8240,7 @@ module ferum::market {
             s(b"(0.5 qty: 13, crankQty: 0)"),
         ]);
         // New order.
-        let newOrderID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 10000000000, 140000000000);
+        let newOrderID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 10000000000, 140000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -8286,14 +8286,14 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 4500000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 4000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 4500000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 4000000000, 30000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -8303,7 +8303,7 @@ module ferum::market {
             s(b"(0.5 qty: 13, crankQty: 0)"),
         ]);
         // New order.
-        let newOrderID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5500000000, 210000000000);
+        let newOrderID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5500000000, 210000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -8348,11 +8348,11 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 4);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 40000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
         ], vector[
             s(b"(0.9 qty: 4, crankQty: 0)"),
@@ -8361,7 +8361,7 @@ module ferum::market {
             s(b"(0.6 qty: 8, crankQty: 0)"),
         ]);
         // New order.
-        let newOrderID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 10000000000, 310000000000);
+        let newOrderID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 10000000000, 310000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
         ], vector[
             s(b"(0.9 qty: 0, crankQty: 4)"),
@@ -8419,12 +8419,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        let orderIDA = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 80000000000);
-        let orderIDB = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 70000000000);
-        let orderIDC = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        let orderIDA = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 80000000000);
+        let orderIDB = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 70000000000);
+        let orderIDC = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderIDA));
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderIDB));
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderIDC));
@@ -8435,7 +8435,7 @@ module ferum::market {
         ], vector[
         ]);
         // New order.
-        let newOrderID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 10000000000, 120000000000);
+        let newOrderID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 10000000000, 120000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 0, crankQty: 3)"),
             s(b"(0.8 qty: 0, crankQty: 4)"),
@@ -8484,12 +8484,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 4);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
         ], vector[
@@ -8499,7 +8499,7 @@ module ferum::market {
             s(b"(0.5 qty: 13, crankQty: 0)"),
         ]);
         // New order.
-        let newOrderID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 10000000000, 210000000000);
+        let newOrderID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 10000000000, 210000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
         ], vector[
@@ -8545,12 +8545,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -8560,7 +8560,7 @@ module ferum::market {
             s(b"(0.5 qty: 13, crankQty: 0)"),
         ]);
         // New order.
-        let newOrderID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 10000000000, 260000000000);
+        let newOrderID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 10000000000, 260000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -8611,12 +8611,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -8626,7 +8626,7 @@ module ferum::market {
             s(b"(0.5 qty: 13, crankQty: 0)"),
         ]);
         // New order.
-        let newOrderID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 10000000000, 300000000000);
+        let newOrderID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 10000000000, 300000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 0, crankQty: 4)"),
@@ -8681,12 +8681,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -8696,7 +8696,7 @@ module ferum::market {
             s(b"(0.5 qty: 13, crankQty: 0)"),
         ]);
         // New order.
-        let newOrderID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 10000000000, 130000000000);
+        let newOrderID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 10000000000, 130000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -8736,12 +8736,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        let orderID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        let orderID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID));
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
@@ -8751,7 +8751,7 @@ module ferum::market {
             s(b"(0.5 qty: 13, crankQty: 0)"),
         ]);
         // New order.
-        let newOrderID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 10000000000, 180000000000);
+        let newOrderID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 10000000000, 180000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -8800,12 +8800,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        let orderID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
+        let orderID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
         cancel_order<FMA, FMB>(user, get_api_order_id<FMA, FMB>(orderID));
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
@@ -8815,7 +8815,7 @@ module ferum::market {
             s(b"(0.5 qty: 13, crankQty: 0)"),
         ]);
         // New order.
-        let newOrderID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 10000000000, 220000000000);
+        let newOrderID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 10000000000, 220000000000);
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 0, crankQty: 4)"),
@@ -8870,12 +8870,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 60000000000);
-        let orderID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 60000000000);
+        let orderID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -8914,12 +8914,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        let orderID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        let orderID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -8959,14 +8959,14 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 60000000000);
-        let orderID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 60000000000);
+        let orderID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
         // Execute partially.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6500000000, 230000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6500000000, 230000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -9006,14 +9006,14 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        let orderID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        let orderID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
         // Execute partially.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8500000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8500000000, 30000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -9053,13 +9053,13 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8500000000, 30000000000); // Maker order.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        let orderID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8500000000, 30000000000); // Maker order.
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        let orderID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -9106,13 +9106,13 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        let orderID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 60000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8500000000, 30000000000); // Taker order.
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        let orderID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 60000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8500000000, 30000000000); // Taker order.
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -9153,13 +9153,13 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8500000000, 10000000000); // Maker order.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        let orderID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8500000000, 30000000000); // Taker order.
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8500000000, 10000000000); // Maker order.
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        let orderID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8500000000, 30000000000); // Taker order.
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -9206,13 +9206,13 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5500000000, 10000000000); // Maker order.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 6000000000, 80000000000);
-        let orderID = add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 5000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 9000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5500000000, 30000000000); // Taker order.
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5500000000, 10000000000); // Maker order.
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 80000000000);
+        let orderID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5500000000, 30000000000); // Taker order.
         assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.9 qty: 3, crankQty: 0)"),
             s(b"(0.8 qty: 4, crankQty: 0)"),
@@ -9262,12 +9262,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        let orderID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8500000000, 70000000000); // Taker order.
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        let orderID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8500000000, 70000000000); // Taker order.
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -9292,12 +9292,12 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8500000000, 70000000000); // Maker order.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        let orderID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8500000000, 70000000000); // Maker order.
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        let orderID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -9324,13 +9324,13 @@ module ferum::market {
         let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
 
         // Setup.
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8500000000, 40000000000); // Maker order.
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 8000000000, 80000000000);
-        let orderID = add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 9000000000, 70000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 7000000000, 50000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 6000000000, 40000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_BUY, BEHAVIOUR_GTC, 5000000000, 30000000000);
-        add_user_limit_order<FMA, FMB>(user, SIDE_SELL, BEHAVIOUR_GTC, 8500000000, 30000000000); // Taker order.
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8500000000, 40000000000); // Maker order.
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        let orderID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 7000000000, 50000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 6000000000, 40000000000);
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8500000000, 30000000000); // Taker order.
         assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[
             s(b"(0.5 qty: 3, crankQty: 0)"),
             s(b"(0.6 qty: 4, crankQty: 0)"),
@@ -9482,12 +9482,12 @@ module ferum::market {
             let key = *vector::borrow(&keys, i);
             let info = table::remove(&mut elements, key);
             let elemStr = price_level_orders_to_str(info.orders);
-            let str = if (key.side == SIDE_BUY) {
+            let str = if (key.side == 1 /* SIDE_BUY */) {
                 s(b"BUY ")
             } else {
                 s(b"SELL ")
             };
-            string::append(&mut str, ftu::pretty_print_fp(key.price, DECIMAL_PLACES));
+            string::append(&mut str, ftu::pretty_print_fp(key.price, 10 /* DECIMAL_PLACES */));
             string::append_utf8(&mut str, b"[");
             string::append(&mut str, ftu::u16_to_string(info.priceLevelID));
             string::append_utf8(&mut str, b"]: ");
@@ -9539,7 +9539,7 @@ module ferum::market {
         let out = s(b"(");
         string::append(&mut out, ftu::u32_to_string(order.internalID));
         string::append(&mut out, s(b", "));
-        string::append(&mut out, ftu::pretty_print_fp(order.qty, DECIMAL_PLACES));
+        string::append(&mut out, ftu::pretty_print_fp(order.qty, 10 /* DECIMAL_PLACES */));
         string::append(&mut out, s(b")"));
         out
     }
@@ -9550,7 +9550,7 @@ module ferum::market {
         expectedTree: vector<string::String>,
         expectedCache: vector<string::String>,
     ) acquires MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree {
-        assert_price_store_qtys<I, Q>(marketAddr, SIDE_BUY, expectedCache, expectedTree)
+        assert_price_store_qtys<I, Q>(marketAddr, 1 /* SIDE_BUY */, expectedCache, expectedTree)
     }
 
     #[test_only]
@@ -9559,7 +9559,7 @@ module ferum::market {
         expectedTree: vector<string::String>,
         expectedCache: vector<string::String>,
     ) acquires MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree {
-        assert_price_store_qtys<I, Q>(marketAddr, SIDE_SELL, expectedCache, expectedTree)
+        assert_price_store_qtys<I, Q>(marketAddr, 2 /* SIDE_SELL */, expectedCache, expectedTree)
     }
 
     #[test_only]
@@ -9569,7 +9569,7 @@ module ferum::market {
         expectedCache: vector<string::String>,
         expectedTree: vector<string::String>,
     ) acquires MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree {
-        let (tree, cache) = if (side == SIDE_BUY) {
+        let (tree, cache) = if (side == 1 /* SIDE_BUY */) {
             (&borrow_global<MarketBuyTree<I, Q>>(marketAddr).tree, &borrow_global<MarketBuyCache<I, Q>>(marketAddr).cache)
         } else {
             (&borrow_global<MarketSellTree<I, Q>>(marketAddr).tree, &borrow_global<MarketSellCache<I, Q>>(marketAddr).cache)
@@ -9595,10 +9595,10 @@ module ferum::market {
     #[test_only]
     fun market_tree_to_str(tree: &Tree<PriceStoreElem>, side: u8, priceLevelIDs: bool): vector<string::String> {
         let out = vector[];
-        let it = tree_iterate(tree, if (side == SIDE_BUY) {
-            INCREASING_ITERATOR
+        let it = tree_iterate(tree, if (side == 1 /* SIDE_BUY */) {
+            2 /* INCREASING_ITERATOR */
         } else {
-           DECREASING_ITERATOR
+           1 /* DECREASING_ITERATOR */
         });
         while (it.pos.nodeID != 0) {
             let (price, elem) = tree_get_next(tree, &mut it);
@@ -9669,16 +9669,16 @@ module ferum::market {
     #[test_only]
     fun price_store_elem_to_str(price: u64, elem: &PriceStoreElem, priceLevelID: bool): string::String {
         let out = s(b"(");
-        string::append(&mut out, ftu::pretty_print_fp(price, DECIMAL_PLACES));
+        string::append(&mut out, ftu::pretty_print_fp(price, 10 /* DECIMAL_PLACES */));
         if (priceLevelID) {
             string::append_utf8(&mut out, b" priceLevelID: ");
             string::append(&mut out, ftu::u16_to_string(elem.priceLevelID));
             string::append_utf8(&mut out, b",");
         };
         string::append_utf8(&mut out, b" qty: ");
-        string::append(&mut out, ftu::pretty_print_fp(elem.qty, DECIMAL_PLACES));
+        string::append(&mut out, ftu::pretty_print_fp(elem.qty, 10 /* DECIMAL_PLACES */));
         string::append_utf8(&mut out, b", crankQty: ");
-        string::append(&mut out, ftu::pretty_print_fp(elem.makerCrankPendingQty, DECIMAL_PLACES));
+        string::append(&mut out, ftu::pretty_print_fp(elem.makerCrankPendingQty, 10 /* DECIMAL_PLACES */));
         string::append_utf8(&mut out, b")");
         out
     }
@@ -9700,12 +9700,12 @@ module ferum::market {
     #[test_only]
     fun assert_order_collateral<I, Q>(book: &Orderbook<I, Q>, internalOrderID: u32, buy: u64, sell: u64) {
         let order = table::borrow(&book.ordersTable.objects, internalOrderID);
-        if (coin::value(&order.buyCollateral) != fp_convert(buy, coin::decimals<Q>(), FP_NO_PRECISION_LOSS)) {
+        if (coin::value(&order.buyCollateral) != fp_convert(buy, coin::decimals<Q>(), 1 /* FP_NO_PRECISION_LOSS */)) {
             debug::print(&s(b"Actual buy collateral (in Q coin decimals)"));
             debug::print(&coin::value(&order.buyCollateral));
             abort 0
         };
-        if (coin::value(&order.sellCollateral) != fp_convert(sell, coin::decimals<I>(), FP_NO_PRECISION_LOSS)) {
+        if (coin::value(&order.sellCollateral) != fp_convert(sell, coin::decimals<I>(), 1 /* FP_NO_PRECISION_LOSS */)) {
             debug::print(&s(b"Actual sell collateral (in I coin decimals)"));
             debug::print(&coin::value(&order.sellCollateral));
             abort 0
@@ -9738,7 +9738,7 @@ module ferum::market {
             let side = order.metadata.side;
             let price = order.metadata.price;
             let priceLevelMakerQty: u64 = if (is_price_store_elem_in_cache(&book.summary, side, price)) {
-                let cache = if (side == SIDE_BUY) {
+                let cache = if (side == 1 /* SIDE_BUY */) {
                     &borrow_global<MarketBuyCache<I, Q>>(marketAddr).cache
                 } else {
                     &borrow_global<MarketSellCache<I, Q>>(marketAddr).cache
@@ -9749,7 +9749,7 @@ module ferum::market {
                 let node = vector::borrow(&cache.list, idx);
                 node.value.makerCrankPendingQty
             } else {
-                let tree = if (side == SIDE_BUY) {
+                let tree = if (side == 1 /* SIDE_BUY */) {
                     &mut borrow_global_mut<MarketBuyTree<I, Q>>(marketAddr).tree
                 } else {
                     &mut borrow_global_mut<MarketSellTree<I, Q>>(marketAddr).tree
@@ -9836,12 +9836,12 @@ module ferum::market {
         quoteBalance: u64,
     ) {
         let account = table::borrow(&book.marketAccounts, accountKey);
-        if (coin::value(&account.instrumentBalance) != fp_convert(instrumentBalance, coin::decimals<I>(), FP_NO_PRECISION_LOSS)) {
+        if (coin::value(&account.instrumentBalance) != fp_convert(instrumentBalance, coin::decimals<I>(), 1 /* FP_NO_PRECISION_LOSS */)) {
             debug::print(&s(b"Actual instrument balance (in I coin decimals)"));
             debug::print(&coin::value(&account.instrumentBalance));
             abort 0
         };
-        if (coin::value(&account.quoteBalance) != fp_convert(quoteBalance, coin::decimals<Q>(), FP_NO_PRECISION_LOSS)) {
+        if (coin::value(&account.quoteBalance) != fp_convert(quoteBalance, coin::decimals<Q>(), 1 /* FP_NO_PRECISION_LOSS */)) {
             debug::print(&s(b"Actual quote balance (in Q coin decimals)"));
             debug::print(&coin::value(&account.quoteBalance));
             abort 0
@@ -10071,13 +10071,13 @@ module ferum::market {
     fun fp_mul(a: u64, b: u64, mode: u8): u64 {
         let a128 = (a as u128);
         let b128 = (b as u128);
-        let amt = (a128 * b128) / DECIMAL_PLACES_EXP_U128;
-        if (mode != FP_TRUNC) {
-            let precisionLoss = amt * DECIMAL_PLACES_EXP_U128 < a128 * b128;
+        let amt = (a128 * b128) / 10000000000 /* DECIMAL_PLACES_EXP_U128 */;
+        if (mode != 3 /* FP_TRUNC */) {
+            let precisionLoss = amt * 10000000000 /* DECIMAL_PLACES_EXP_U128 */ < a128 * b128;
             if (precisionLoss) {
-                if (mode == FP_ROUND_UP) {
+                if (mode == 2 /* FP_ROUND_UP */) {
                     amt = amt + 1;
-                } else if (mode == FP_NO_PRECISION_LOSS) {
+                } else if (mode == 1 /* FP_NO_PRECISION_LOSS */) {
                     abort ERR_FP_PRECISION_LOSS
                 };
             };
@@ -10088,13 +10088,13 @@ module ferum::market {
     fun fp_div(a: u64, b: u64, mode: u8): u64 {
         let a128 = (a as u128);
         let b128 = (b as u128);
-        let amt = (a128 * DECIMAL_PLACES_EXP_U128) / b128;
-        if (mode != FP_TRUNC) {
-            let precisionLoss = amt * b128 < a128 * DECIMAL_PLACES_EXP_U128;
+        let amt = (a128 * 10000000000 /* DECIMAL_PLACES_EXP_U128 */) / b128;
+        if (mode != 3 /* FP_TRUNC */) {
+            let precisionLoss = amt * b128 < a128 * 10000000000 /* DECIMAL_PLACES_EXP_U128 */;
             if (precisionLoss) {
-                if (mode == FP_ROUND_UP) {
+                if (mode == 2 /* FP_ROUND_UP */) {
                     amt = amt + 1;
-                } else if (mode == FP_NO_PRECISION_LOSS) {
+                } else if (mode == 1 /* FP_NO_PRECISION_LOSS */) {
                     abort ERR_FP_PRECISION_LOSS
                 };
             };
@@ -10103,16 +10103,16 @@ module ferum::market {
     }
 
     fun fp_convert(a: u64, decimals: u8, mode: u8): u64 {
-        let decimalMultAdj = exp64(DECIMAL_PLACES - decimals);
-        let intPart = a / DECIMAL_PLACES_EXP_U64;
-        let decimalPart = (a % DECIMAL_PLACES_EXP_U64) / decimalMultAdj;
+        let decimalMultAdj = exp64(10 /* DECIMAL_PLACES */ - decimals);
+        let intPart = a / 10000000000 /* DECIMAL_PLACES_EXP_U64 */;
+        let decimalPart = (a % 10000000000 /* DECIMAL_PLACES_EXP_U64 */) / decimalMultAdj;
         let val = intPart * exp64(decimals) + decimalPart;
-        if (mode != FP_TRUNC) {
-            let precisionLoss =  decimalPart * decimalMultAdj < a % DECIMAL_PLACES_EXP_U64;
+        if (mode != 3 /* FP_TRUNC */) {
+            let precisionLoss =  decimalPart * decimalMultAdj < a % 10000000000 /* DECIMAL_PLACES_EXP_U64 */;
             if (precisionLoss) {
-                if (mode == FP_ROUND_UP) {
+                if (mode == 2 /* FP_ROUND_UP */) {
                     val = val + 1;
-                } else if (mode == FP_NO_PRECISION_LOSS) {
+                } else if (mode == 1 /* FP_NO_PRECISION_LOSS */) {
                     abort ERR_FP_PRECISION_LOSS
                 };
             };
@@ -10121,19 +10121,19 @@ module ferum::market {
     }
 
     fun fp_from(a: u64, decimals: u8): u64 {
-        a * exp64(DECIMAL_PLACES - decimals)
+        a * exp64(10 /* DECIMAL_PLACES */ - decimals)
     }
 
     fun fp_round(a: u64, decimals: u8, mode: u8): u64 {
-        assert!(decimals < DECIMAL_PLACES, ERR_FP_PRECISION_LOSS);
-        let decimalsExp = exp64(DECIMAL_PLACES - decimals);
+        assert!(decimals < 10 /* DECIMAL_PLACES */, ERR_FP_PRECISION_LOSS);
+        let decimalsExp = exp64(10 /* DECIMAL_PLACES */ - decimals);
         let val = a / decimalsExp * decimalsExp;
-        if (mode != FP_TRUNC) {
+        if (mode != 3 /* FP_TRUNC */) {
             let precisionLoss =  val < a;
             if (precisionLoss) {
-                if (mode == FP_ROUND_UP) {
+                if (mode == 2 /* FP_ROUND_UP */) {
                     val = val + decimalsExp;
-                } else if (mode == FP_NO_PRECISION_LOSS) {
+                } else if (mode == 1 /* FP_NO_PRECISION_LOSS */) {
                     abort ERR_FP_PRECISION_LOSS
                 };
             };
@@ -10143,108 +10143,108 @@ module ferum::market {
 
     #[test]
     fun test_fp_convert() {
-        let converted = fp_convert(51230000000, 4, FP_NO_PRECISION_LOSS);
+        let converted = fp_convert(51230000000, 4, 1 /* FP_NO_PRECISION_LOSS */);
         assert!(converted == 51230, 0);
 
-        let converted = fp_convert(51230000000, 5, FP_NO_PRECISION_LOSS);
+        let converted = fp_convert(51230000000, 5, 1 /* FP_NO_PRECISION_LOSS */);
         assert!(converted == 512300, 0);
 
-        let converted = fp_convert(51230000000, 10, FP_NO_PRECISION_LOSS);
+        let converted = fp_convert(51230000000, 10, 1 /* FP_NO_PRECISION_LOSS */);
         assert!(converted == 51230000000, 0);
 
-        let converted = fp_convert(51230000000, 3, FP_NO_PRECISION_LOSS);
+        let converted = fp_convert(51230000000, 3, 1 /* FP_NO_PRECISION_LOSS */);
         assert!(converted == 5123, 0);
 
-        let converted = fp_convert(1000000000000, 8, FP_NO_PRECISION_LOSS);
+        let converted = fp_convert(1000000000000, 8, 1 /* FP_NO_PRECISION_LOSS */);
         assert!(converted == 10000000000, 0);
     }
 
     #[test]
     #[expected_failure(abort_code=ERR_FP_PRECISION_LOSS)]
     fun test_fp_convert_precision_loss() {
-        fp_convert(51230000000, 2, FP_NO_PRECISION_LOSS);
+        fp_convert(51230000000, 2, 1 /* FP_NO_PRECISION_LOSS */);
     }
 
     #[test]
     fun test_fp_convert_lose_precision_round_up_trunc() {
-        let converted = fp_convert(51230000000, 2, FP_ROUND_UP);
+        let converted = fp_convert(51230000000, 2, 2 /* FP_ROUND_UP */);
         assert!(converted == 513, 0);
-        let converted = fp_convert(51230000000, 2, FP_TRUNC);
+        let converted = fp_convert(51230000000, 2, 3 /* FP_TRUNC */);
         assert!(converted == 512, 0);
     }
 
     #[test]
     fun test_fp_round() {
-        let rounded = fp_round(51230000000, 4, FP_NO_PRECISION_LOSS);
+        let rounded = fp_round(51230000000, 4, 1 /* FP_NO_PRECISION_LOSS */);
         assert!(rounded == 51230000000, 0);
     }
 
     #[test]
     #[expected_failure(abort_code=ERR_FP_PRECISION_LOSS)]
     fun test_fp_round_precision_loss() {
-        fp_round(51230000000, 2, FP_NO_PRECISION_LOSS);
+        fp_round(51230000000, 2, 1 /* FP_NO_PRECISION_LOSS */);
     }
 
     #[test]
     fun test_fp_round_lose_precision_round_up_trunc() {
-        let rounded = fp_round(51230000000, 2, FP_ROUND_UP);
+        let rounded = fp_round(51230000000, 2, 2 /* FP_ROUND_UP */);
         assert!(rounded == 51300000000, 0);
-        let rounded = fp_round(51230000000, 2, FP_TRUNC);
+        let rounded = fp_round(51230000000, 2, 3 /* FP_TRUNC */);
         assert!(rounded == 51200000000, 0);
     }
 
     #[test]
     fun test_fp_mul() {
-        let product = fp_mul(10560000000000, 20560000000000, FP_NO_PRECISION_LOSS);
+        let product = fp_mul(10560000000000, 20560000000000, 1 /* FP_NO_PRECISION_LOSS */);
         assert!(product == 21711360000000000, 0);
     }
 
     #[test]
     fun test_fp_mul_with_decimals() {
-        let product = fp_mul(10560000000, 2056000000000, FP_NO_PRECISION_LOSS);
+        let product = fp_mul(10560000000, 2056000000000, 1 /* FP_NO_PRECISION_LOSS */);
         assert!(product == 2171136000000, 0);
     }
 
     #[test]
     fun test_fp_mul_precision_loss_round_up_trunc() {
-        let product = fp_mul(1, 1, FP_TRUNC);
+        let product = fp_mul(1, 1, 3 /* FP_TRUNC */);
         assert!(product == 0, 0);
-        product = fp_mul(1, 1, FP_ROUND_UP);
+        product = fp_mul(1, 1, 2 /* FP_ROUND_UP */);
         assert!(product == 1, 0);
     }
 
     #[test]
     #[expected_failure(abort_code=ERR_FP_PRECISION_LOSS)]
     fun test_fp_mul_precision_loss() {
-        fp_mul(1, 1, FP_NO_PRECISION_LOSS);
+        fp_mul(1, 1, 1 /* FP_NO_PRECISION_LOSS */);
     }
 
     #[test]
     fun test_fp_div() {
-        let q = fp_div(10560000000000, 30000000000, FP_NO_PRECISION_LOSS);
+        let q = fp_div(10560000000000, 30000000000, 1 /* FP_NO_PRECISION_LOSS */);
         assert!(q == 3520000000000, 0);
     }
 
     #[test]
     fun test_fp_div_precision_loss_round_up_trunc() {
-        let q = fp_div(1, 3, FP_ROUND_UP);
+        let q = fp_div(1, 3, 2 /* FP_ROUND_UP */);
         assert!(q == 3333333334, 0);
-        q = fp_div(1, 3, FP_TRUNC);
+        q = fp_div(1, 3, 3 /* FP_TRUNC */);
         assert!(q == 3333333333, 0);
     }
 
     #[test]
     #[expected_failure(abort_code=ERR_FP_PRECISION_LOSS)]
     fun test_fp_div_precision_loss() {
-        fp_div(1, 3, FP_NO_PRECISION_LOSS);
+        fp_div(1, 3, 1 /* FP_NO_PRECISION_LOSS */);
     }
 
     #[test]
     #[expected_failure]
     fun test_fp_div_exceed_max() {
         let a = 1;
-        let b = MAX_U64;
-        fp_div(b, a, FP_TRUNC);
+        let b = 18446744073709551615 /* MAX_U64 */;
+        fp_div(b, a, 3 /* FP_TRUNC */);
     }
 
     // </editor-fold>
@@ -10938,7 +10938,7 @@ module ferum::market {
     }
 
     inline fun new_cache<T: drop + store>(type: u8): Cache<T> {
-        assert!(type == SIDE_BUY || type == SIDE_SELL, ERR_CACHE_INVALID_TYPE);
+        assert!(type == 1 /* SIDE_BUY */ || type == 2 /* SIDE_SELL */, ERR_CACHE_INVALID_TYPE);
         Cache {
             side: type,
             list: vector::empty(),
@@ -10951,7 +10951,7 @@ module ferum::market {
         // Find insert index.
         let size = vector::length(&cache.list);
         let i = size;
-        if (cache.side == SIDE_BUY) {
+        if (cache.side == 1 /* SIDE_BUY */) {
             while (i > 0) {
                 let p = vector::borrow(&cache.list, i - 1);
                 if (key < p.key) {
@@ -11036,7 +11036,7 @@ module ferum::market {
     fun test_cache_insertion_deletion_buy() {
         // Tests that items are inserted / deleted into the list in sorted order.
 
-        let cache = new_cache(SIDE_BUY);
+        let cache = new_cache(1 /* SIDE_BUY */);
         cache_insert(&mut cache, 5, 10);
         cache_insert(&mut cache, 4, 8);
         cache_insert(&mut cache, 3, 6);
@@ -11131,7 +11131,7 @@ module ferum::market {
     fun test_cache_insertion_deletion_sell() {
         // Tests that items are inserted / deleted into the list in sorted order.
 
-        let cache = new_cache(SIDE_SELL);
+        let cache = new_cache(2 /* SIDE_SELL */);
         cache_insert(&mut cache, 5, 10);
         cache_insert(&mut cache, 4, 8);
         cache_insert(&mut cache, 3, 6);
@@ -11225,7 +11225,7 @@ module ferum::market {
     #[test]
     #[expected_failure(abort_code=ERR_CACHE_DUPLICATE_ITEM)]
     fun test_cache_sell_duplicate() {
-        let cache = new_cache(SIDE_SELL);
+        let cache = new_cache(2 /* SIDE_SELL */);
         cache_insert(&mut cache, 1, 2);
         cache_insert(&mut cache, 1, 4);
         destroy_cache(cache);
@@ -11234,7 +11234,7 @@ module ferum::market {
     #[test]
     #[expected_failure(abort_code=ERR_CACHE_DUPLICATE_ITEM)]
     fun test_cache_buy_duplicate() {
-        let cache = new_cache(SIDE_BUY);
+        let cache = new_cache(1 /* SIDE_BUY */);
         cache_insert(&mut cache, 1, 6);
         cache_insert(&mut cache, 1, 5);
         destroy_cache(cache);
@@ -11243,7 +11243,7 @@ module ferum::market {
     #[test]
     #[expected_failure(abort_code=ERR_CACHE_ITEM_NOT_FOUND)]
     fun test_cache_sell_unknown_item() {
-        let cache = new_cache(SIDE_SELL);
+        let cache = new_cache(2 /* SIDE_SELL */);
         cache_insert(&mut cache, 1, 3);
         cache_insert(&mut cache, 2, 8);
         cache_remove(&mut cache, 10);
@@ -11253,7 +11253,7 @@ module ferum::market {
     #[test]
     #[expected_failure(abort_code=ERR_CACHE_ITEM_NOT_FOUND)]
     fun test_cache_buy_unknown_item() {
-        let cache = new_cache(SIDE_BUY);
+        let cache = new_cache(1 /* SIDE_BUY */);
         cache_insert(&mut cache, 1, 3);
         cache_insert(&mut cache, 2, 9);
         cache_remove(&mut cache, 10);
@@ -12361,7 +12361,7 @@ module ferum::market {
         let i = 0;
         let pathSize = vector::length(&path);
         let itemPathInfo = vector::pop_back(&mut path);
-        let deletedChildType = CHILD_TYPE_NULL;
+        let deletedChildType = 0 /* CHILD_TYPE_NULL */;
         let treeRoot = tree.root;
         while(i < pathSize) {
             let unusedNodeStack = tree.unusedNodeStack;
@@ -12391,7 +12391,7 @@ module ferum::market {
             //
             // If there was no deletion in the previous iteration, we can assume this is a leaf node and default to
             // deleting the rightElemIdx.
-            let idxToDelete = if (deletedChildType == CHILD_TYPE_LEFT && itemPathInfo.rightElemIdx > 0) {
+            let idxToDelete = if (deletedChildType == 1 /* CHILD_TYPE_LEFT */ && itemPathInfo.rightElemIdx > 0) {
                 itemPathInfo.rightElemIdx - 1
             } else {
                 itemPathInfo.rightElemIdx
@@ -12399,7 +12399,7 @@ module ferum::market {
             let deletedElem = vector::remove(&mut node.elements, idxToDelete);
             // If we deleted a child of the current node in the previous iteration, update the pointers to the children.
             // Should only a require an update if the left of the removed element was deleted.
-            if (deletedChildType == CHILD_TYPE_LEFT) {
+            if (deletedChildType == 1 /* CHILD_TYPE_LEFT */) {
                 if (idxToDelete == 0) {
                     //
                     //       ( [B] [ ] )
@@ -12617,10 +12617,10 @@ module ferum::market {
             };
             // Neither immediate siblings had enough to give. we'll merge and then delete an element from the parent.
             let nodeToMergeID = if (nextNodeSmall) {
-                deletedChildType = CHILD_TYPE_RIGHT;
+                deletedChildType = 2 /* CHILD_TYPE_RIGHT */;
                 itemPathInfo.rightSibling
             } else if (prevNodeSmall) {
-                deletedChildType = CHILD_TYPE_LEFT;
+                deletedChildType = 1 /* CHILD_TYPE_LEFT */;
                 itemPathInfo.leftSibling
             } else {
                 abort 0
@@ -12646,7 +12646,7 @@ module ferum::market {
             // Push the elements from the deleted node into the node that lives.
             let parentPathInfo = vector::pop_back(&mut path);
             let node = table::borrow_mut(&mut tree.nodes, itemPathInfo.nodeID);
-            if (deletedChildType == CHILD_TYPE_RIGHT) {
+            if (deletedChildType == 2 /* CHILD_TYPE_RIGHT */) {
                 //
                 //       ( [A]   [B] )
                 //        |    |    |
@@ -12735,9 +12735,9 @@ module ferum::market {
                 type,
             }
         } else {
-            let (nodeID, idx) = if (type == INCREASING_ITERATOR) {
+            let (nodeID, idx) = if (type == 2 /* INCREASING_ITERATOR */) {
                 (tree.min, 0)
-            } else if (type == DECREASING_ITERATOR) {
+            } else if (type == 1 /* DECREASING_ITERATOR */) {
                 let node = table::borrow(&tree.nodes, tree.max);
                 (tree.max, vector::length(&node.elements) - 1)
             } else {
@@ -12802,7 +12802,7 @@ module ferum::market {
     inline fun tree_next<T: copy + store + drop>(tree: &Tree<T>, it: &mut TreeIterator) {
         assert!(it.pos.nodeID != 0, ERR_TREE_EMPTY_ITERATOR);
         let node = table::borrow(&tree.nodes, it.pos.nodeID);
-        if (it.type == DECREASING_ITERATOR) {
+        if (it.type == 1 /* DECREASING_ITERATOR */) {
             if (it.pos.idx > 0) {
                 it.pos.idx = it.pos.idx - 1;
             } else {
@@ -13049,7 +13049,7 @@ module ferum::market {
     //     while (i < 5000) {
     //         let elem = vector::pop_back(&mut allElems);
     //         vector::push_back(&mut treeElems, elem);
-    //         vector::push_back(&mut treeValues, ((elem * 2 % MAX_U16) as u16));
+    //         vector::push_back(&mut treeValues, ((elem * 2 % 65535 /* MAX_U16 */) as u16));
     //         i = i + 1;
     //     };
     //     let tree = build_tree(6, treeElems, treeValues);
@@ -13069,7 +13069,7 @@ module ferum::market {
     //             // Insert.
     //             let insertElemIdx = seed % i3 % vector::length(&elemsToAdd);
     //             let elem = vector::swap_remove(&mut elemsToAdd, insertElemIdx);
-    //             let value = ((elem * 2 % MAX_U16) as u16);
+    //             let value = ((elem * 2 % 65535 /* MAX_U16 */) as u16);
     //             tree_insert(&mut tree, elem, value);
     //             assert_valid_tree(&tree);
     //             vector::push_back(&mut treeElems, elem);
@@ -13247,7 +13247,7 @@ module ferum::market {
             111, 110, 109,
             123, 122, 121,
         ];
-        let it = tree_iterate(&tree, INCREASING_ITERATOR);
+        let it = tree_iterate(&tree, 2 /* INCREASING_ITERATOR */);
         let i = 0;
         while (it.pos.nodeID != 0) {
             let (key, val) = tree_get_next(&tree, &mut it);
@@ -13311,7 +13311,7 @@ module ferum::market {
             11, 12, 13,
             5, 6, 7,
         ];
-        let it = tree_iterate(&tree, DECREASING_ITERATOR);
+        let it = tree_iterate(&tree, 1 /* DECREASING_ITERATOR */);
         let i = 0;
         while (it.pos.nodeID != 0) {
             let (key, val) = tree_get_next(&tree, &mut it);
@@ -15224,7 +15224,7 @@ module ferum::market {
     fun assert_contains_range(tree: &Tree<u16>, start: u64, end: u64) {
         assert!(start != 0 && start < end, 0);
         // Check increasing direction.
-        let it = tree_iterate(tree, INCREASING_ITERATOR);
+        let it = tree_iterate(tree, 2 /* INCREASING_ITERATOR */);
         let expected = start;
         while (it.pos.nodeID != 0) {
             let (key, _) = tree_get_next(tree, &mut it);
@@ -15233,7 +15233,7 @@ module ferum::market {
         };
         assert!(expected == end + 1, 0);
         // Also check decreasing direction.
-        let it = tree_iterate(tree, DECREASING_ITERATOR);
+        let it = tree_iterate(tree, 1 /* DECREASING_ITERATOR */);
         let expected = end;
         while (it.pos.nodeID != 0) {
             let (key, _) = tree_get_next(tree, &mut it);
@@ -15254,7 +15254,7 @@ module ferum::market {
 
         // Check increasing direction.
         let count = 0;
-        let it = tree_iterate(tree, INCREASING_ITERATOR);
+        let it = tree_iterate(tree, 2 /* INCREASING_ITERATOR */);
         while (it.pos.nodeID != 0) {
             let (key, _) = tree_get_next(tree, &mut it);
             assert!(table::contains(&keySet, key), 0);
@@ -15263,7 +15263,7 @@ module ferum::market {
         assert!(count == vector::length(&keys), 0);
         // Also check the decreasing direction.
         count = 0;
-        it = tree_iterate(tree, DECREASING_ITERATOR);
+        it = tree_iterate(tree, 1 /* DECREASING_ITERATOR */);
         while (it.pos.nodeID != 0) {
             let (key, _z) = tree_get_next(tree, &mut it);
             assert!(table::contains(&keySet, key), 0);
@@ -15304,7 +15304,7 @@ module ferum::market {
                 true,
                 tree.root,
                 0,
-                MAX_U64,
+                18446744073709551615 /* MAX_U64 */,
             );
         };
 
