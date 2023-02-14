@@ -820,6 +820,83 @@ module ferum::market {
 
     // </editor-fold>
 
+    // <editor-fold defaultstate="collapsed" desc="View functions">
+
+    struct MarketAccountView {
+        activeOrders: vector<OrderID>,
+        instrumentBalance: u64, // Fixedpoint
+        quoteBalance: u64, // Fixedpoint
+    }
+
+    #[view]
+    public fun view_market_account<I, Q>(protocol: address, user: address): MarketAccountView acquires FerumInfo, Orderbook {
+        let marketAddr = get_market_addr<I, Q>();
+        let book = borrow_global<Orderbook<I, Q>>(marketAddr);
+        let key = MarketAccountKey {
+            protocolAddress: protocol,
+            userAddress: user,
+        };
+        assert!(table::contains(&book.marketAccounts, key), ERR_NO_MARKET_ACCOUNT);
+        let marketAccount = table::borrow(&book.marketAccounts, key);
+        let activeOrdersView = vector::empty();
+        let i = 0;
+        let size = vector::length(&marketAccount.activeOrders);
+        while (i < size) {
+            vector::push_back(&mut activeOrdersView, vector::borrow(&marketAccount.activeOrders, i).orderID);
+            i = i + 1;
+        };
+        MarketAccountView {
+            activeOrders: activeOrdersView,
+            instrumentBalance: fp_from(coin::value(&marketAccount.instrumentBalance), coin::decimals<I>()),
+            quoteBalance: fp_from(coin::value(&marketAccount.quoteBalance), coin::decimals<Q>()),
+        }
+    }
+
+    struct OrderView {
+        buyCollateral: u64, // Fixedpoint.
+        sellCollateral: u64, // Fixedpoint.
+        side: u8,
+        behaviour: u8,
+        price: u64, // Fixedpoint.
+        originalQty: u64, // Fixedpoint.
+        unfilledQty: u64, // Fixedpoint.
+        takerCrankPendingQty: u64, // Fixedpoint.
+        clientOrderID: u32,
+        marketBuyRemainingCollateral: u64, // Fixedpoint.
+    }
+
+    #[view]
+    public fun view_order<I, Q>(protocol: address, user: address, counter: u32): OrderView acquires FerumInfo, Orderbook {
+        let marketAddr = get_market_addr<I, Q>();
+        let book = borrow_global<Orderbook<I, Q>>(marketAddr);
+        let key = MarketAccountKey {
+            protocolAddress: protocol,
+            userAddress: user,
+        };
+        assert!(table::contains(&book.marketAccounts, key), ERR_NO_MARKET_ACCOUNT);
+        let marketAccount = table::borrow(&book.marketAccounts, key);
+        let orderID = OrderID {
+            accountKey: key,
+            counter,
+        };
+        let internalID = find_internal_order_id(&marketAccount.activeOrders, orderID);
+        let order = table::borrow(&book.ordersTable.objects, internalID);
+        OrderView {
+            buyCollateral: fp_from(coin::value(&order.buyCollateral), coin::decimals<Q>()),
+            sellCollateral: fp_from(coin::value(&order.sellCollateral), coin::decimals<I>()),
+            side: order.metadata.side,
+            behaviour: order.metadata.behaviour,
+            price: order.metadata.price,
+            originalQty: order.metadata.originalQty,
+            unfilledQty: order.metadata.unfilledQty,
+            takerCrankPendingQty: order.metadata.takerCrankPendingQty,
+            clientOrderID: order.metadata.clientOrderID,
+            marketBuyRemainingCollateral: order.metadata.marketBuyRemainingCollateral,
+        }
+    }
+
+    // </editor-fold>
+
     // <editor-fold defaultstate="collapsed" desc="Market public functions">
 
     public fun get_order_id(accountKey: MarketAccountKey, counter: u32): OrderID {
