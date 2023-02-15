@@ -1,0 +1,36 @@
+#!/usr/local/bin/python3
+
+import ast
+import re
+import subprocess
+import sys
+import os
+
+# Use `which aptos` command to find out where aptos is located.
+# If you don't have it, use brew to install it. 
+APTOS_PATH = os.getenv('APTOS_PATH') or '/usr/local/bin/aptos'
+
+ascii_pattern = r'(\[([0-9]+, )*[0-9]+\])'
+
+def convert_ascii(match_obj):
+  if match_obj.group(1) is not None:
+    ascii_list = ast.literal_eval(match_obj.group(1))
+    return ''.join(chr(i) for i in ascii_list)
+  else:
+    return "<Could Not Parse ASCII>"
+
+def main():
+  if APTOS_PATH == '':
+    raise Exception('Define path to Aptos cli')
+
+  args = sys.argv[1:]
+  process = subprocess.Popen([APTOS_PATH] + args + ['--bytecode-version', '6'], stdout=subprocess.PIPE)
+  for line_encoded in iter(process.stdout.readline, b''):
+    line = line_encoded.decode()
+    if "[debug]" in line:
+      print(re.sub(ascii_pattern, convert_ascii, line), end='')
+    else:
+      print(line, end='')
+
+if __name__ == '__main__':
+  main()
