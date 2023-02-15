@@ -82,6 +82,8 @@ module ferum::market {
     use ferum::test_utils::s;
     #[test_only]
     use aptos_std::debug;
+    use ferum::test_coins::{APTF, USDF};
+    use ferum::test_coins;
 
     // <editor-fold defaultstate="collapsed" desc="Errors">
 
@@ -97,6 +99,7 @@ module ferum::market {
     const ERR_INVALID_NOTIONAL_UNIT: u64 = 108;
     const ERR_INVALID_CRANKER_SPLIT: u64 = 109;
     const ERR_INVALID_SIDE: u64 = 110;
+    const ERR_INVALID_QTY: u64 = 124;
     const ERR_ORDER_EXECUTED_BUT_IS_PENDING_CRANK: u64 = 111;
     const ERR_PRICE_STORE_ELEM_NOT_FOUND: u64 = 112;
     const ERR_CRANK_UNFULFILLED_QTY: u64 = 113;
@@ -108,6 +111,8 @@ module ferum::market {
     const ERR_FEE_ROUNDING_ERROR: u64 = 119;
     const ERR_ACCOUNT_EXCEED_MAX_ORDERS: u64 = 120;
     const ERR_UNKNOWN_MARKET_ACCOUNT: u64 = 121;
+    const ERR_NON_APT_INSTRUMENT: u64 = 122;
+    const ERR_NON_USDF_QUOTE: u64 = 123;
 
     // </editor-fold>
 
@@ -739,7 +744,7 @@ module ferum::market {
         qty: u64, // Fixedpoint value.
         clientOrderID: u32,
         marketBuyMaxCollateral: u64, // Fixedpoint. Should only be specified for market orders.
-    ) acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue {
+    ) acquires FerumInfo, Orderbook, IndexingEventHandles {
         let accountKey = MarketAccountKey {
             protocolAddress: @ferum,
             userAddress: address_of(owner),
@@ -750,7 +755,7 @@ module ferum::market {
     public entry fun cancel_order_entry<I, Q>(
         owner: &signer,
         counter: u32,
-    ) acquires FerumInfo, Orderbook, MarketBuyTree, MarketBuyCache, MarketSellTree, MarketSellCache, IndexingEventHandles {
+    ) acquires FerumInfo, Orderbook, IndexingEventHandles {
         let accountKey = MarketAccountKey {
             protocolAddress: @ferum,
             userAddress: address_of(owner),
@@ -866,7 +871,7 @@ module ferum::market {
     }
 
     #[view]
-    public fun view_order<I, Q>(protocol: address, user: address, counter: u32): OrderView acquires FerumInfo, Orderbook {
+    public fun view_order<I, Q>(protocol: address, user: address, counter: u64): OrderView acquires FerumInfo, Orderbook {
         let marketAddr = get_market_addr<I, Q>();
         let book = borrow_global<Orderbook<I, Q>>(marketAddr);
         let key = MarketAccountKey {
@@ -877,7 +882,7 @@ module ferum::market {
         let marketAccount = table::borrow(&book.marketAccounts, key);
         let orderID = OrderID {
             accountKey: key,
-            counter,
+            counter: (counter as u32),
         };
         let internalID = find_internal_order_id(&marketAccount.activeOrders, orderID);
         let order = table::borrow(&book.ordersTable.objects, internalID);
@@ -1015,12 +1020,15 @@ module ferum::market {
         qty: u64, // Fixedpoint value.
         clientOrderID: u32,
         marketBuyMaxCollateral: u64, // Fixedpoint. Should only be specified for market orders.
-    ): OrderID acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue {
-        let marketAddr = get_market_addr<I, Q>();
-        let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
+    ): OrderID acquires FerumInfo, Orderbook, IndexingEventHandles {
+        assert!(type_info::type_of<I>() == type_info::type_of<test_coins::APTF>(), ERR_NON_APT_INSTRUMENT);
+        assert!(type_info::type_of<Q>() == type_info::type_of<test_coins::USDF>(), ERR_NON_USDF_QUOTE);
+
+        let marketAddr = get_market_addr<APTF, USDF>();
+        let book = borrow_global_mut<Orderbook<APTF, USDF>>(marketAddr);
         let execs = &mut vector[];
         let resourcesAccessed = default_resources_accessed();
-        let orderID = add_order_to_book<I, Q>(
+        let orderID = add_order_to_book(
             owner,
             accountKey,
             marketAddr,
@@ -1035,31 +1043,15 @@ module ferum::market {
             &mut resourcesAccessed,
         );
         // Add any created execution events to queue.
-        let execCount = vector::length(execs);
-        if (execCount > 0) {
-            let queue = &mut borrow_global_mut<EventQueue<I, Q>>(marketAddr).queue;
-            let i = 0;
-            let halfExecCount = execCount / 2;
-            while (i < halfExecCount) { // Inlined reverse.
-                vector::swap(execs, i, execCount - i - 1);
-                i = i + 1;
-            };
-            i = 0;
-            while (i < execCount) {
-                let exec = vector::pop_back(execs);
-                list_push(queue, exec);
-                i = i + 1;
-            };
-        };
         // Emit price update event.
-        // emit_price_update_event<I, Q>(marketAddr, resourcesAccessed);
+        emit_price_update_event<APTF, USDF>(marketAddr, resourcesAccessed);
         orderID
     }
 
     public fun cancel_order<I, Q>(
         owner: &signer,
         orderID: OrderID,
-    ) acquires FerumInfo, Orderbook, MarketBuyTree, MarketBuyCache, MarketSellTree, MarketSellCache, IndexingEventHandles {
+    ) acquires FerumInfo, Orderbook, IndexingEventHandles {
         let resourcesAccessed = default_resources_accessed();
         let marketAddr = get_market_addr<I, Q>();
         let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
@@ -1069,50 +1061,26 @@ module ferum::market {
         assert!(owns_account(owner, &orderID.accountKey, marketAccount), ERR_NOT_OWNER);
         let internalOrderID = find_internal_order_id(&marketAccount.activeOrders, orderID);
         assert!(table::contains(&book.ordersTable.objects, internalOrderID), ERR_UNKNOWN_ORDER);
-        let order = table::borrow(&book.ordersTable.objects, internalOrderID);
+        let order = table::borrow_mut(&mut book.ordersTable.objects, internalOrderID);
         assert!(order.metadata.ownerAddress != @0, ERR_UNKNOWN_ORDER);
-        let side = order.metadata.side;
-        let price = order.metadata.price;
-        // If the order is cancelable, then there is some amount of unfilledQty that is not pending a crank turn. Check
-        // for pending taker qty here. Maker qty is checked for when we try to remove from the price level.
-        assert!(order.metadata.unfilledQty > order.metadata.takerCrankPendingQty, ERR_ORDER_EXECUTED_BUT_IS_PENDING_CRANK);
-        // Also make sure the order has a price level associated with it.
-        assert!(order.priceLevelID != 0, ERR_UNKNOWN_ORDER);
-        // Remove order from price store and level.
-        let qtyCancelled = remove_order_from_price_store_and_level<I, Q>(
-            marketAddr, &mut book.priceLevelsTable, &mut book.summary,
-            internalOrderID, side, price, &mut resourcesAccessed);
-        // Update order.
-        let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr); // Reborrow.
-        let ordersTable = &mut book.ordersTable;
-        let order = table::borrow_mut(&mut ordersTable.objects, internalOrderID);
-        order.metadata.unfilledQty = order.metadata.unfilledQty - qtyCancelled;
+
+        let order = table::borrow_mut(&mut book.ordersTable.objects, internalOrderID);
+        order.metadata.unfilledQty = 0;
+        order.metadata.takerCrankPendingQty = 0;
+        order.metadata.marketBuyRemainingCollateral = 0;
         let marketAccount = table::borrow_mut(&mut book.marketAccounts, order.metadata.orderID.accountKey);
         // Release collateral.
         if (order.metadata.side == 1 /* SIDE_BUY */) {
-            let quoteDecimals = coin::decimals<Q>();
-            let quoteAmt = fp_convert(fp_mul(price, qtyCancelled, 1 /* FP_NO_PRECISION_LOSS */), quoteDecimals, 1 /* FP_NO_PRECISION_LOSS */);
-            let quoteCoinAmt = coin::extract(&mut order.buyCollateral, quoteAmt);
-            coin::merge(&mut marketAccount.quoteBalance, quoteCoinAmt);
+            coin::merge(&mut marketAccount.quoteBalance, coin::extract_all(&mut order.buyCollateral));
         } else {
-            let instrumentDecimals = coin::decimals<I>();
-            let instrumentAmt = fp_convert(qtyCancelled, instrumentDecimals, 1 /* FP_NO_PRECISION_LOSS */);
-            let instrumentCoinAmt = coin::extract(&mut order.sellCollateral, instrumentAmt);
-            coin::merge(&mut marketAccount.instrumentBalance, instrumentCoinAmt);
+            coin::merge(&mut marketAccount.instrumentBalance, coin::extract_all(&mut order.sellCollateral))
         };
-        // Shouldn't need to worry about market orders because they will never be in the book.
-        if (is_finalized(order)) {
-            // Order is fully finalized. Emit finalize event and reuse order object.
-            emit_finalized_event<I, Q>(
-                marketAddr,
-                order.metadata,
-            );
-            order.next = ordersTable.unusedStack;
-            order.priceLevelID = 0;
-            order.metadata = default_order_metadata();
-            ordersTable.unusedStack = internalOrderID;
-            remove_active_order_with_internal_order_id(&mut marketAccount.activeOrders, internalOrderID);
-        };
+        remove_active_order_with_order_id(&mut marketAccount.activeOrders, orderID);
+        // Emit finalize event.
+        emit_finalized_event<I, Q>(
+            marketAddr,
+            order.metadata,
+        );
         // Emit price update.
         emit_price_update_event<I, Q>(marketAddr, resourcesAccessed);
     }
@@ -1639,7 +1607,7 @@ module ferum::market {
         };
     }
 
-    fun add_order_to_book<I, Q>(
+    fun add_order_to_book(
         owner: &signer,
         accountKey: MarketAccountKey,
         marketAddr: address,
@@ -1649,10 +1617,11 @@ module ferum::market {
         qty: u64, // Fixedpoint value.
         clientOrderID: u32,
         marketBuyMaxCollateral: u64, // Should only be specified for market orders.
-        book: &mut Orderbook<I, Q>,
-        execs: &mut vector<ExecutionQueueEvent>,
-        resourcesAccessed: &mut ResourcesAccessed,
-    ): OrderID acquires MarketSellTree, MarketBuyTree, MarketSellCache, MarketBuyCache {
+        book: &mut Orderbook<APTF, USDF>,
+        _execs: &mut vector<ExecutionQueueEvent>,
+        _resourcesAccessed: &mut ResourcesAccessed,
+    ): OrderID acquires IndexingEventHandles {
+
         // Validate inputs.
         // <editor-fold defaultstate="collapsed" desc="Input Validation">
         let notional = fp_mul(price, qty, 1 /* FP_NO_PRECISION_LOSS */);
@@ -1660,6 +1629,7 @@ module ferum::market {
         fp_round(qty, book.iDecimals, 1 /* FP_NO_PRECISION_LOSS */);
         fp_round(price, book.qDecimals, 1 /* FP_NO_PRECISION_LOSS */);
         fp_round(marketBuyMaxCollateral, book.qDecimals, 1 /* FP_NO_PRECISION_LOSS */);
+        assert!(qty > 0, ERR_INVALID_QTY);
         assert!(side == 1 /* SIDE_BUY */ || side == 2 /* SIDE_SELL */, ERR_INVALID_SIDE);
         assert!(behaviour == 3 /* BEHAVIOUR_IOC */ || behaviour == 1 /* BEHAVIOUR_GTC */ || behaviour == 4 /* BEHAVIOUR_FOK */ || behaviour == 2 /* BEHAVIOUR_POST */, ERR_INVALID_BEHAVIOUR);
         if (price == 0) {
@@ -1675,23 +1645,6 @@ module ferum::market {
             assert!(marketBuyMaxCollateral == 0, ERR_INVALID_MAX_COLLATERAL_AMT);
         };
         // </editor-fold>
-
-        // Compute minAsk/maxBid.
-        let minAsk = if (book.summary.sellCacheMin != 0) {
-            book.summary.sellCacheMin
-        } else {
-            book.summary.sellTreeMin
-        };
-        let maxBid = if (book.summary.buyCacheMax != 0) {
-            book.summary.buyCacheMax
-        } else {
-            book.summary.buyTreeMax
-        };
-        let crossesSpread = (
-            price == 0 ||
-            side == 2 /* SIDE_SELL */ && price <= maxBid && maxBid != 0 ||
-            side == 1 /* SIDE_BUY */ && price >= minAsk && minAsk != 0
-        );
 
         // Get the market account.
         assert!(table::contains(&book.marketAccounts, accountKey), ERR_NO_MARKET_ACCOUNT);
@@ -1715,109 +1668,23 @@ module ferum::market {
             ownerAddress: address_of(owner),
             marketBuyRemainingCollateral: marketBuyMaxCollateral,
         };
-        // emit_creation_event<I, Q>(marketAddr, orderMetadata);
-
-        // Perform checks on order behaviour and cancel before trying to add to the book.
-        // <editor-fold defaultstate="collapsed" desc="Order Behaviour Checks">
-        if (behaviour == 3 /* BEHAVIOUR_IOC */ && price != 0 && !crossesSpread) {
-            // Cancel limit IOC orders that don't cross the spread because they won't execute.
-            // emit_finalized_event<I, Q>(marketAddr, orderMetadata);
-            return sentinal_order_id()
-        } else if (behaviour == 2 /* BEHAVIOUR_POST */ && crossesSpread) {
-            // Cancel POST orders that cross the spread because we can't guarantee that they will be makers.
-            // emit_finalized_event<I, Q>(marketAddr, orderMetadata);
-            return sentinal_order_id()
-        } else if (behaviour == 4 /* BEHAVIOUR_FOK */) {
-            // Check to make sure a FOK order can be filled by orders on the book. Otherwise, cancel it.
-            let remainingQty = qty;
-            // First, check the cache.
-            let cache = if (side == 2 /* SIDE_SELL */) {
-                resourcesAccessed.buyCache = true;
-                &borrow_global<MarketBuyCache<I, Q>>(marketAddr).cache
-            } else {
-                resourcesAccessed.sellCache = true;
-                &borrow_global<MarketSellCache<I, Q>>(marketAddr).cache
-            };
-            // Inlined cache iteration.
-            let i = vector::length(&cache.list);
-            while (i > 0) {
-                let cacheNode = vector::borrow(&cache.list, i - 1);
-                if (side == 2 /* SIDE_SELL */ && cacheNode.key < price || side == 1 /* SIDE_BUY */ && cacheNode.key > price) {
-                    // We've reached the limit price.
-                    break
-                };
-                if (cacheNode.value.qty == 0) {
-                    // Skip any prices that have no quantity (they are waiting for the crank to run before
-                    // they are removed.
-                    i = i - 1;
-                    continue
-                };
-                if (remainingQty < cacheNode.value.qty) {
-                    // Order qty is filled.
-                    remainingQty = 0;
-                    break
-                };
-                remainingQty = remainingQty - cacheNode.value.qty;
-                i = i - 1;
-            };
-            // Then check tree if we still have qty.
-            if (remainingQty > 0) {
-                let (tree, it) = if (side == 2 /* SIDE_SELL */) {
-                    resourcesAccessed.buyTree = true;
-                    let tree = &borrow_global<MarketBuyTree<I, Q>>(marketAddr).tree;
-                    let it = tree_iterate(tree, 1 /* SIDE_BUY */);
-                    (tree, it)
-                } else {
-                    resourcesAccessed.sellTree = true;
-                    let tree = &borrow_global<MarketSellTree<I, Q>>(marketAddr).tree;
-                    let it = tree_iterate(tree, 2 /* SIDE_SELL */);
-                    (tree, it)
-                };
-                while (it.pos.nodeID != 0) {
-                    let (bookPrice, orderTreeElem) = tree_get_next(tree, &mut it);
-                    // A 0 price means this is a market order and so will execute against anything.
-                    if (
-                        price != 0 &&
-                            (side == 2 /* SIDE_SELL */ && bookPrice < price)  ||
-                            (side == 1 /* SIDE_BUY */ && bookPrice > price)
-                    ) {
-                        // We've reached the limit price.
-                        break
-                    };
-                    if (orderTreeElem.qty == 0) {
-                        continue
-                    };
-                    if (remainingQty < orderTreeElem.qty) {
-                        // Order qty is filled.
-                        remainingQty = 0;
-                        break
-                    };
-                    remainingQty = remainingQty - orderTreeElem.qty;
-                };
-                if (remainingQty > 0) {
-                    // Cancel the order because we couldn't fill it.
-                    // emit_finalized_event<I, Q>(marketAddr, orderMetadata);
-                    return sentinal_order_id()
-                };
-            };
-        };
-        // </editor-fold>
+        emit_creation_event<APTF, USDF>(marketAddr, orderMetadata);
 
         // Create order object.
         let (buyCollateral, sellCollateral) = if (side == 1 /* SIDE_BUY */) {
             let quoteCoinAmt = if (price == 0) {
-                fp_convert(marketBuyMaxCollateral, coin::decimals<Q>(), 1 /* FP_NO_PRECISION_LOSS */)
+                fp_convert(marketBuyMaxCollateral, coin::decimals<USDF>(), 1 /* FP_NO_PRECISION_LOSS */)
             } else {
-                fp_convert(fp_mul(price, qty, 1 /* FP_NO_PRECISION_LOSS */), coin::decimals<Q>(), 1 /* FP_NO_PRECISION_LOSS */)
+                fp_convert(fp_mul(price, qty, 1 /* FP_NO_PRECISION_LOSS */), coin::decimals<USDF>(), 1 /* FP_NO_PRECISION_LOSS */)
             };
             (
-                coin::extract<Q>(&mut marketAccount.quoteBalance, quoteCoinAmt),
-                coin::zero<I>(),
+                coin::extract<USDF>(&mut marketAccount.quoteBalance, quoteCoinAmt),
+                coin::zero<APTF>(),
             )
         } else {
-            let instrumentCoinAmt = fp_convert(qty, coin::decimals<I>(), 1 /* FP_NO_PRECISION_LOSS */);
+            let instrumentCoinAmt = fp_convert(qty, coin::decimals<APTF>(), 1 /* FP_NO_PRECISION_LOSS */);
             (
-                coin::zero<Q>(),
+                coin::zero<USDF>(),
                 coin::extract(&mut marketAccount.instrumentBalance, instrumentCoinAmt),
             )
         };
@@ -1833,106 +1700,41 @@ module ferum::market {
             clientOrderID,
             internalOrderID,
         });
-        // Get some side dependant variables.
-        let canMaybeExecAgainstTree = can_maybe_execute_against_tree(&mut book.summary, side, price);
-        let timestampSecs = timestamp::now_seconds();
-        // Match against opposite side if the order crosses the spread.
-        if (crossesSpread) {
-            // If a taker, need to match against existing orders.
-            // First load and match against the cache.
-            // Then if needed, load tree and match order against that.
-            if (side == 1 /* SIDE_BUY */) {
-                if (book.summary.sellCacheQty > 0) {
-                    resourcesAccessed.sellCache = true;
-                    let cache = &mut borrow_global_mut<MarketSellCache<I, Q>>(marketAddr).cache;
-                    let qtyRemoved = match_against_cache(execs, cache,
-                        internalOrderID, order, timestampSecs, book.iDecimals);
-                    update_cache_size_and_qty(&mut book.summary, cache, qtyRemoved, 0);
-                    update_cache_max_min(&mut book.summary, cache);
-                };
-                if (!no_qty_to_be_executed(order, 0) && canMaybeExecAgainstTree) {
-                    resourcesAccessed.sellTree = true;
-                    let tree = &mut borrow_global_mut<MarketSellTree<I, Q>>(marketAddr).tree;
-                    match_against_tree(execs, tree, internalOrderID, order, timestampSecs, book.iDecimals);
-                    update_tree_max_min(&mut book.summary, tree, 2 /* SIDE_SELL */);
-                };
-            } else if (side == 2 /* SIDE_SELL */) {
-                if (book.summary.buyCacheQty > 0) {
-                    resourcesAccessed.buyCache = true;
-                    let cache = &mut borrow_global_mut<MarketBuyCache<I, Q>>(marketAddr).cache;
-                    let qtyRemoved = match_against_cache(execs, cache,
-                        internalOrderID, order, timestampSecs, book.iDecimals);
-                    update_cache_size_and_qty(&mut book.summary, cache, qtyRemoved, 0);
-                    update_cache_max_min(&mut book.summary, cache);
-                };
-                if (!no_qty_to_be_executed(order, 0) && canMaybeExecAgainstTree) {
-                    resourcesAccessed.buyTree = true;
-                    let tree= &mut borrow_global_mut<MarketBuyTree<I, Q>>(marketAddr).tree;
-                    match_against_tree(execs, tree, internalOrderID, order, timestampSecs, book.iDecimals);
-                    update_tree_max_min(&mut book.summary, tree, 1 /* SIDE_BUY */);
-                };
-            };
-        };
-        let ordersTable = &mut book.ordersTable;
-        let order = table::borrow_mut(&mut ordersTable.objects, internalOrderID); // Reborrow.
-        if (no_qty_to_be_executed(order, 0)) {
-            // If the order is fully executed, no need to add it to the price store.
-            return orderID
-        };
-        if (behaviour == 3 /* BEHAVIOUR_IOC */ || price == 0) {
-            // If the order is an IOC order or a market order, any remaining qty should be cancelled.
-            order.metadata.unfilledQty = order.metadata.takerCrankPendingQty; // There should be no maker pending qty for this order.
-            if (is_finalized(order)) {
-                // Order is fully finalized. Emit finalize event and reuse order object.
-                // emit_finalized_event<I, Q>(
-                //     marketAddr,
-                //     order.metadata,
-                // );
-                order.next = ordersTable.unusedStack;
-                order.priceLevelID = 0;
-                order.metadata = default_order_metadata();
-                ordersTable.unusedStack = internalOrderID;
-                remove_active_order_with_internal_order_id(&mut marketAccount.activeOrders, internalOrderID);
-                return sentinal_order_id()
-            };
-            return orderID
-        };
-        // Otherwise, order is added to the price store.
-        let remainingQty = order.metadata.unfilledQty - order.metadata.takerCrankPendingQty;
-        let priceLevelID = if (should_insert_in_cache(&book.summary, book.maxCacheSize, side, price)) {
-            // Order price will go into the cache.
-            let cache = if (side == 1 /* SIDE_BUY */) {
-                resourcesAccessed.buyCache = true;
-                &mut borrow_global_mut<MarketBuyCache<I, Q>>(marketAddr).cache
+
+        if (price == 0 || behaviour == 3 /* BEHAVIOUR_IOC */) {
+            // Instantly fill market/IOC orders.
+            order.metadata.unfilledQty = 0;
+            order.metadata.takerCrankPendingQty = 0;
+            order.metadata.marketBuyRemainingCollateral = 0;
+
+            if (order.metadata.side == 1 /* SIDE_BUY */) {
+                // Give the user APTF.
+                test_coins::mint_aptf_to_store(
+                    &mut marketAccount.instrumentBalance,
+                    fp_convert(order.metadata.originalQty, coin::decimals<APTF>(), FP_NO_PRECISION_LOSS),
+                );
+                // Burn order's USDF.
+                test_coins::burn_usdf(coin::extract_all(&mut order.buyCollateral));
             } else {
-                resourcesAccessed.sellCache = true;
-                &mut borrow_global_mut<MarketSellCache<I, Q>>(marketAddr).cache
+                // Give the user USDF.
+                test_coins::mint_usdf_to_store(
+                    &mut marketAccount.quoteBalance,
+                    fp_convert(
+                        fp_mul(order.metadata.originalQty, order.metadata.price, FP_NO_PRECISION_LOSS),
+                        coin::decimals<USDF>(),
+                        FP_NO_PRECISION_LOSS,
+                    ),
+                );
+                // Burn order's APTF.
+                test_coins::burn_aptf(coin::extract_all(&mut order.sellCollateral))
             };
-            let priceLevelID = add_price_qty_to_cache(cache, &mut book.priceLevelsTable, price, remainingQty);
-            update_cache_size_and_qty(&mut book.summary, cache, 0, remainingQty);
-            update_cache_max_min(&mut book.summary, cache);
-            priceLevelID
-        } else {
-            // Order price will go into the tree.
-            let tree = if (side == 1 /* SIDE_BUY */) {
-                resourcesAccessed.buyTree = true;
-                &mut borrow_global_mut<MarketBuyTree<I, Q>>(marketAddr).tree
-            } else {
-                resourcesAccessed.sellTree = true;
-                &mut borrow_global_mut<MarketSellTree<I, Q>>(marketAddr).tree
-            };
-            let priceLevelID = add_price_qty_to_tree(tree, &mut book.priceLevelsTable, price, remainingQty);
-            update_tree_max_min(&mut book.summary, tree, side);
-            priceLevelID
+            remove_active_order_with_order_id(&mut marketAccount.activeOrders, orderID);
+            emit_finalized_event<APTF, USDF>(
+                marketAddr,
+                order.metadata,
+            );
         };
-        // Add order to the corresponding PriceLevel object.
-        let order = table::borrow_mut(&mut book.ordersTable.objects, internalOrderID); // Reborrow.
-        let priceLevel = table::borrow_mut(&mut book.priceLevelsTable.objects, priceLevelID);
-        list_push(&mut priceLevel.orders, PriceLevelOrder {
-            internalID: internalOrderID,
-            qty: remainingQty,
-        });
-        order.priceLevelID = priceLevelID;
+
         orderID
     }
 
@@ -2647,35 +2449,36 @@ module ferum::market {
     fun emit_price_update_event<I, Q>(
         marketAddr: address,
         resourcesAccessed: ResourcesAccessed
-    ) acquires MarketSellTree, MarketBuyTree, MarketSellCache, MarketBuyCache, IndexingEventHandles {
+    ) acquires IndexingEventHandles {
         let priceUpdateEventHandle = &mut borrow_global_mut<IndexingEventHandles<I, Q>>(marketAddr).priceUpdates;
         emit_event(priceUpdateEventHandle, get_price_update<I, Q>(marketAddr, resourcesAccessed));
     }
 
     fun get_price_update<I, Q>(
-        marketAddr: address,
-        resourcesAccessed: ResourcesAccessed,
-    ): IndexingPriceUpdateEvent acquires MarketSellTree, MarketBuyTree, MarketSellCache, MarketBuyCache {
-        let sellMinPrice = 0;
-        let sellMinQty = 0;
-        let buyMaxPrice = 0;
-        let buyMaxQty = 0;
-        if (resourcesAccessed.sellCache) {
-            let sellCache = &borrow_global<MarketSellCache<I, Q>>(marketAddr).cache;
-            (sellMinPrice, sellMinQty) = get_top_of_cache(sellCache);
+        _marketAddr: address,
+        _resourcesAccessed: ResourcesAccessed,
+    ): IndexingPriceUpdateEvent {
+        let min = 150000000000;
+        let max = 200000000000;
+
+        let secs = timestamp::now_seconds();
+        let hourSecs = 60 * 60;
+        let hourOffsetSecs = secs % hourSecs;
+        let hours = secs / hourSecs;
+
+        let currPercentHour = fp_div(fp_from(hourOffsetSecs, 0), fp_from(hourSecs, 0), FP_TRUNC);
+        let valueOffset = fp_mul(max - min, currPercentHour, FP_TRUNC);
+
+        let midpoint = if (hours % 2 == 0) {
+            min + valueOffset
+        } else {
+            max - valueOffset
         };
-        if (sellMinPrice == 0) {
-            let sellTree = &borrow_global<MarketSellTree<I, Q>>(marketAddr).tree;
-            (sellMinPrice, sellMinQty) = get_top_of_tree(sellTree, 2 /* SIDE_SELL */);
-        };
-        if (resourcesAccessed.buyCache) {
-            let buyCache = &borrow_global<MarketBuyCache<I, Q>>(marketAddr).cache;
-            (buyMaxPrice, buyMaxQty) = get_top_of_cache(buyCache);
-        };
-        if (buyMaxPrice == 0) {
-            let buyTree = &borrow_global<MarketBuyTree<I, Q>>(marketAddr).tree;
-            (sellMinPrice, sellMinQty) = get_top_of_tree(buyTree, 1 /* SIDE_BUY */);
-        };
+
+        let sellMinPrice = midpoint + 5000000000;
+        let sellMinQty = 95000000000;
+        let buyMaxPrice = midpoint - 5000000000;
+        let buyMaxQty = 105000000000;
         IndexingPriceUpdateEvent {
             instrumentType: type_info::type_of<I>(),
             quoteType: type_info::type_of<Q>(),

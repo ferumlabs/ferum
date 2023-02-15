@@ -6,4 +6,4 @@ version = "0.1.0"
 AptosFramework = { git = "https://github.com/aptos-labs/aptos-core.git", subdir = "aptos-move/framework/aptos-framework/", rev = "devnet" }
 
 [addresses]
-ferum="0x8909e0bb1dc6426039fec370bad122cf223c3ef26f05b4264e7ce7921e498b8b"
+ferum="0x09c94d95f00a30b11aa18052c0276ff890d6ae754d5214cc85c714fa5b7c4133"
