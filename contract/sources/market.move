@@ -2465,7 +2465,7 @@ module ferum::market {
     //
     // All inputs are fixed point numbers. Outputs will be fixed point numbers with `decimals` decimal places.
     // Outputs will add to be <= notional (we can't gaurantee equality because of rounding).
-    fun calc_fee_coin_amts(
+    inline fun calc_fee_coin_amts(
         decimals: u8,
         feeBasis: u64,
         feeRate: u64,
@@ -2493,7 +2493,7 @@ module ferum::market {
         (counterPartyAmt, protocolSplitAmt, crankSplitAmt, ferumSplitAmt)
     }
 
-    fun create_protocol_balance_if_needed<I, Q>(
+    inline fun create_protocol_balance_if_needed<I, Q>(
         protocolList: &mut vector<address>,
         balances: &mut table_with_length::TableWithLength<address, MarketBalance<I, Q>>,
         protocol: address,
@@ -2507,7 +2507,7 @@ module ferum::market {
         };
     }
 
-    fun settle_protocol_balances<I, Q>(
+    inline fun settle_protocol_balances<I, Q>(
         protocolList: vector<address>,
         balances: table_with_length::TableWithLength<address, MarketBalance<I, Q>>,
     ) {
@@ -2522,7 +2522,7 @@ module ferum::market {
         table_with_length::destroy_empty(balances);
     }
 
-    fun settle_market_balance<I, Q>(
+    inline fun settle_market_balance<I, Q>(
         addr: address,
         balance: MarketBalance<I, Q>,
     ) {
@@ -2534,7 +2534,7 @@ module ferum::market {
         coin::deposit(addr, quote);
     }
 
-    fun assert_market_empty<I, Q>(marketAddr: address) acquires MarketBuyTree, MarketBuyCache, MarketSellTree, MarketSellCache {
+    inline fun assert_market_empty<I, Q>(marketAddr: address) acquires MarketBuyTree, MarketBuyCache, MarketSellTree, MarketSellCache {
         let sellCache = &borrow_global<MarketSellCache<I, Q>>(marketAddr).cache;
         let buyCache = &borrow_global<MarketBuyCache<I, Q>>(marketAddr).cache;
         let sellTree = &borrow_global<MarketSellTree<I, Q>>(marketAddr).tree;
@@ -2547,7 +2547,7 @@ module ferum::market {
 
     // <editor-fold defaultstate="collapsed" desc="Active order helpers">
 
-    fun find_internal_order_id(activeOrders: &vector<UserOrderInfo>, orderID: OrderID): u32 {
+    inline fun find_internal_order_id(activeOrders: &vector<UserOrderInfo>, orderID: OrderID): u32 {
         let i = 0;
         let size = vector::length(activeOrders);
         let internalOrderID = 0;
@@ -2563,7 +2563,7 @@ module ferum::market {
         internalOrderID
     }
 
-    fun remove_active_order_with_internal_order_id(activeOrders: &mut vector<UserOrderInfo>, internalID: u32) {
+    inline fun remove_active_order_with_internal_order_id(activeOrders: &mut vector<UserOrderInfo>, internalID: u32) {
         let i = 0;
         let size = vector::length(activeOrders);
         while (i < size) {
@@ -2580,7 +2580,7 @@ module ferum::market {
         };
     }
 
-    fun remove_active_order_with_order_id(activeOrders: &mut vector<UserOrderInfo>, orderID: OrderID) {
+    inline fun remove_active_order_with_order_id(activeOrders: &mut vector<UserOrderInfo>, orderID: OrderID) {
         let i = 0;
         let size = vector::length(activeOrders);
         while (i < size) {
@@ -2597,7 +2597,7 @@ module ferum::market {
         };
     }
 
-    fun remove_active_order_with_client_order_id(activeOrders: &mut vector<UserOrderInfo>, clientOrderID: u32) {
+    inline fun remove_active_order_with_client_order_id(activeOrders: &mut vector<UserOrderInfo>, clientOrderID: u32) {
         let i = 0;
         let size = vector::length(activeOrders);
         while (i < size) {
@@ -2618,7 +2618,7 @@ module ferum::market {
 
     // <editor-fold defaultstate="collapsed" desc="Event helpers">
 
-    fun emit_finalized_event<I, Q>(
+    inline fun emit_finalized_event<I, Q>(
         marketAddr: address,
         orderMetadata: OrderMetadata
     ) acquires IndexingEventHandles {
@@ -2631,7 +2631,7 @@ module ferum::market {
         });
     }
 
-    fun emit_creation_event<I, Q>(
+    inline fun emit_creation_event<I, Q>(
         marketAddr: address,
         orderMetadata: OrderMetadata
     ) acquires IndexingEventHandles {
@@ -2652,7 +2652,7 @@ module ferum::market {
         emit_event(priceUpdateEventHandle, get_price_update<I, Q>(marketAddr, resourcesAccessed));
     }
 
-    fun get_price_update<I, Q>(
+    inline fun get_price_update<I, Q>(
         marketAddr: address,
         resourcesAccessed: ResourcesAccessed,
     ): IndexingPriceUpdateEvent acquires MarketSellTree, MarketBuyTree, MarketSellCache, MarketBuyCache {
@@ -2687,7 +2687,7 @@ module ferum::market {
         }
     }
 
-    fun get_top_of_cache(cache: &Cache<PriceStoreElem>): (u64, u64) {
+    inline fun get_top_of_cache(cache: &Cache<PriceStoreElem>): (u64, u64) {
         let size = vector::length(&cache.list);
         let i = size;
         let outPrice = 0;
@@ -2704,7 +2704,7 @@ module ferum::market {
         (outPrice, outQty)
     }
 
-    fun get_top_of_tree(tree: &Tree<PriceStoreElem>, side: u8): (u64, u64) {
+    inline fun get_top_of_tree(tree: &Tree<PriceStoreElem>, side: u8): (u64, u64) {
         let it = tree_iterate(tree, side);
         let outPrice = 0;
         let outQty = 0;
@@ -2723,7 +2723,7 @@ module ferum::market {
 
     // <editor-fold defaultstate="collapsed" desc="Struct helpers">
 
-    fun default_order_metadata(): OrderMetadata {
+    inline fun default_order_metadata(): OrderMetadata {
         OrderMetadata{
             side: 0,
             behaviour: 0,
@@ -2738,21 +2738,21 @@ module ferum::market {
         }
     }
 
-    fun sentinal_market_account_key(): MarketAccountKey {
+    inline fun sentinal_market_account_key(): MarketAccountKey {
         MarketAccountKey {
             protocolAddress: @0,
             userAddress: @0,
         }
     }
 
-    fun sentinal_order_id(): OrderID {
+    inline fun sentinal_order_id(): OrderID {
         OrderID {
             accountKey: sentinal_market_account_key(),
             counter: 0,
         }
     }
 
-    fun account_key_from_identifier(id: AccountIdentifier): MarketAccountKey {
+    inline fun account_key_from_identifier(id: AccountIdentifier): MarketAccountKey {
         let (protocolAddress, userAddress) = platform::get_addresses(&id);
         MarketAccountKey {
             protocolAddress,
@@ -2760,7 +2760,7 @@ module ferum::market {
         }
     }
 
-    fun default_resources_accessed(): ResourcesAccessed {
+    inline fun default_resources_accessed(): ResourcesAccessed {
         ResourcesAccessed {
             buyCache: false,
             sellCache: false,
@@ -9929,7 +9929,7 @@ module ferum::market {
     }
 
     #[test_only]
-    fun get_order<I, Q>(orderID: u32): &Order<I, Q> acquires FerumInfo, Orderbook {
+    inline fun get_order<I, Q>(orderID: u32): &Order<I, Q> acquires FerumInfo, Orderbook {
         let marketAddr = get_market_addr<I, Q>();
         let book = borrow_global<Orderbook<I, Q>>(marketAddr);
         table::borrow(&book.ordersTable.objects, orderID)
@@ -10358,12 +10358,12 @@ module ferum::market {
         remove_user_fee_tier(structure, minFerumTokenHoldings);
     }
 
-    fun assert_ferum_inited() {
+    inline fun assert_ferum_inited() {
         assert!(exists<FerumInfo>(@ferum), ERR_NOT_ALLOWED);
         assert!(coin::is_coin_initialized<token::Fe>(), ERR_FE_UNINITED);
     }
 
-    fun register_market<I, Q>(marketAddr: address) acquires FerumInfo {
+    inline fun register_market<I, Q>(marketAddr: address) acquires FerumInfo {
         assert_ferum_inited();
         let info = borrow_global_mut<FerumInfo>(@ferum);
         let key = market_key<I, Q>();
@@ -10380,7 +10380,7 @@ module ferum::market {
         table::borrow(&mut info.feeStructures, feeType)
     }
 
-    fun get_market_addr<I, Q>(): address acquires FerumInfo {
+    inline fun get_market_addr<I, Q>(): address acquires FerumInfo {
         assert_ferum_inited();
         let info = borrow_global<FerumInfo>(@ferum);
         let key = market_key<I, Q>();
@@ -10388,11 +10388,11 @@ module ferum::market {
         *table::borrow(&info.marketMap, key)
     }
 
-    fun assert_market_inited<I, Q>() acquires FerumInfo {
+    inline fun assert_market_inited<I, Q>() acquires FerumInfo {
         get_market_addr<I, Q>();
     }
 
-    fun market_key<I, Q>(): string::String {
+    inline fun market_key<I, Q>(): string::String {
         type_info::type_name<MarketKey<I, Q>>()
     }
 
@@ -10497,7 +10497,7 @@ module ferum::market {
         // Ferum takes 100% - protocol fee.
     }
 
-    fun new_fee_tiers_with_defaults(takerFee: u64, makerFee: u64, protocolFee: u64): FeeStructure {
+    inline fun new_fee_tiers_with_defaults(takerFee: u64, makerFee: u64, protocolFee: u64): FeeStructure {
         let structure = FeeStructure {
             userTiers: vector[
                 Tier{
@@ -10522,13 +10522,13 @@ module ferum::market {
     }
 
     // Returns the % protocols get from user fees based on the protocol's fee tier.
-    fun get_protocol_fee(structure: &FeeStructure, tokenHoldingsAmt: u64): u64 {
+    inline fun get_protocol_fee(structure: &FeeStructure, tokenHoldingsAmt: u64): u64 {
         let tier = find_tier<ProtocolFeeTier>(&structure.protocolTiers, tokenHoldingsAmt);
         tier.value.protocolFee
     }
 
     // Returns the max % protocols get from user fees based on the protocol's fee tier.
-    fun get_max_protocol_fee(structure: &FeeStructure): u64 {
+    inline fun get_max_protocol_fee(structure: &FeeStructure): u64 {
         let maxFee = 0;
         let i = 0;
         let size = vector::length(&structure.protocolTiers);
@@ -10543,12 +10543,12 @@ module ferum::market {
     }
 
     // Returns (taker, maker) fees for users based on the user's token holdings.
-    fun get_user_fee(structure: &FeeStructure, tokenHoldingsAmt: u64): (u64, u64) {
+    inline fun get_user_fee(structure: &FeeStructure, tokenHoldingsAmt: u64): (u64, u64) {
         let tier = find_tier<UserFeeTier>(&structure.userTiers, tokenHoldingsAmt);
         (tier.value.takerFee, tier.value.makerFee)
     }
 
-    fun set_user_fee_tier(
+    inline fun set_user_fee_tier(
         structure: &mut FeeStructure,
         minFerumTokens: u64,
         takerFee: u64,
@@ -10565,7 +10565,7 @@ module ferum::market {
         validate_fees(structure);
     }
 
-    fun set_protocol_fee_tier(
+    inline fun set_protocol_fee_tier(
         structure: &mut FeeStructure,
         minFerumTokens: u64,
         protocolFee: u64,
@@ -10580,15 +10580,15 @@ module ferum::market {
         validate_fees(structure);
     }
 
-    fun remove_user_fee_tier(structure: &mut FeeStructure, minFerumTokens: u64) {
+    inline fun remove_user_fee_tier(structure: &mut FeeStructure, minFerumTokens: u64) {
         remove_tier<UserFeeTier>(&mut structure.userTiers, minFerumTokens);
     }
 
-    fun remove_protocol_fee_tier(structure: &mut FeeStructure, minFerumTokens: u64) {
+    inline fun remove_protocol_fee_tier(structure: &mut FeeStructure, minFerumTokens: u64) {
         remove_tier<ProtocolFeeTier>(&mut structure.protocolTiers, minFerumTokens);
     }
 
-    fun validate_fees(structure: &FeeStructure) {
+    inline fun validate_fees(structure: &FeeStructure) {
         let hundred = 10000000000;
         let bip = 1000000;
         let percent = 100000000;
@@ -10644,7 +10644,7 @@ module ferum::market {
         };
     }
 
-    fun remove_tier<T: store + drop>(list: &mut vector<Tier<T>>, minFerumTokens: u64) {
+    inline fun remove_tier<T: store + drop>(list: &mut vector<Tier<T>>, minFerumTokens: u64) {
         let i = 0;
         let size = vector::length(list);
         assert!(size > 0, ERR_INVALID_FEE_STRUCTURE);
@@ -10664,7 +10664,7 @@ module ferum::market {
         vector::pop_back(list);
     }
 
-    fun find_tier<T: store + drop>(list: &vector<Tier<T>>, val: u64): &Tier<T> {
+    inline fun find_tier<T: store + drop>(list: &vector<Tier<T>>, val: u64): &Tier<T> {
         let size = vector::length(list);
         assert!(size > 0, ERR_INVALID_FEE_STRUCTURE);
         let i = 1;
@@ -10937,7 +10937,7 @@ module ferum::market {
         list: vector<CacheNode<T>>,
     }
 
-    fun new_cache<T: drop + store>(type: u8): Cache<T> {
+    inline fun new_cache<T: drop + store>(type: u8): Cache<T> {
         assert!(type == 1 /* SIDE_BUY */ || type == 2 /* SIDE_SELL */, ERR_CACHE_INVALID_TYPE);
         Cache {
             side: type,
@@ -10947,7 +10947,7 @@ module ferum::market {
 
     // Inserts the price in order into the list cache. If a buy cache, will insert items in increasing order. If a sell
     // cache, will insert in decreasing order.
-    fun cache_insert<T: drop + store>(cache: &mut Cache<T>, key: u64, value: T) {
+    inline fun cache_insert<T: drop + store>(cache: &mut Cache<T>, key: u64, value: T) {
         // Find insert index.
         let size = vector::length(&cache.list);
         let i = size;
@@ -10980,7 +10980,7 @@ module ferum::market {
         };
     }
 
-    fun cache_remove<T: drop + store>(cache: &mut Cache<T>, key: u64): T {
+    inline fun cache_remove<T: drop + store>(cache: &mut Cache<T>, key: u64): T {
         let size = vector::length(&cache.list);
         let i = size;
         while (i > 0) {
@@ -11004,7 +11004,7 @@ module ferum::market {
         value
     }
 
-    fun cache_remove_idx<T: drop + store>(cache: &mut Cache<T>, idx: u64): T {
+    inline fun cache_remove_idx<T: drop + store>(cache: &mut Cache<T>, idx: u64): T {
         let size = vector::length(&cache.list);
         let i = idx;
         while (i < size - 1) {
@@ -11293,7 +11293,7 @@ module ferum::market {
         length: u64,
     }
 
-    fun new_list<T: store>(nodeSize: u8): NodeList<T> {
+    inline fun new_list<T: store>(nodeSize: u8): NodeList<T> {
         NodeList<T>{
             nodes: table::new(),
             head: 0,
@@ -11305,7 +11305,7 @@ module ferum::market {
         }
     }
 
-    fun list_pop<T: store>(list: &mut NodeList<T>): T {
+    inline fun list_pop<T: store>(list: &mut NodeList<T>): T {
         assert!(list.length > 0, ERR_LIST_EMPTY);
         let nodeID = list.head;
         let node = table::borrow_mut(&mut list.nodes, nodeID);
@@ -11331,7 +11331,7 @@ module ferum::market {
     }
 
     // Returns elements from first node of the list in reversed order.
-    fun list_pop_node_reversed<T: store>(list: &mut NodeList<T>): vector<T> {
+    inline fun list_pop_node_reversed<T: store>(list: &mut NodeList<T>): vector<T> {
         assert!(list.length > 0, ERR_LIST_EMPTY);
         let nodeID = list.head;
         let node = table::borrow_mut(&mut list.nodes, nodeID);
@@ -11354,7 +11354,7 @@ module ferum::market {
     }
 
     // Drops from the front of the list up to count elements.
-    fun list_drop_from_front<T: store + drop>(list: &mut NodeList<T>, countInput: u64) {
+    inline fun list_drop_from_front<T: store + drop>(list: &mut NodeList<T>, countInput: u64) {
         let count = countInput;
         while (count > 0 && list.head != 0) {
             let nodeID = list.head;
@@ -11395,7 +11395,7 @@ module ferum::market {
         };
     }
 
-    fun list_push<T: store>(list: &mut NodeList<T>, elem: T) {
+    inline fun list_push<T: store>(list: &mut NodeList<T>, elem: T) {
         let nodeID = list.tail;
         if (nodeID == 0) {
             nodeID = get_or_create_list_node(list);
@@ -11417,7 +11417,7 @@ module ferum::market {
         vector::push_back(&mut node.data, elem);
     }
 
-    fun list_remove<T: store + drop>(list: &mut NodeList<T>, it: ListIterator) {
+    inline fun list_remove<T: store + drop>(list: &mut NodeList<T>, it: ListIterator) {
         list.length = list.length - 1;
         let i = it.nodeIdx + 1;
         let nodeID = it.nodeID;
@@ -11505,7 +11505,7 @@ module ferum::market {
         };
     }
 
-    fun list_iterate<T: store>(list: &NodeList<T>): ListIterator {
+    inline fun list_iterate<T: store>(list: &NodeList<T>): ListIterator {
         ListIterator {
             prevNodeID: 0,
             nodeID: list.head,
@@ -11513,13 +11513,13 @@ module ferum::market {
         }
     }
 
-    fun list_peek<T: store>(list: &NodeList<T>, it: &ListIterator): &T {
+    inline fun list_peek<T: store>(list: &NodeList<T>, it: &ListIterator): &T {
         assert!(it.nodeID != 0, ERR_LIST_ELEM_NOT_FOUND);
         let node = table::borrow(&list.nodes, it.nodeID);
         vector::borrow(&node.data, it.nodeIdx)
     }
 
-    fun list_get_next<T: store>(list: &NodeList<T>, it: &mut ListIterator): &T {
+    inline fun list_get_next<T: store>(list: &NodeList<T>, it: &mut ListIterator): &T {
         assert!(it.nodeID != 0, ERR_LIST_ELEM_NOT_FOUND);
         let node = table::borrow(&list.nodes, it.nodeID);
         let out = vector::borrow(&node.data, it.nodeIdx);
@@ -11538,13 +11538,13 @@ module ferum::market {
         out
     }
 
-    fun list_get_mut<T: store>(list: &mut NodeList<T>, it: &ListIterator): &mut T {
+    inline fun list_get_mut<T: store>(list: &mut NodeList<T>, it: &ListIterator): &mut T {
         assert!(it.nodeID != 0, ERR_LIST_ELEM_NOT_FOUND);
         let node = table::borrow_mut(&mut list.nodes, it.nodeID);
         vector::borrow_mut(&mut node.data, it.nodeIdx)
     }
 
-    fun list_next<T: store>(list: &NodeList<T>, it: &mut ListIterator) {
+    inline fun list_next<T: store>(list: &NodeList<T>, it: &mut ListIterator) {
         let node = table::borrow(&list.nodes, it.nodeID);
         it.nodeIdx = it.nodeIdx + 1;
         if (it.nodeIdx >= vector::length(&node.data)) {
@@ -11554,7 +11554,7 @@ module ferum::market {
         };
     }
 
-    fun get_or_create_list_node<T: store>(list: &mut NodeList<T>): u32 {
+    inline fun get_or_create_list_node<T: store>(list: &mut NodeList<T>): u32 {
         if (list.unusedNodeStack == 0) {
             prealloc_list_nodes(list, 1);
         };
@@ -11565,7 +11565,7 @@ module ferum::market {
         nodeID
     }
 
-    fun prealloc_list_nodes<T: store>(list: &mut NodeList<T>, count: u8) {
+    inline fun prealloc_list_nodes<T: store>(list: &mut NodeList<T>, count: u8) {
         let i = 0;
         while (i < count) {
             let nodeID = list.currNodeKey;
@@ -12024,7 +12024,7 @@ module ferum::market {
         max: u16,
     }
 
-    fun new_tree<T: copy + store + drop>(m: u64): Tree<T> {
+    inline fun new_tree<T: copy + store + drop>(m: u64): Tree<T> {
         assert!(m >= 4, ERR_TREE_INVALID_TREE_DEGREE);
         assert!(m % 2 == 0, ERR_TREE_INVALID_TREE_DEGREE);
         Tree {
@@ -12039,7 +12039,7 @@ module ferum::market {
         }
     }
 
-    fun prealloc_tree_nodes<T: copy + store + drop>(tree: &mut Tree<T>, count: u8) {
+    inline fun prealloc_tree_nodes<T: copy + store + drop>(tree: &mut Tree<T>, count: u8) {
         let i = 0;
         while (i < count) {
             let node = TreeNode {
@@ -12725,7 +12725,7 @@ module ferum::market {
         };
     }
 
-    fun tree_iterate<T: copy + store + drop>(tree: &Tree<T>, type: u8): TreeIterator {
+    inline fun tree_iterate<T: copy + store + drop>(tree: &Tree<T>, type: u8): TreeIterator {
         if (tree.treeSize == 0) {
             TreeIterator {
                 pos: TreePosition {
@@ -12753,19 +12753,19 @@ module ferum::market {
         }
     }
 
-    fun tree_get_next_mut<T: copy + store + drop>(tree: &mut Tree<T>, it: &mut TreeIterator): (u64, &mut T) {
+    inline fun tree_get_next_mut<T: copy + store + drop>(tree: &mut Tree<T>, it: &mut TreeIterator): (u64, &mut T) {
         let pos = it.pos;
         tree_next(tree, it);
         tree_get_mut(tree, &pos)
     }
 
-    fun tree_get_next<T: copy + store + drop>(tree: &Tree<T>, it: &mut TreeIterator): (u64, &T) {
+    inline fun tree_get_next<T: copy + store + drop>(tree: &Tree<T>, it: &mut TreeIterator): (u64, &T) {
         let pos = it.pos;
         tree_next(tree, it);
         tree_get(tree, &pos)
     }
 
-    fun tree_get_mut<T: copy + store + drop>(tree: &mut Tree<T>, pos: &TreePosition): (u64, &mut T) {
+    inline fun tree_get_mut<T: copy + store + drop>(tree: &mut Tree<T>, pos: &TreePosition): (u64, &mut T) {
         let node = table::borrow_mut(&mut tree.nodes, pos.nodeID);
         let elem = vector::borrow_mut(&mut node.elements, pos.idx);
         assert!(vector::length(&elem.value) > 0, ERR_TREE_ELEM_DOES_NOT_EXIST);
@@ -12779,7 +12779,7 @@ module ferum::market {
         (elem.key, vector::borrow(&elem.value, 0))
     }
 
-    fun tree_pop_max<T: copy + store + drop>(tree: &mut Tree<T>): (u64, T) {
+    inline fun tree_pop_max<T: copy + store + drop>(tree: &mut Tree<T>): (u64, T) {
         let node = table::borrow(&tree.nodes, tree.max);
         let elem = vector::borrow(&node.elements, vector::length(&node.elements) - 1);
         assert!(vector::length(&elem.value) > 0, ERR_TREE_ELEM_DOES_NOT_EXIST);
@@ -12789,7 +12789,7 @@ module ferum::market {
         (price, elem)
     }
 
-    fun tree_pop_min<T: copy + store + drop>(tree: &mut Tree<T>): (u64, T) {
+    inline fun tree_pop_min<T: copy + store + drop>(tree: &mut Tree<T>): (u64, T) {
         let node = table::borrow(&tree.nodes, tree.min);
         let elem = vector::borrow(&node.elements, 0);
         assert!(vector::length(&elem.value) > 0, ERR_TREE_ELEM_DOES_NOT_EXIST);
@@ -12799,7 +12799,7 @@ module ferum::market {
         (price, elem)
     }
 
-    fun tree_next<T: copy + store + drop>(tree: &Tree<T>, it: &mut TreeIterator) {
+    inline fun tree_next<T: copy + store + drop>(tree: &Tree<T>, it: &mut TreeIterator) {
         assert!(it.pos.nodeID != 0, ERR_TREE_EMPTY_ITERATOR);
         let node = table::borrow(&tree.nodes, it.pos.nodeID);
         if (it.type == 1 /* DECREASING_ITERATOR */) {
@@ -12822,7 +12822,7 @@ module ferum::market {
         };
     }
 
-    fun get_or_create_tree_node<T: copy + store + drop>(tree: &mut Tree<T>): u16 {
+    inline fun get_or_create_tree_node<T: copy + store + drop>(tree: &mut Tree<T>): u16 {
         if (tree.unusedNodeStack == 0) {
             prealloc_tree_nodes(tree, 1);
         };
