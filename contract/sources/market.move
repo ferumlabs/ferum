@@ -1554,7 +1554,7 @@ module ferum::market {
         }
     }
 
-    fun update_cache_size_and_qty(
+    inline fun update_cache_size_and_qty(
         summary: &mut MarketSummary,
         cache: &Cache<PriceStoreElem>,
         qtyRemoved: u64,
@@ -1570,7 +1570,7 @@ module ferum::market {
         };
     }
 
-    fun update_cache_max_min(
+    inline fun update_cache_max_min(
         summary: &mut MarketSummary,
         cache: &Cache<PriceStoreElem>,
     ) {
@@ -1583,22 +1583,21 @@ module ferum::market {
             summary.sellCacheMax = 0;
         };
         let size = vector::length(&cache.list);
-        if (size == 0) {
-            return
-        };
-        // First update buyCacheMax/sellCacheMin.
-        let elem = vector::borrow(&cache.list, size-1);
-        if (cache.side == 1 /* SIDE_BUY */) {
-            summary.buyCacheMax = elem.key;
-        } else {
-            summary.sellCacheMin = elem.key;
-        };
-        // Then, update buyCacheMin/sellCacheMax.
-        let elem = vector::borrow(&cache.list, 0);
-        if (cache.side == 1 /* SIDE_BUY */) {
-            summary.buyCacheMin = elem.key;
-        } else {
-            summary.sellCacheMax = elem.key;
+        if (size > 0) {
+            // First update buyCacheMax/sellCacheMin.
+            let elem = vector::borrow(&cache.list, size-1);
+            if (cache.side == 1 /* SIDE_BUY */) {
+                summary.buyCacheMax = elem.key;
+            } else {
+                summary.sellCacheMin = elem.key;
+            };
+            // Then, update buyCacheMin/sellCacheMax.
+            let elem = vector::borrow(&cache.list, 0);
+            if (cache.side == 1 /* SIDE_BUY */) {
+                summary.buyCacheMin = elem.key;
+            } else {
+                summary.sellCacheMax = elem.key;
+            };
         };
     }
 
@@ -1833,11 +1832,11 @@ module ferum::market {
             clientOrderID,
             internalOrderID,
         });
-        // Get some side dependant variables.
-        let canMaybeExecAgainstTree = can_maybe_execute_against_tree(&mut book.summary, side, price);
-        let timestampSecs = timestamp::now_seconds();
         // Match against opposite side if the order crosses the spread.
         if (crossesSpread) {
+            // Get some side dependant variables.
+            let canMaybeExecAgainstTree = can_maybe_execute_against_tree(&mut book.summary, side, price);
+            let timestampSecs = timestamp::now_seconds();
             // If a taker, need to match against existing orders.
             // First load and match against the cache.
             // Then if needed, load tree and match order against that.
@@ -2005,7 +2004,7 @@ module ferum::market {
     }
 
     // Adds the order's price to the cache and returns the ID of the PriceLevel.
-    fun add_price_qty_to_cache(
+    inline fun add_price_qty_to_cache(
         cache: &mut Cache<PriceStoreElem>,
         priceLevels: &mut PriceLevelReuseTable,
         price: u64,
@@ -2394,7 +2393,7 @@ module ferum::market {
     }
 
     // Returns true if a new price should be inserted into the cache.
-    fun should_insert_in_cache(
+    inline fun should_insert_in_cache(
         summary: &MarketSummary,
         maxCacheSize: u8,
         side: u8,
@@ -11019,8 +11018,7 @@ module ferum::market {
     }
 
     fun cache_find<T: drop + store>(cache: &Cache<T>, key: u64): vector<u64> {
-        let size = vector::length(&cache.list);
-        let i = size;
+        let i = vector::length(&cache.list);
         // Look for index of price in the cache.
         while (i > 0) {
             let p = vector::borrow(&cache.list, i - 1);
@@ -11395,7 +11393,7 @@ module ferum::market {
         };
     }
 
-    inline fun list_push<T: store>(list: &mut NodeList<T>, elem: T) {
+    fun list_push<T: store>(list: &mut NodeList<T>, elem: T) {
         let nodeID = list.tail;
         if (nodeID == 0) {
             nodeID = get_or_create_list_node(list);
