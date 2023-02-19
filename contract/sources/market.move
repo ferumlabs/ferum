@@ -66,7 +66,6 @@ module ferum::market {
     use aptos_std::table_with_length;
     use aptos_framework::event::{EventHandle, emit_event};
     use aptos_framework::account::new_event_handle;
-    use ferum::platform::AccountIdentifier;
     use ferum::platform;
     use ferum::token;
 
@@ -628,7 +627,7 @@ module ferum::market {
     public entry fun open_market_account_entry<I, Q>(
         owner: &signer
     ) acquires FerumInfo, Orderbook {
-        open_market_account<I, Q>(owner, vector[]);
+        open_market_account<I, Q>(owner, get_ferum_market_account_key(owner));
     }
 
     public entry fun deposit_to_market_account_entry<I, Q>(
@@ -908,48 +907,48 @@ module ferum::market {
 
     public fun open_market_account<I, Q>(
         owner: &signer,
-        accountIdentifier: vector<platform::AccountIdentifier>,
-    ): MarketAccountKey acquires FerumInfo, Orderbook {
+        mak: MarketAccountKey,
+    ) acquires FerumInfo, Orderbook {
         let ownerAddr = address_of(owner);
         if (!coin::is_account_registered<token::Fe>(ownerAddr)) {
             coin::register<token::Fe>(owner);
         };
+        if (!coin::is_account_registered<I>(ownerAddr)) {
+            coin::register<I>(owner);
+        };
+        if (!coin::is_account_registered<Q>(ownerAddr)) {
+            coin::register<Q>(owner);
+        };
         let marketAddr = get_market_addr<I, Q>();
         let book = borrow_global_mut<Orderbook<I, Q>>(marketAddr);
-        let accountKey = if (vector::length(&accountIdentifier) > 0) {
-            account_key_from_identifier(vector::pop_back(&mut accountIdentifier))
-        } else {
-            MarketAccountKey {
-                protocolAddress: @ferum,
-                userAddress: ownerAddr,
-            }
-        };
-        assert!(!table::contains(&book.marketAccounts, accountKey), ERR_MARKET_ACCOUNT_EXISTS);
-        table::add(&mut book.marketAccounts, accountKey, MarketAccount<I, Q>{
+        assert!(!table::contains(&book.marketAccounts, mak), ERR_MARKET_ACCOUNT_EXISTS);
+        table::add(&mut book.marketAccounts, mak, MarketAccount<I, Q>{
             activeOrders: vector[],
             instrumentBalance: coin::zero(),
             quoteBalance: coin::zero(),
             ownerAddress: ownerAddr,
             orderCounter: 1,
         });
-        accountKey
     }
 
     public fun get_market_account_key(
-        owner: &signer,
-        accountIdentifier: vector<platform::AccountIdentifier>
+        user: &signer,
+        protocolCap: &platform::ProtocolCapability,
     ): MarketAccountKey {
-        let ownerAddr = address_of(owner);
-        if (!coin::is_account_registered<token::Fe>(ownerAddr)) {
-            coin::register<token::Fe>(owner);
-        };
-        if (vector::length(&accountIdentifier) > 0) {
-            account_key_from_identifier(vector::pop_back(&mut accountIdentifier))
-        } else {
-            MarketAccountKey {
-                protocolAddress: @ferum,
-                userAddress: ownerAddr,
-            }
+        let userAddr = address_of(user);
+        MarketAccountKey {
+            protocolAddress: platform::get_protocol_address(protocolCap),
+            userAddress: userAddr,
+        }
+    }
+
+    public fun get_ferum_market_account_key(
+        user: &signer,
+    ): MarketAccountKey {
+        let userAddr = address_of(user);
+        MarketAccountKey {
+            protocolAddress: @ferum,
+            userAddress: userAddr,
         }
     }
 
@@ -2751,14 +2750,6 @@ module ferum::market {
         }
     }
 
-    inline fun account_key_from_identifier(id: AccountIdentifier): MarketAccountKey {
-        let (protocolAddress, userAddress) = platform::get_addresses(&id);
-        MarketAccountKey {
-            protocolAddress,
-            userAddress,
-        }
-    }
-
     inline fun default_resources_accessed(): ResourcesAccessed {
         ResourcesAccessed {
             buyCache: false,
@@ -4086,12 +4077,12 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, makerUser);
         account::create_account_for_test(address_of(takerUser));
         deposit_fake_coins(ferum, 10000000000, takerUser);
-        let makerAccID = platform::account_identifier_for_test(makerUser);
-        let makerAccKey = open_market_account<FMA, FMB>(makerUser, vector[makerAccID]);
-        deposit_to_market_account<FMA, FMB>(makerUser, makerAccKey, 1000000000000, 1000000000000);
-        let takerAccID = platform::account_identifier_for_test(takerUser);
-        let takerAccKey = open_market_account<FMA, FMB>(takerUser, vector[takerAccID]);
-        deposit_to_market_account<FMA, FMB>(takerUser, takerAccKey, 1000000000000, 1000000000000);
+        let makerMak = get_ferum_market_account_key(makerUser);
+        open_market_account<FMA, FMB>(makerUser, makerMak);
+        deposit_to_market_account<FMA, FMB>(makerUser, makerMak, 1000000000000, 1000000000000);
+        let takerMak = get_ferum_market_account_key(takerUser);
+        open_market_account<FMA, FMB>(takerUser, takerMak);
+        deposit_to_market_account<FMA, FMB>(takerUser, takerMak, 1000000000000, 1000000000000);
 
         // Setup.
         let makerID1 = add_user_limit_order<FMA, FMB>(makerUser, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
@@ -4139,8 +4130,8 @@ module ferum::market {
         assert_order_used(book, makerID2);
         assert_order_used(book, makerID3);
         assert_order_used(book, makerID4);
-        assert_account_balances(book, takerAccKey, 1000000000000, 936000000000);
-        assert_account_balances(book, makerAccKey, 850000000000, 1000000000000);
+        assert_account_balances(book, takerMak, 1000000000000, 936000000000);
+        assert_account_balances(book, makerMak, 850000000000, 1000000000000);
         assert!(book.summary.sellCacheMax == 6000000000, 0);
         assert!(book.summary.sellCacheMin == 5000000000, 0);
         assert!(book.summary.sellCacheQty == 31667000000, 0);
@@ -4168,13 +4159,13 @@ module ferum::market {
         assert_order_collateral(book, makerID3, 0, 0);
         assert_order_collateral(book, makerID4, 0, 31667000000);
         assert_order_collateral(book, takerID, 0, 0);
-        assert_order_unused(get_market_account_key(takerUser, vector[]), book, takerID);
-        assert_order_unused(get_market_account_key(makerUser, vector[]), book, makerID1);
-        assert_order_unused(get_market_account_key(makerUser, vector[]), book, makerID2);
-        assert_order_unused(get_market_account_key(makerUser, vector[]), book, makerID3);
+        assert_order_unused(get_ferum_market_account_key(takerUser), book, takerID);
+        assert_order_unused(get_ferum_market_account_key(makerUser), book, makerID1);
+        assert_order_unused(get_ferum_market_account_key(makerUser), book, makerID2);
+        assert_order_unused(get_ferum_market_account_key(makerUser), book, makerID3);
         assert_order_used(book, makerID4);
-        assert_account_balances(book, makerAccKey, 850000000000, 1063999800000);
-        assert_account_balances(book, takerAccKey, 1118333000000, 936000200000);
+        assert_account_balances(book, makerMak, 850000000000, 1063999800000);
+        assert_account_balances(book, takerMak, 1118333000000, 936000200000);
         assert!(book.summary.sellCacheMax == 6000000000, 0);
         assert!(book.summary.sellCacheMin == 6000000000, 0);
         assert!(book.summary.sellCacheQty == 31667000000, 0);
@@ -4199,12 +4190,12 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, makerUser);
         account::create_account_for_test(address_of(takerUser));
         deposit_fake_coins(ferum, 10000000000, takerUser);
-        let makerAccID = platform::account_identifier_for_test(makerUser);
-        let makerAccKey = open_market_account<FMA, FMB>(makerUser, vector[makerAccID]);
-        deposit_to_market_account<FMA, FMB>(makerUser, makerAccKey, 1000000000000, 1000000000000);
-        let takerAccID = platform::account_identifier_for_test(takerUser);
-        let takerAccKey = open_market_account<FMA, FMB>(takerUser, vector[takerAccID]);
-        deposit_to_market_account<FMA, FMB>(takerUser, takerAccKey, 1000000000000, 1000000000000);
+        let makerMak = get_ferum_market_account_key(makerUser);
+        open_market_account<FMA, FMB>(makerUser, makerMak);
+        deposit_to_market_account<FMA, FMB>(makerUser, makerMak, 1000000000000, 1000000000000);
+        let takerMak = get_ferum_market_account_key(takerUser);
+        open_market_account<FMA, FMB>(takerUser, takerMak);
+        deposit_to_market_account<FMA, FMB>(takerUser, takerMak, 1000000000000, 1000000000000);
 
         // Setup.
         let makerID1 = add_user_limit_order<FMA, FMB>(makerUser, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 5000000000, 30000000000);
@@ -4264,8 +4255,8 @@ module ferum::market {
         assert_order_used(book, makerID4);
         assert_order_used(book, makerID5);
         assert_order_used(book, makerID6);
-        assert_account_balances(book, takerAccKey, 1000000000000, 907386000000);
-        assert_account_balances(book, makerAccKey, 800000000000, 1000000000000);
+        assert_account_balances(book, takerMak, 1000000000000, 907386000000);
+        assert_account_balances(book, makerMak, 800000000000, 1000000000000);
         assert!(book.summary.sellCacheMax == 6000000000, 0);
         assert!(book.summary.sellCacheMin == 5000000000, 0);
         assert!(book.summary.sellCacheQty == 0, 0);
@@ -4295,15 +4286,15 @@ module ferum::market {
         assert_order_collateral(book, makerID5, 0, 0);
         assert_order_collateral(book, makerID6, 0, 36266000000);
         assert_order_collateral(book, takerID, 0, 0);
-        assert_order_unused(get_market_account_key(takerUser, vector[]), book, takerID);
-        assert_order_unused(get_market_account_key(makerUser, vector[]), book, makerID1);
-        assert_order_unused(get_market_account_key(makerUser, vector[]), book, makerID2);
-        assert_order_unused(get_market_account_key(makerUser, vector[]), book, makerID3);
-        assert_order_unused(get_market_account_key(makerUser, vector[]), book, makerID4);
-        assert_order_unused(get_market_account_key(makerUser, vector[]), book, makerID5);
+        assert_order_unused(get_ferum_market_account_key(takerUser), book, takerID);
+        assert_order_unused(get_ferum_market_account_key(makerUser), book, makerID1);
+        assert_order_unused(get_ferum_market_account_key(makerUser), book, makerID2);
+        assert_order_unused(get_ferum_market_account_key(makerUser), book, makerID3);
+        assert_order_unused(get_ferum_market_account_key(makerUser), book, makerID4);
+        assert_order_unused(get_ferum_market_account_key(makerUser), book, makerID5);
         assert_order_used(book, makerID6);
-        assert_account_balances(book, makerAccKey, 800000000000, 1092613800000);
-        assert_account_balances(book, takerAccKey, 1163734000000, 907386200000);
+        assert_account_balances(book, makerMak, 800000000000, 1092613800000);
+        assert_account_balances(book, takerMak, 1163734000000, 907386200000);
         assert!(book.summary.sellCacheMax == 0, 0);
         assert!(book.summary.sellCacheMin == 0, 0);
         assert!(book.summary.sellCacheQty == 0, 0);
@@ -4912,12 +4903,12 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, makerUser);
         account::create_account_for_test(address_of(takerUser));
         deposit_fake_coins(ferum, 10000000000, takerUser);
-        let makerAccID = platform::account_identifier_for_test(makerUser);
-        let makerAccKey = open_market_account<FMA, FMB>(makerUser, vector[makerAccID]);
-        deposit_to_market_account<FMA, FMB>(makerUser, makerAccKey, 1000000000000, 1000000000000);
-        let takerAccID = platform::account_identifier_for_test(takerUser);
-        let takerAccKey = open_market_account<FMA, FMB>(takerUser, vector[takerAccID]);
-        deposit_to_market_account<FMA, FMB>(takerUser, takerAccKey, 1000000000000, 1000000000000);
+        let makerMak = get_ferum_market_account_key(makerUser);
+        open_market_account<FMA, FMB>(makerUser, makerMak);
+        deposit_to_market_account<FMA, FMB>(makerUser, makerMak, 1000000000000, 1000000000000);
+        let takerMak = get_ferum_market_account_key(takerUser);
+        open_market_account<FMA, FMB>(takerUser, takerMak);
+        deposit_to_market_account<FMA, FMB>(takerUser, takerMak, 1000000000000, 1000000000000);
 
         // Setup.
         add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
@@ -4950,8 +4941,8 @@ module ferum::market {
         assert_order_collateral(book, makerID, 63000000000, 0);
         assert_order_used(book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, makerAccKey, 1000000000000, 937000000000);
-        assert_account_balances(book, takerAccKey, 970000000000, 1000000000000);
+        assert_account_balances(book, makerMak, 1000000000000, 937000000000);
+        assert_account_balances(book, takerMak, 970000000000, 1000000000000);
         assert!(book.summary.buyCacheMax == 9000000000, 0);
         assert!(book.summary.buyCacheMin == 8000000000, 0);
         assert!(book.summary.buyCacheQty == 180000000000, 0);
@@ -4974,10 +4965,10 @@ module ferum::market {
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_order_collateral(book, makerID, 36000000000, 0);
         assert_order_collateral(book, takerID, 0, 0);
-        assert_order_unused(get_market_account_key(takerUser, vector[]), book, takerID);
+        assert_order_unused(get_ferum_market_account_key(takerUser), book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, makerAccKey, 1030000000000, 937000000000);
-        assert_account_balances(book, takerAccKey, 970000000000, 1027000000000);
+        assert_account_balances(book, makerMak, 1030000000000, 937000000000);
+        assert_account_balances(book, takerMak, 970000000000, 1027000000000);
         assert!(book.summary.buyCacheMax == 9000000000, 0);
         assert!(book.summary.buyCacheMin == 8000000000, 0);
         assert!(book.summary.buyCacheQty == 180000000000, 0);
@@ -5002,12 +4993,12 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, makerUser);
         account::create_account_for_test(address_of(takerUser));
         deposit_fake_coins(ferum, 10000000000, takerUser);
-        let makerAccID = platform::account_identifier_for_test(makerUser);
-        let makerAccKey = open_market_account<FMA, FMB>(makerUser, vector[makerAccID]);
-        deposit_to_market_account<FMA, FMB>(makerUser, makerAccKey, 1000000000000, 1000000000000);
-        let takerAccID = platform::account_identifier_for_test(takerUser);
-        let takerAccKey = open_market_account<FMA, FMB>(takerUser, vector[takerAccID]);
-        deposit_to_market_account<FMA, FMB>(takerUser, takerAccKey, 1000000000000, 1000000000000);
+        let makerMak = get_ferum_market_account_key(makerUser);
+        open_market_account<FMA, FMB>(makerUser, makerMak);
+        deposit_to_market_account<FMA, FMB>(makerUser, makerMak, 1000000000000, 1000000000000);
+        let takerMak = get_ferum_market_account_key(takerUser);
+        open_market_account<FMA, FMB>(takerUser, takerMak);
+        deposit_to_market_account<FMA, FMB>(takerUser, takerMak, 1000000000000, 1000000000000);
 
         // Setup.
         let orderID1 = add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
@@ -5039,8 +5030,8 @@ module ferum::market {
         assert_order_collateral(book, makerID, 35000000000, 0);
         assert_order_used(book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, makerAccKey, 1000000000000, 965000000000);
-        assert_account_balances(book, takerAccKey, 970000000000, 1000000000000);
+        assert_account_balances(book, makerMak, 1000000000000, 965000000000);
+        assert_account_balances(book, takerMak, 970000000000, 1000000000000);
         assert!(book.summary.buyCacheMax == 0, 0);
         assert!(book.summary.buyCacheMin == 0, 0);
         assert!(book.summary.buyCacheQty == 0, 0);
@@ -5060,10 +5051,10 @@ module ferum::market {
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_order_collateral(book, makerID, 14000000000, 0);
         assert_order_collateral(book, takerID, 0, 0);
-        assert_order_unused(get_market_account_key(takerUser, vector[]), book, takerID);
+        assert_order_unused(get_ferum_market_account_key(takerUser), book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, makerAccKey, 1030000000000, 965000000000);
-        assert_account_balances(book, takerAccKey, 970000000000, 1021000000000);
+        assert_account_balances(book, makerMak, 1030000000000, 965000000000);
+        assert_account_balances(book, takerMak, 970000000000, 1021000000000);
         assert!(book.summary.buyCacheMax == 0, 0);
         assert!(book.summary.buyCacheMin == 0, 0);
         assert!(book.summary.buyCacheQty == 0, 0);
@@ -5088,12 +5079,12 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, makerUser);
         account::create_account_for_test(address_of(takerUser));
         deposit_fake_coins(ferum, 10000000000, takerUser);
-        let makerAccID = platform::account_identifier_for_test(makerUser);
-        let makerAccKey = open_market_account<FMA, FMB>(makerUser, vector[makerAccID]);
-        deposit_to_market_account<FMA, FMB>(makerUser, makerAccKey, 1000000000000, 1000000000000);
-        let takerAccID = platform::account_identifier_for_test(takerUser);
-        let takerAccKey = open_market_account<FMA, FMB>(takerUser, vector[takerAccID]);
-        deposit_to_market_account<FMA, FMB>(takerUser, takerAccKey, 1000000000000, 1000000000000);
+        let makerMak = get_ferum_market_account_key(makerUser);
+        open_market_account<FMA, FMB>(makerUser, makerMak);
+        deposit_to_market_account<FMA, FMB>(makerUser, makerMak, 1000000000000, 1000000000000);
+        let takerMak = get_ferum_market_account_key(takerUser);
+        open_market_account<FMA, FMB>(takerUser, takerMak);
+        deposit_to_market_account<FMA, FMB>(takerUser, takerMak, 1000000000000, 1000000000000);
 
         // Setup.
         add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
@@ -5125,8 +5116,8 @@ module ferum::market {
         assert_order_collateral(book, makerID, 63000000000, 0);
         assert_order_used(book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, makerAccKey, 1000000000000, 937000000000);
-        assert_account_balances(book, takerAccKey, 970000000000, 1000000000000);
+        assert_account_balances(book, makerMak, 1000000000000, 937000000000);
+        assert_account_balances(book, takerMak, 970000000000, 1000000000000);
         assert!(book.summary.buyCacheMax == 9000000000, 0);
         assert!(book.summary.buyCacheMin == 8000000000, 0);
         assert!(book.summary.buyCacheQty == 120000000000, 0);
@@ -5149,10 +5140,10 @@ module ferum::market {
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_order_collateral(book, makerID, 36000000000, 0);
         assert_order_collateral(book, takerID, 0, 0);
-        assert_order_unused(get_market_account_key(takerUser, vector[]), book, takerID);
+        assert_order_unused(get_ferum_market_account_key(takerUser), book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, makerAccKey, 1030000000000, 937000000000);
-        assert_account_balances(book, takerAccKey, 970000000000, 1027000000000);
+        assert_account_balances(book, makerMak, 1030000000000, 937000000000);
+        assert_account_balances(book, takerMak, 970000000000, 1027000000000);
         assert!(book.summary.buyCacheMax == 9000000000, 0);
         assert!(book.summary.buyCacheMin == 8000000000, 0);
         assert!(book.summary.buyCacheQty == 120000000000, 0);
@@ -5177,12 +5168,12 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, makerUser);
         account::create_account_for_test(address_of(takerUser));
         deposit_fake_coins(ferum, 10000000000, takerUser);
-        let makerAccID = platform::account_identifier_for_test(makerUser);
-        let makerAccKey = open_market_account<FMA, FMB>(makerUser, vector[makerAccID]);
-        deposit_to_market_account<FMA, FMB>(makerUser, makerAccKey, 1000000000000, 1000000000000);
-        let takerAccID = platform::account_identifier_for_test(takerUser);
-        let takerAccKey = open_market_account<FMA, FMB>(takerUser, vector[takerAccID]);
-        deposit_to_market_account<FMA, FMB>(takerUser, takerAccKey, 1000000000000, 1000000000000);
+        let makerMak = get_ferum_market_account_key(makerUser);
+        open_market_account<FMA, FMB>(makerUser, makerMak);
+        deposit_to_market_account<FMA, FMB>(makerUser, makerMak, 1000000000000, 1000000000000);
+        let takerMak = get_ferum_market_account_key(takerUser);
+        open_market_account<FMA, FMB>(takerUser, takerMak);
+        deposit_to_market_account<FMA, FMB>(takerUser, takerMak, 1000000000000, 1000000000000);
 
         // Setup.
         let orderID1 = add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
@@ -5213,8 +5204,8 @@ module ferum::market {
         assert_order_collateral(book, makerID, 35000000000, 0);
         assert_order_used(book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, makerAccKey, 1000000000000, 965000000000);
-        assert_account_balances(book, takerAccKey, 970000000000, 1000000000000);
+        assert_account_balances(book, makerMak, 1000000000000, 965000000000);
+        assert_account_balances(book, takerMak, 970000000000, 1000000000000);
         assert!(book.summary.buyCacheMax == 0, 0);
         assert!(book.summary.buyCacheMin == 0, 0);
         assert!(book.summary.buyCacheQty == 0, 0);
@@ -5234,10 +5225,10 @@ module ferum::market {
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_order_collateral(book, makerID, 14000000000, 0);
         assert_order_collateral(book, takerID, 0, 0);
-        assert_order_unused(get_market_account_key(takerUser, vector[]), book, takerID);
+        assert_order_unused(get_ferum_market_account_key(takerUser), book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, makerAccKey, 1030000000000, 965000000000);
-        assert_account_balances(book, takerAccKey, 970000000000, 1021000000000);
+        assert_account_balances(book, makerMak, 1030000000000, 965000000000);
+        assert_account_balances(book, takerMak, 970000000000, 1021000000000);
         assert!(book.summary.buyCacheMax == 0, 0);
         assert!(book.summary.buyCacheMin == 0, 0);
         assert!(book.summary.buyCacheQty == 0, 0);
@@ -5262,12 +5253,12 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, makerUser);
         account::create_account_for_test(address_of(takerUser));
         deposit_fake_coins(ferum, 10000000000, takerUser);
-        let makerAccID = platform::account_identifier_for_test(makerUser);
-        let makerAccKey = open_market_account<FMA, FMB>(makerUser, vector[makerAccID]);
-        deposit_to_market_account<FMA, FMB>(makerUser, makerAccKey, 1000000000000, 1000000000000);
-        let takerAccID = platform::account_identifier_for_test(takerUser);
-        let takerAccKey = open_market_account<FMA, FMB>(takerUser, vector[takerAccID]);
-        deposit_to_market_account<FMA, FMB>(takerUser, takerAccKey, 1000000000000, 1000000000000);
+        let makerMak = get_ferum_market_account_key(makerUser);
+        open_market_account<FMA, FMB>(makerUser, makerMak);
+        deposit_to_market_account<FMA, FMB>(makerUser, makerMak, 1000000000000, 1000000000000);
+        let takerMak = get_ferum_market_account_key(takerUser);
+        open_market_account<FMA, FMB>(takerUser, takerMak);
+        deposit_to_market_account<FMA, FMB>(takerUser, takerMak, 1000000000000, 1000000000000);
 
         // Setup.
         add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
@@ -5301,8 +5292,8 @@ module ferum::market {
         assert_order_collateral(book, makerID, 63000000000, 0);
         assert_order_used(book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, makerAccKey, 1000000000000, 937000000000);
-        assert_account_balances(book, takerAccKey, 920000000000, 1000000000000);
+        assert_account_balances(book, makerMak, 1000000000000, 937000000000);
+        assert_account_balances(book, takerMak, 920000000000, 1000000000000);
         assert!(book.summary.buyCacheMax == 9000000000, 0);
         assert!(book.summary.buyCacheMin == 8000000000, 0);
         assert!(book.summary.buyCacheQty == 80000000000, 0);
@@ -5333,9 +5324,9 @@ module ferum::market {
         assert_order_collateral(book, makerID, 0, 0);
         assert_order_collateral(book, takerID, 0, 10000000000);
         assert_order_used(book, takerID);
-        assert_order_unused(get_market_account_key(makerUser, vector[]), book, makerID);
-        assert_account_balances(book, makerAccKey, 1070000000000, 937000000000);
-        assert_account_balances(book, takerAccKey, 920000000000, 1063000000000);
+        assert_order_unused(get_ferum_market_account_key(makerUser), book, makerID);
+        assert_account_balances(book, makerMak, 1070000000000, 937000000000);
+        assert_account_balances(book, takerMak, 920000000000, 1063000000000);
         assert!(book.summary.buyCacheMax == 8000000000, 0);
         assert!(book.summary.buyCacheMin == 8000000000, 0);
         assert!(book.summary.buyCacheQty == 80000000000, 0);
@@ -5368,15 +5359,15 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, makerUser2);
         account::create_account_for_test(address_of(takerUser));
         deposit_fake_coins(ferum, 10000000000, takerUser);
-        let maker1AccID = platform::account_identifier_for_test(makerUser1);
-        let maker1AccKey = open_market_account<FMA, FMB>(makerUser1, vector[maker1AccID]);
-        deposit_to_market_account<FMA, FMB>(makerUser1, maker1AccKey, 1000000000000, 1000000000000);
-        let maker2AccID = platform::account_identifier_for_test(makerUser2);
-        let maker2AccKey = open_market_account<FMA, FMB>(makerUser2, vector[maker2AccID]);
-        deposit_to_market_account<FMA, FMB>(makerUser2, maker2AccKey, 1000000000000, 1000000000000);
-        let takerAccID = platform::account_identifier_for_test(takerUser);
-        let takerAccKey = open_market_account<FMA, FMB>(takerUser, vector[takerAccID]);
-        deposit_to_market_account<FMA, FMB>(takerUser, takerAccKey, 1000000000000, 1000000000000);
+        let makerMak1 = get_ferum_market_account_key(makerUser1);
+        open_market_account<FMA, FMB>(makerUser1, makerMak1);
+        deposit_to_market_account<FMA, FMB>(makerUser1, makerMak1, 1000000000000, 1000000000000);
+        let makerMak2 = get_ferum_market_account_key(makerUser2);
+        open_market_account<FMA, FMB>(makerUser2, makerMak2);
+        deposit_to_market_account<FMA, FMB>(makerUser2, makerMak2, 1000000000000, 1000000000000);
+        let takerMak = get_ferum_market_account_key(takerUser);
+        open_market_account<FMA, FMB>(takerUser, takerMak);
+        deposit_to_market_account<FMA, FMB>(takerUser, takerMak, 1000000000000, 1000000000000);
 
         // Setup.
         let makerID3 = add_user_limit_order<FMA, FMB>(makerUser2, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
@@ -5436,9 +5427,9 @@ module ferum::market {
         assert_order_used(book, makerID3);
         assert_order_used(book, makerID4);
         assert_order_used(book, makerID5);
-        assert_account_balances(book, maker1AccKey, 1000000000000, 883000000000);
-        assert_account_balances(book, maker2AccKey, 1000000000000, 877000000000);
-        assert_account_balances(book, takerAccKey, 700000000000, 1000000000000);
+        assert_account_balances(book, makerMak1, 1000000000000, 883000000000);
+        assert_account_balances(book, makerMak2, 1000000000000, 877000000000);
+        assert_account_balances(book, takerMak, 700000000000, 1000000000000);
         assert!(book.summary.buyCacheMax == 9000000000, 0);
         assert!(book.summary.buyCacheMin == 8000000000, 0);
         assert!(book.summary.buyCacheQty == 0, 0);
@@ -5464,15 +5455,15 @@ module ferum::market {
         assert_order_collateral(book, makerID3, 0, 0);
         assert_order_collateral(book, makerID4, 0, 0);
         assert_order_collateral(book, makerID5, 0, 0);
-        assert_order_unused(get_market_account_key(makerUser1, vector[]), book, makerID1);
-        assert_order_unused(get_market_account_key(makerUser1, vector[]), book, makerID2);
-        assert_order_unused(get_market_account_key(makerUser2, vector[]), book, makerID3);
-        assert_order_unused(get_market_account_key(makerUser2, vector[]), book, makerID4);
-        assert_order_unused(get_market_account_key(makerUser2, vector[]), book, makerID5);
-        assert_order_unused(get_market_account_key(takerUser, vector[]), book, takerID);
-        assert_account_balances(book, maker1AccKey, 1130000000000, 883000000000);
-        assert_account_balances(book, maker2AccKey, 1170000000000, 877000000000);
-        assert_account_balances(book, takerAccKey, 700000000000, 1240000000000);
+        assert_order_unused(get_ferum_market_account_key(makerUser1), book, makerID1);
+        assert_order_unused(get_ferum_market_account_key(makerUser1), book, makerID2);
+        assert_order_unused(get_ferum_market_account_key(makerUser2), book, makerID3);
+        assert_order_unused(get_ferum_market_account_key(makerUser2), book, makerID4);
+        assert_order_unused(get_ferum_market_account_key(makerUser2), book, makerID5);
+        assert_order_unused(get_ferum_market_account_key(takerUser), book, takerID);
+        assert_account_balances(book, makerMak1, 1130000000000, 883000000000);
+        assert_account_balances(book, makerMak2, 1170000000000, 877000000000);
+        assert_account_balances(book, takerMak, 700000000000, 1240000000000);
         assert!(book.summary.buyCacheMax == 0, 0);
         assert!(book.summary.buyCacheMin == 0, 0);
         assert!(book.summary.buyCacheQty == 0, 0);
@@ -5491,12 +5482,12 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, user2);
         account::create_account_for_test(address_of(user3));
         deposit_fake_coins(ferum, 10000000000, user3);
-        let user2AccID = platform::account_identifier_for_test(user2);
-        let user2AccKey = open_market_account<FMA, FMB>(user2, vector[user2AccID]);
-        deposit_to_market_account<FMA, FMB>(user2, user2AccKey, 1000000000000, 1000000000000);
-        let user3AccID = platform::account_identifier_for_test(user3);
-        let user3AccKey = open_market_account<FMA, FMB>(user3, vector[user3AccID]);
-        deposit_to_market_account<FMA, FMB>(user3, user3AccKey, 1000000000000, 1000000000000);
+        let user2Mak = get_ferum_market_account_key(user2);
+        open_market_account<FMA, FMB>(user2, user2Mak);
+        deposit_to_market_account<FMA, FMB>(user2, user2Mak, 1000000000000, 1000000000000);
+        let user3Mak = get_ferum_market_account_key(user3);
+        open_market_account<FMA, FMB>(user3, user3Mak);
+        deposit_to_market_account<FMA, FMB>(user3, user3Mak, 1000000000000, 1000000000000);
 
         // Setup.
         add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
@@ -5529,8 +5520,8 @@ module ferum::market {
         assert_order_collateral(book, makerID, 63000000000, 0);
         assert_order_used(book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, user2AccKey, 1000000000000, 937000000000);
-        assert_account_balances(book, user3AccKey, 970000000000, 1000000000000);
+        assert_account_balances(book, user2Mak, 1000000000000, 937000000000);
+        assert_account_balances(book, user3Mak, 970000000000, 1000000000000);
 
         // Crank.
         crank_entry<FMA, FMB>(user1, 1);
@@ -5548,10 +5539,10 @@ module ferum::market {
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_order_collateral(book, takerID, 0, 0);
         assert_order_collateral(book, makerID, 36000000000, 0);
-        assert_order_unused(get_market_account_key(user3, vector[]), book, takerID);
+        assert_order_unused(get_ferum_market_account_key(user3), book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, user2AccKey, 1030000000000, 937000000000);
-        assert_account_balances(book, user3AccKey, 970000000000, 1027000000000);
+        assert_account_balances(book, user2Mak, 1030000000000, 937000000000);
+        assert_account_balances(book, user3Mak, 970000000000, 1027000000000);
     }
 
     #[test(aptos=@0x1, ferum=@ferum, user1=@0x3, user2=@0x4, user3=@0x5)]
@@ -5565,12 +5556,12 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, user2);
         account::create_account_for_test(address_of(user3));
         deposit_fake_coins(ferum, 10000000000, user3);
-        let user2AccID = platform::account_identifier_for_test(user2);
-        let user2AccKey = open_market_account<FMA, FMB>(user2, vector[user2AccID]);
-        deposit_to_market_account<FMA, FMB>(user2, user2AccKey, 1000000000000, 1000000000000);
-        let user3AccID = platform::account_identifier_for_test(user3);
-        let user3AccKey = open_market_account<FMA, FMB>(user3, vector[user3AccID]);
-        deposit_to_market_account<FMA, FMB>(user3, user3AccKey, 1000000000000, 1000000000000);
+        let user2Mak = get_ferum_market_account_key(user2);
+        open_market_account<FMA, FMB>(user2, user2Mak);
+        deposit_to_market_account<FMA, FMB>(user2, user2Mak, 1000000000000, 1000000000000);
+        let user3Mak = get_ferum_market_account_key(user3);
+        open_market_account<FMA, FMB>(user3, user3Mak);
+        deposit_to_market_account<FMA, FMB>(user3, user3Mak, 1000000000000, 1000000000000);
 
         // Setup.
         let order1 = add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
@@ -5601,8 +5592,8 @@ module ferum::market {
         assert_order_collateral(book, makerID, 35000000000, 0);
         assert_order_used(book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, user2AccKey, 1000000000000, 965000000000);
-        assert_account_balances(book, user3AccKey, 970000000000, 1000000000000);
+        assert_account_balances(book, user2Mak, 1000000000000, 965000000000);
+        assert_account_balances(book, user3Mak, 970000000000, 1000000000000);
 
         // Crank.
         crank_entry<FMA, FMB>(user1, 1);
@@ -5617,10 +5608,10 @@ module ferum::market {
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_order_collateral(book, takerID, 0, 0);
         assert_order_collateral(book, makerID, 14000000000, 0);
-        assert_order_unused(get_market_account_key(user3, vector[]), book, takerID);
+        assert_order_unused(get_ferum_market_account_key(user3), book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, user2AccKey, 1030000000000, 965000000000);
-        assert_account_balances(book, user3AccKey, 970000000000, 1021000000000);
+        assert_account_balances(book, user2Mak, 1030000000000, 965000000000);
+        assert_account_balances(book, user3Mak, 970000000000, 1021000000000);
     }
 
     #[test(aptos=@0x1, ferum=@ferum, user1=@0x3, user2=@0x4, user3=@0x5)]
@@ -5634,12 +5625,12 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, user2);
         account::create_account_for_test(address_of(user3));
         deposit_fake_coins(ferum, 10000000000, user3);
-        let user2AccID = platform::account_identifier_for_test(user2);
-        let user2AccKey = open_market_account<FMA, FMB>(user2, vector[user2AccID]);
-        deposit_to_market_account<FMA, FMB>(user2, user2AccKey, 1000000000000, 1000000000000);
-        let user3AccID = platform::account_identifier_for_test(user3);
-        let user3AccKey = open_market_account<FMA, FMB>(user3, vector[user3AccID]);
-        deposit_to_market_account<FMA, FMB>(user3, user3AccKey, 1000000000000, 1000000000000);
+        let user2Mak = get_ferum_market_account_key(user2);
+        open_market_account<FMA, FMB>(user2, user2Mak);
+        deposit_to_market_account<FMA, FMB>(user2, user2Mak, 1000000000000, 1000000000000);
+        let user3Mak = get_ferum_market_account_key(user3);
+        open_market_account<FMA, FMB>(user3, user3Mak);
+        deposit_to_market_account<FMA, FMB>(user3, user3Mak, 1000000000000, 1000000000000);
 
         // Setup.
         add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
@@ -5671,8 +5662,8 @@ module ferum::market {
         assert_order_collateral(book, makerID, 63000000000, 0);
         assert_order_used(book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, user2AccKey, 1000000000000, 937000000000);
-        assert_account_balances(book, user3AccKey, 930000000000, 1000000000000);
+        assert_account_balances(book, user2Mak, 1000000000000, 937000000000);
+        assert_account_balances(book, user3Mak, 930000000000, 1000000000000);
         assert!(book.summary.buyCacheMax == 9000000000, 0);
         assert!(book.summary.buyCacheMin == 8000000000, 0);
         assert!(book.summary.buyCacheQty == 80000000000, 0);
@@ -5694,10 +5685,10 @@ module ferum::market {
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_order_collateral(book, takerID, 0, 0);
         assert_order_collateral(book, makerID, 0, 0);
-        assert_order_unused(get_market_account_key(user3, vector[]), book, takerID);
-        assert_order_unused(get_market_account_key(user2, vector[]), book, makerID);
-        assert_account_balances(book, user2AccKey, 1070000000000, 937000000000);
-        assert_account_balances(book, user3AccKey, 930000000000, 1063000000000);
+        assert_order_unused(get_ferum_market_account_key(user3), book, takerID);
+        assert_order_unused(get_ferum_market_account_key(user2), book, makerID);
+        assert_account_balances(book, user2Mak, 1070000000000, 937000000000);
+        assert_account_balances(book, user3Mak, 930000000000, 1063000000000);
         assert!(book.summary.buyCacheMax == 8000000000, 0);
         assert!(book.summary.buyCacheMin == 8000000000, 0);
         assert!(book.summary.buyCacheQty == 80000000000, 0);
@@ -5716,12 +5707,12 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, user2);
         account::create_account_for_test(address_of(user3));
         deposit_fake_coins(ferum, 10000000000, user3);
-        let user2AccID = platform::account_identifier_for_test(user2);
-        let user2AccKey = open_market_account<FMA, FMB>(user2, vector[user2AccID]);
-        deposit_to_market_account<FMA, FMB>(user2, user2AccKey, 1000000000000, 1000000000000);
-        let user3AccID = platform::account_identifier_for_test(user3);
-        let user3AccKey = open_market_account<FMA, FMB>(user3, vector[user3AccID]);
-        deposit_to_market_account<FMA, FMB>(user3, user3AccKey, 1000000000000, 1000000000000);
+        let user2Mak = get_ferum_market_account_key(user2);
+        open_market_account<FMA, FMB>(user2, user2Mak);
+        deposit_to_market_account<FMA, FMB>(user2, user2Mak, 1000000000000, 1000000000000);
+        let user3Mak = get_ferum_market_account_key(user3);
+        open_market_account<FMA, FMB>(user3, user3Mak);
+        deposit_to_market_account<FMA, FMB>(user3, user3Mak, 1000000000000, 1000000000000);
 
         // Setup.
         let orderID2 = add_user_limit_order<FMA, FMB>(user1, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
@@ -5760,8 +5751,8 @@ module ferum::market {
         assert_order_used(book, takerID);
         assert_order_used(book, makerID1);
         assert_order_used(book, makerID2);
-        assert_account_balances(book, user2AccKey, 1000000000000, 941000000000);
-        assert_account_balances(book, user3AccKey, 930000000000, 1000000000000);
+        assert_account_balances(book, user2Mak, 1000000000000, 941000000000);
+        assert_account_balances(book, user3Mak, 930000000000, 1000000000000);
         assert!(book.summary.buyCacheMax == 0, 0);
         assert!(book.summary.buyCacheMin == 0, 0);
         assert!(book.summary.buyCacheQty == 0, 0);
@@ -5782,11 +5773,11 @@ module ferum::market {
         assert_order_collateral(book, takerID, 0, 0);
         assert_order_collateral(book, makerID1, 0, 0);
         assert_order_collateral(book, makerID2, 12000000000, 0);
-        assert_order_unused(get_market_account_key(user3, vector[]), book, takerID);
-        assert_order_unused(get_market_account_key(user2, vector[]), book, makerID1);
+        assert_order_unused(get_ferum_market_account_key(user3), book, takerID);
+        assert_order_unused(get_ferum_market_account_key(user2), book, makerID1);
         assert_order_used(book, makerID2);
-        assert_account_balances(book, user2AccKey, 1070000000000, 941000000000);
-        assert_account_balances(book, user3AccKey, 930000000000, 1047000000000);
+        assert_account_balances(book, user2Mak, 1070000000000, 941000000000);
+        assert_account_balances(book, user3Mak, 930000000000, 1047000000000);
         assert!(book.summary.buyCacheMax == 0, 0);
         assert!(book.summary.buyCacheMin == 0, 0);
         assert!(book.summary.buyCacheQty == 0, 0);
@@ -5811,12 +5802,12 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, makerUser);
         account::create_account_for_test(address_of(takerUser));
         deposit_fake_coins(ferum, 10000000000, takerUser);
-        let makerAccID = platform::account_identifier_for_test(makerUser);
-        let makerAccKey = open_market_account<FMA, FMB>(makerUser, vector[makerAccID]);
-        deposit_to_market_account<FMA, FMB>(makerUser, makerAccKey, 1000000000000, 1000000000000);
-        let takerAccID = platform::account_identifier_for_test(takerUser);
-        let takerAccKey = open_market_account<FMA, FMB>(takerUser, vector[takerAccID]);
-        deposit_to_market_account<FMA, FMB>(takerUser, takerAccKey, 1000000000000, 1000000000000);
+        let makerMak = get_ferum_market_account_key(makerUser);
+        open_market_account<FMA, FMB>(makerUser, makerMak);
+        deposit_to_market_account<FMA, FMB>(makerUser, makerMak, 1000000000000, 1000000000000);
+        let takerMak = get_ferum_market_account_key(takerUser);
+        open_market_account<FMA, FMB>(takerUser, takerMak);
+        deposit_to_market_account<FMA, FMB>(takerUser, takerMak, 1000000000000, 1000000000000);
 
         // Setup.
         add_user_limit_order<FMA, FMB>(user1, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 80000000000);
@@ -5850,8 +5841,8 @@ module ferum::market {
         assert_order_collateral(book, makerID, 0, 70000000000);
         assert_order_used(book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, makerAccKey, 930000000000, 1000000000000);
-        assert_account_balances(book, takerAccKey, 1000000000000, 956000000000);
+        assert_account_balances(book, makerMak, 930000000000, 1000000000000);
+        assert_account_balances(book, takerMak, 1000000000000, 956000000000);
         assert!(book.summary.sellCacheMax == 6000000000, 0);
         assert!(book.summary.sellCacheMin == 5000000000, 0);
         assert!(book.summary.sellCacheQty == 80000000000, 0);
@@ -5882,9 +5873,9 @@ module ferum::market {
         assert_order_collateral(book, makerID, 0, 0);
         assert_order_collateral(book, takerID, 5500000000, 0);
         assert_order_used(book, takerID);
-        assert_order_unused(get_market_account_key(makerUser, vector[]), book, makerID);
-        assert_account_balances(book, makerAccKey, 930000000000, 1035000000000);
-        assert_account_balances(book, takerAccKey, 1070000000000, 959500000000);
+        assert_order_unused(get_ferum_market_account_key(makerUser), book, makerID);
+        assert_account_balances(book, makerMak, 930000000000, 1035000000000);
+        assert_account_balances(book, takerMak, 1070000000000, 959500000000);
         assert!(book.summary.sellCacheMax == 6000000000, 0);
         assert!(book.summary.sellCacheMin == 6000000000, 0);
         assert!(book.summary.sellCacheQty == 80000000000, 0);
@@ -5917,15 +5908,15 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, makerUser2);
         account::create_account_for_test(address_of(takerUser));
         deposit_fake_coins(ferum, 10000000000, takerUser);
-        let maker1AccID = platform::account_identifier_for_test(makerUser1);
-        let maker1AccKey = open_market_account<FMA, FMB>(makerUser1, vector[maker1AccID]);
-        deposit_to_market_account<FMA, FMB>(makerUser1, maker1AccKey, 1000000000000, 1000000000000);
-        let maker2AccID = platform::account_identifier_for_test(makerUser2);
-        let maker2AccKey = open_market_account<FMA, FMB>(makerUser2, vector[maker2AccID]);
-        deposit_to_market_account<FMA, FMB>(makerUser2, maker2AccKey, 1000000000000, 1000000000000);
-        let takerAccID = platform::account_identifier_for_test(takerUser);
-        let takerAccKey = open_market_account<FMA, FMB>(takerUser, vector[takerAccID]);
-        deposit_to_market_account<FMA, FMB>(takerUser, takerAccKey, 1000000000000, 1000000000000);
+        let makerMak1 = get_ferum_market_account_key(makerUser1);
+        open_market_account<FMA, FMB>(makerUser1, makerMak1);
+        deposit_to_market_account<FMA, FMB>(makerUser1, makerMak1, 1000000000000, 1000000000000);
+        let makerMak2 = get_ferum_market_account_key(makerUser2);
+        open_market_account<FMA, FMB>(makerUser2, makerMak2);
+        deposit_to_market_account<FMA, FMB>(makerUser2, makerMak2, 1000000000000, 1000000000000);
+        let takerMak = get_ferum_market_account_key(takerUser);
+        open_market_account<FMA, FMB>(takerUser, takerMak);
+        deposit_to_market_account<FMA, FMB>(takerUser, takerMak, 1000000000000, 1000000000000);
 
         // Setup.
         let makerID3 = add_user_limit_order<FMA, FMB>(makerUser2, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 80000000000);
@@ -5985,9 +5976,9 @@ module ferum::market {
         assert_order_used(book, makerID3);
         assert_order_used(book, makerID4);
         assert_order_used(book, makerID5);
-        assert_account_balances(book, maker1AccKey, 870000000000, 1000000000000);
-        assert_account_balances(book, maker2AccKey, 830000000000, 1000000000000);
-        assert_account_balances(book, takerAccKey, 1000000000000, 745000000000);
+        assert_account_balances(book, makerMak1, 870000000000, 1000000000000);
+        assert_account_balances(book, makerMak2, 830000000000, 1000000000000);
+        assert_account_balances(book, takerMak, 1000000000000, 745000000000);
         assert!(book.summary.sellCacheMax == 6000000000, 0);
         assert!(book.summary.sellCacheMin == 5000000000, 0);
         assert!(book.summary.sellCacheQty == 0, 0);
@@ -6013,15 +6004,15 @@ module ferum::market {
         assert_order_collateral(book, makerID3, 0, 0);
         assert_order_collateral(book, makerID4, 0, 0);
         assert_order_collateral(book, makerID5, 0, 0);
-        assert_order_unused(get_market_account_key(makerUser1, vector[]), book, makerID1);
-        assert_order_unused(get_market_account_key(makerUser1, vector[]), book, makerID2);
-        assert_order_unused(get_market_account_key(makerUser2, vector[]), book, makerID3);
-        assert_order_unused(get_market_account_key(makerUser2, vector[]), book, makerID4);
-        assert_order_unused(get_market_account_key(makerUser2, vector[]), book, makerID5);
-        assert_order_unused(get_market_account_key(takerUser, vector[]), book, takerID);
-        assert_account_balances(book, maker1AccKey, 870000000000, 1065000000000);
-        assert_account_balances(book, maker2AccKey, 830000000000, 1115000000000);
-        assert_account_balances(book, takerAccKey, 1300000000000, 820000000000);
+        assert_order_unused(get_ferum_market_account_key(makerUser1), book, makerID1);
+        assert_order_unused(get_ferum_market_account_key(makerUser1), book, makerID2);
+        assert_order_unused(get_ferum_market_account_key(makerUser2), book, makerID3);
+        assert_order_unused(get_ferum_market_account_key(makerUser2), book, makerID4);
+        assert_order_unused(get_ferum_market_account_key(makerUser2), book, makerID5);
+        assert_order_unused(get_ferum_market_account_key(takerUser), book, takerID);
+        assert_account_balances(book, makerMak1, 870000000000, 1065000000000);
+        assert_account_balances(book, makerMak2, 830000000000, 1115000000000);
+        assert_account_balances(book, takerMak, 1300000000000, 820000000000);
         assert!(book.summary.sellCacheMax == 0, 0);
         assert!(book.summary.sellCacheMin == 0, 0);
         assert!(book.summary.sellCacheQty == 0, 0);
@@ -6040,12 +6031,12 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, user2);
         account::create_account_for_test(address_of(user3));
         deposit_fake_coins(ferum, 10000000000, user3);
-        let user2AccID = platform::account_identifier_for_test(user2);
-        let user2AccKey = open_market_account<FMA, FMB>(user2, vector[user2AccID]);
-        deposit_to_market_account<FMA, FMB>(user2, user2AccKey, 1000000000000, 1000000000000);
-        let user3AccID = platform::account_identifier_for_test(user3);
-        let user3AccKey = open_market_account<FMA, FMB>(user3, vector[user3AccID]);
-        deposit_to_market_account<FMA, FMB>(user3, user3AccKey, 1000000000000, 1000000000000);
+        let user2Mak = get_ferum_market_account_key(user2);
+        open_market_account<FMA, FMB>(user2, user2Mak);
+        deposit_to_market_account<FMA, FMB>(user2, user2Mak, 1000000000000, 1000000000000);
+        let user3Mak = get_ferum_market_account_key(user3);
+        open_market_account<FMA, FMB>(user3, user3Mak);
+        deposit_to_market_account<FMA, FMB>(user3, user3Mak, 1000000000000, 1000000000000);
 
         // Setup.
         add_user_limit_order<FMA, FMB>(user1, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 80000000000);
@@ -6078,8 +6069,8 @@ module ferum::market {
         assert_order_collateral(book, makerID, 0, 70000000000);
         assert_order_used(book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, user2AccKey, 930000000000, 1000000000000);
-        assert_account_balances(book, user3AccKey, 1000000000000, 983500000000);
+        assert_account_balances(book, user2Mak, 930000000000, 1000000000000);
+        assert_account_balances(book, user3Mak, 1000000000000, 983500000000);
 
         // Crank.
         crank_entry<FMA, FMB>(user1, 1);
@@ -6097,10 +6088,10 @@ module ferum::market {
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_order_collateral(book, takerID, 0, 0);
         assert_order_collateral(book, makerID, 0, 40000000000);
-        assert_order_unused(get_market_account_key(user3, vector[]), book, takerID);
+        assert_order_unused(get_ferum_market_account_key(user3), book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, user2AccKey, 930000000000, 1015000000000);
-        assert_account_balances(book, user3AccKey, 1030000000000, 985000000000);
+        assert_account_balances(book, user2Mak, 930000000000, 1015000000000);
+        assert_account_balances(book, user3Mak, 1030000000000, 985000000000);
     }
 
     #[test(aptos=@0x1, ferum=@ferum, user1=@0x3, user2=@0x4, user3=@0x5)]
@@ -6114,12 +6105,12 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, user2);
         account::create_account_for_test(address_of(user3));
         deposit_fake_coins(ferum, 10000000000, user3);
-        let user2AccID = platform::account_identifier_for_test(user2);
-        let user2AccKey = open_market_account<FMA, FMB>(user2, vector[user2AccID]);
-        deposit_to_market_account<FMA, FMB>(user2, user2AccKey, 1000000000000, 1000000000000);
-        let user3AccID = platform::account_identifier_for_test(user3);
-        let user3AccKey = open_market_account<FMA, FMB>(user3, vector[user3AccID]);
-        deposit_to_market_account<FMA, FMB>(user3, user3AccKey, 1000000000000, 1000000000000);
+        let user2Mak = get_ferum_market_account_key(user2);
+        open_market_account<FMA, FMB>(user2, user2Mak);
+        deposit_to_market_account<FMA, FMB>(user2, user2Mak, 1000000000000, 1000000000000);
+        let user3Mak = get_ferum_market_account_key(user3);
+        open_market_account<FMA, FMB>(user3, user3Mak);
+        deposit_to_market_account<FMA, FMB>(user3, user3Mak, 1000000000000, 1000000000000);
 
         // Setup.
         let orderID1 = add_user_limit_order<FMA, FMB>(user1, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 80000000000);
@@ -6150,8 +6141,8 @@ module ferum::market {
         assert_order_collateral(book, makerID, 0, 50000000000);
         assert_order_used(book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, user2AccKey, 950000000000, 1000000000000);
-        assert_account_balances(book, user3AccKey, 1000000000000, 974500000000);
+        assert_account_balances(book, user2Mak, 950000000000, 1000000000000);
+        assert_account_balances(book, user3Mak, 1000000000000, 974500000000);
 
         // Crank.
         crank_entry<FMA, FMB>(user1, 1);
@@ -6166,10 +6157,10 @@ module ferum::market {
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_order_collateral(book, takerID, 0, 0);
         assert_order_collateral(book, makerID, 0, 20000000000);
-        assert_order_unused(get_market_account_key(user3, vector[]), book, takerID);
+        assert_order_unused(get_ferum_market_account_key(user3), book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, user2AccKey, 950000000000, 1021000000000);
-        assert_account_balances(book, user3AccKey, 1030000000000, 979000000000);
+        assert_account_balances(book, user2Mak, 950000000000, 1021000000000);
+        assert_account_balances(book, user3Mak, 1030000000000, 979000000000);
     }
 
     #[test(aptos=@0x1, ferum=@ferum, user1=@0x3, user2=@0x4, user3=@0x5)]
@@ -6183,12 +6174,12 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, user2);
         account::create_account_for_test(address_of(user3));
         deposit_fake_coins(ferum, 10000000000, user3);
-        let user2AccID = platform::account_identifier_for_test(user2);
-        let user2AccKey = open_market_account<FMA, FMB>(user2, vector[user2AccID]);
-        deposit_to_market_account<FMA, FMB>(user2, user2AccKey, 1000000000000, 1000000000000);
-        let user3AccID = platform::account_identifier_for_test(user3);
-        let user3AccKey = open_market_account<FMA, FMB>(user3, vector[user3AccID]);
-        deposit_to_market_account<FMA, FMB>(user3, user3AccKey, 1000000000000, 1000000000000);
+        let user2Mak = get_ferum_market_account_key(user2);
+        open_market_account<FMA, FMB>(user2, user2Mak);
+        deposit_to_market_account<FMA, FMB>(user2, user2Mak, 1000000000000, 1000000000000);
+        let user3Mak = get_ferum_market_account_key(user3);
+        open_market_account<FMA, FMB>(user3, user3Mak);
+        deposit_to_market_account<FMA, FMB>(user3, user3Mak, 1000000000000, 1000000000000);
 
         // Setup.
         add_user_limit_order<FMA, FMB>(user1, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 80000000000);
@@ -6220,8 +6211,8 @@ module ferum::market {
         assert_order_collateral(book, makerID, 0, 70000000000);
         assert_order_used(book, takerID);
         assert_order_used(book, makerID);
-        assert_account_balances(book, user2AccKey, 930000000000, 1000000000000);
-        assert_account_balances(book, user3AccKey, 1000000000000, 961500000000);
+        assert_account_balances(book, user2Mak, 930000000000, 1000000000000);
+        assert_account_balances(book, user3Mak, 1000000000000, 961500000000);
         assert!(book.summary.sellCacheMax == 6000000000, 0);
         assert!(book.summary.sellCacheMin == 5000000000, 0);
         assert!(book.summary.sellCacheQty == 80000000000, 0);
@@ -6243,10 +6234,10 @@ module ferum::market {
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
         assert_order_collateral(book, takerID, 0, 0);
         assert_order_collateral(book, makerID, 0, 0);
-        assert_order_unused(get_market_account_key(user3, vector[]), book, takerID);
-        assert_order_unused(get_market_account_key(user2, vector[]), book, makerID);
-        assert_account_balances(book, user2AccKey, 930000000000, 1035000000000);
-        assert_account_balances(book, user3AccKey, 1070000000000, 965000000000);
+        assert_order_unused(get_ferum_market_account_key(user3), book, takerID);
+        assert_order_unused(get_ferum_market_account_key(user2), book, makerID);
+        assert_account_balances(book, user2Mak, 930000000000, 1035000000000);
+        assert_account_balances(book, user3Mak, 1070000000000, 965000000000);
         assert!(book.summary.sellCacheMax == 6000000000, 0);
         assert!(book.summary.sellCacheMin == 6000000000, 0);
         assert!(book.summary.sellCacheQty == 80000000000, 0);
@@ -6265,12 +6256,12 @@ module ferum::market {
         deposit_fake_coins(ferum, 10000000000, user2);
         account::create_account_for_test(address_of(user3));
         deposit_fake_coins(ferum, 10000000000, user3);
-        let user2AccID = platform::account_identifier_for_test(user2);
-        let user2AccKey = open_market_account<FMA, FMB>(user2, vector[user2AccID]);
-        deposit_to_market_account<FMA, FMB>(user2, user2AccKey, 1000000000000, 1000000000000);
-        let user3AccID = platform::account_identifier_for_test(user3);
-        let user3AccKey = open_market_account<FMA, FMB>(user3, vector[user3AccID]);
-        deposit_to_market_account<FMA, FMB>(user3, user3AccKey, 1000000000000, 1000000000000);
+        let user2Mak = get_ferum_market_account_key(user2);
+        open_market_account<FMA, FMB>(user2, user2Mak);
+        deposit_to_market_account<FMA, FMB>(user2, user2Mak, 1000000000000, 1000000000000);
+        let user3Mak = get_ferum_market_account_key(user3);
+        open_market_account<FMA, FMB>(user3, user3Mak);
+        deposit_to_market_account<FMA, FMB>(user3, user3Mak, 1000000000000, 1000000000000);
 
         // Setup.
         let orderID1 = add_user_limit_order<FMA, FMB>(user1, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 6000000000, 80000000000);
@@ -6309,8 +6300,8 @@ module ferum::market {
         assert_order_used(book, takerID);
         assert_order_used(book, makerID1);
         assert_order_used(book, makerID2);
-        assert_account_balances(book, user2AccKey, 920000000000, 1000000000000);
-        assert_account_balances(book, user3AccKey, 1000000000000, 940500000000);
+        assert_account_balances(book, user2Mak, 920000000000, 1000000000000);
+        assert_account_balances(book, user3Mak, 1000000000000, 940500000000);
         assert!(book.summary.sellCacheMax == 0, 0);
         assert!(book.summary.sellCacheMin == 0, 0);
         assert!(book.summary.sellCacheQty == 0, 0);
@@ -6331,11 +6322,11 @@ module ferum::market {
         assert_order_collateral(book, takerID, 0, 0);
         assert_order_collateral(book, makerID1, 0, 0);
         assert_order_collateral(book, makerID2, 0, 10000000000);
-        assert_order_unused(get_market_account_key(user3, vector[]), book, takerID);
-        assert_order_unused(get_market_account_key(user2, vector[]), book, makerID1);
+        assert_order_unused(get_ferum_market_account_key(user3), book, takerID);
+        assert_order_unused(get_ferum_market_account_key(user2), book, makerID1);
         assert_order_used(book, makerID2);
-        assert_account_balances(book, user2AccKey, 920000000000, 1051000000000);
-        assert_account_balances(book, user3AccKey, 1070000000000, 949000000000);
+        assert_account_balances(book, user2Mak, 920000000000, 1051000000000);
+        assert_account_balances(book, user3Mak, 1070000000000, 949000000000);
         assert!(book.summary.sellCacheMax == 0, 0);
         assert!(book.summary.sellCacheMin == 0, 0);
         assert!(book.summary.sellCacheQty == 0, 0);
@@ -6616,7 +6607,7 @@ module ferum::market {
 
         // New order.
         let newOrderID = add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 8500000000, 160000000000);
-        let accountKey = get_market_account_key(user, vector[]);
+        let accountKey = get_ferum_market_account_key(user);
         let expectedApiID = get_order_id(accountKey, 7);
         assert!(get_api_order_id<FMA, FMB>(newOrderID) == expectedApiID, 0);
         assert!(newOrderID == 4, 0);
@@ -7040,7 +7031,7 @@ module ferum::market {
 
         // New order.
         let newOrderID = add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8500000000, 90000000000);
-        let accountKey = get_market_account_key(user, vector[]);
+        let accountKey = get_ferum_market_account_key(user);
         let expectedApiID = get_order_id(accountKey, 7);
         assert!(get_api_order_id<FMA, FMB>(newOrderID) == expectedApiID, 0);
         assert!(newOrderID == 4, 0);
@@ -8900,7 +8891,7 @@ module ferum::market {
         assert!(book.summary.buyCacheSize == 2, 0);
         assert!(book.summary.buyTreeMax == 6000000000, 0);
         assert_order_collateral(book, orderID, 0, 0);
-        assert_order_unused(get_market_account_key(user, vector[]), book, orderID);
+        assert_order_unused(get_ferum_market_account_key(user), book, orderID);
         assert_order_qtys<FMA, FMB>(marketAddr, orderID, 0, 0, 0);
     }
 
@@ -8945,7 +8936,7 @@ module ferum::market {
         assert!(book.summary.buyCacheSize == 2, 0);
         assert!(book.summary.buyTreeMax == 7000000000, 0);
         assert_order_collateral(book, orderID, 0, 0);
-        assert_order_unused(get_market_account_key(user, vector[]), book, orderID);
+        assert_order_unused(get_ferum_market_account_key(user), book, orderID);
         assert_order_qtys<FMA, FMB>(marketAddr, orderID, 0, 0, 0);
     }
 
@@ -9363,8 +9354,7 @@ module ferum::market {
         assert!(marketAddr == get_market_addr<FMA, FMB>(), 0);
         assert!(marketAddr == address_of(ferum), 0);
         let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
-        let userAccIdentifier = platform::account_identifier_for_test(user);
-        let accountKey = account_key_from_identifier(userAccIdentifier);
+        let accountKey = get_ferum_market_account_key(user);
         assert!(table::contains(&book.marketAccounts, accountKey), 0);
         assert_account_balances(book, accountKey, 1000000000000, 1000000000000);
     }
@@ -9684,15 +9674,15 @@ module ferum::market {
 
     #[test_only]
     fun assert_instrument_balance<I, Q>(book: &Orderbook<I, Q>, user: &signer, expected: u64) {
-        let userAccIdentifier = platform::account_identifier_for_test(user);
-        let acc = table::borrow(&book.marketAccounts, account_key_from_identifier(userAccIdentifier));
+        let mak = get_ferum_market_account_key(user);
+        let acc = table::borrow(&book.marketAccounts, mak);
         assert!(coin::value(&acc.instrumentBalance) == expected, 0);
     }
 
     #[test_only]
     fun assert_quote_balance<I, Q>(book: &Orderbook<I, Q>, user: &signer, expected: u64) {
-        let userAccIdentifier = platform::account_identifier_for_test(user);
-        let acc = table::borrow(&book.marketAccounts, account_key_from_identifier(userAccIdentifier));
+        let mak = get_ferum_market_account_key(user);
+        let acc = table::borrow(&book.marketAccounts, mak);
         assert!(coin::value(&acc.quoteBalance) == expected, 0);
     }
 
@@ -9884,9 +9874,9 @@ module ferum::market {
         init_ferum(ferum);
         new_fee_type_entry(ferum, s(b"test"), 0, 0, 0);
         init_market_entry<I, Q>(ferum, 4, 4, 0, 100, maxCacheSize, s(b"test"));
-        let userIdentifier = platform::account_identifier_for_test(user);
-        let accountKey = open_market_account<I, Q>(user, vector[userIdentifier]);
-        deposit_to_market_account<I, Q>(user, accountKey, 1000000000000, 1000000000000);
+        let mak = get_ferum_market_account_key(user);
+        open_market_account<I, Q>(user, mak);
+        deposit_to_market_account<I, Q>(user, mak, 1000000000000, 1000000000000);
         let marketAddr = get_market_addr<I, Q>();
         // Pre-emptive borrows so test signatures are consistent.
         borrow_global<IndexingEventHandles<I, Q>>(marketAddr);
