@@ -746,6 +746,16 @@ module ferum::market {
         add_order<I, Q>(owner, accountKey, side, behaviour, price, qty, clientOrderID, marketBuyMaxCollateral);
     }
 
+    public entry fun cancel_all_orders_entry<I, Q>(
+        owner: &signer,
+    ) acquires FerumInfo, Orderbook, IndexingEventHandles, MarketBuyTree, MarketBuyCache, MarketSellTree, MarketSellCache {
+        let mak = MarketAccountKey {
+            protocolAddress: @ferum,
+            userAddress: address_of(owner),
+        };
+        cancel_all_orders<I, Q>(owner, mak);
+    }
+
     public entry fun cancel_order_entry<I, Q>(
         owner: &signer,
         counter: u32,
@@ -1053,6 +1063,29 @@ module ferum::market {
         // Emit price update event.
         // emit_price_update_event<I, Q>(marketAddr, resourcesAccessed);
         orderID
+    }
+
+    public fun cancel_all_orders<I, Q>(
+        owner: &signer,
+        mak: MarketAccountKey,
+    ) acquires FerumInfo, Orderbook, IndexingEventHandles, MarketBuyTree, MarketBuyCache, MarketSellTree, MarketSellCache {
+        let marketAddr = get_market_addr<I, Q>();
+        let book = borrow_global<Orderbook<I, Q>>(marketAddr);
+        let marketAccount = table::borrow(&book.marketAccounts, mak);
+        let i = 0;
+        let size = vector::length(&marketAccount.activeOrders);
+        let ids = vector::empty();
+        while (i < size) {
+            let orderID = vector::borrow(&marketAccount.activeOrders, i).orderID;
+            vector::push_back(&mut ids, orderID);
+            i = i + 1;
+        };
+        i = 0;
+        while (i < size) {
+            let orderID = *vector::borrow(&ids, i);
+            cancel_order<I, Q>(owner, orderID);
+            i = i + 1;
+        }
     }
 
     public fun cancel_order<I, Q>(
@@ -8850,6 +8883,38 @@ module ferum::market {
     // </editor-fold>
 
     // <editor-fold defaultstate="collapsed" desc="Cancel order tests">
+
+    #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
+    fun test_market_cancel_all(aptos: &signer, ferum: &signer, user: &signer)
+        acquires FerumInfo, Orderbook, MarketBuyCache, MarketBuyTree, MarketSellCache, MarketSellTree, EventQueue, IndexingEventHandles
+    {
+        // Tests that all a users orders can be cancelled.
+
+        let marketAddr = setup_ferum_test<FMA, FMB>(aptos, ferum, user, 2);
+
+        // Setup.
+        add_user_limit_order<FMA, FMB>(user, 1 /* SIDE_BUY */, 1 /* BEHAVIOUR_GTC */, 8000000000, 80000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 70000000000);
+        add_user_limit_order<FMA, FMB>(user, 2 /* SIDE_SELL */, 1 /* BEHAVIOUR_GTC */, 9000000000, 60000000000);
+        assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[], vector[
+            s(b"(0.8 qty: 8, crankQty: 0)"),
+        ]);
+        assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[], vector[
+            s(b"(0.9 qty: 13, crankQty: 0)"),
+        ]);
+
+        // Cancel orders.
+        cancel_all_orders<FMA, FMB>(user, get_ferum_market_account_key(user));
+
+        assert_buy_price_store_qtys<FMA, FMB>(marketAddr, vector[], vector[]);
+        assert_sell_price_store_qtys<FMA, FMB>(marketAddr, vector[], vector[]);
+        let book = borrow_global<Orderbook<FMA, FMB>>(marketAddr);
+        assert!(book.summary.buyCacheMax == 0, 0);
+        assert!(book.summary.buyCacheMin == 0, 0);
+        assert!(book.summary.buyCacheQty == 0, 0);
+        assert!(book.summary.buyCacheSize == 0, 0);
+        assert!(book.summary.buyTreeMax == 0, 0);
+    }
 
     #[test(aptos=@0x1, ferum=@ferum, user=@0x3)]
     fun test_market_cancel_full_tree(aptos: &signer, ferum: &signer, user: &signer)
