@@ -11,9 +11,6 @@ const Home: NextPage = () => {
         <Image layout="fill" src='/alchemy.svg' />
       </div>
       <div className="flex flex-row gap-10 border-blue border-1">
-        <a target="_blank" rel="noopener noreferrer" href={NavigationLinks.discord}>
-          <Image alt="Discord" className="transition duration-300 hover:opacity-40 cursor-pointer" src="/discord.svg" width={40} height={40} />
-        </a>
         <a target="_blank" rel="noopener noreferrer" href={NavigationLinks.twitter}>
           <Image alt="Twitter" className="transition duration-300 hover:opacity-40 cursor-pointer" src="/twitter.svg" width={40} height={40} />
         </a>
